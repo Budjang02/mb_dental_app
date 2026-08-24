@@ -31,6 +31,10 @@ dependencies:
   flutter:
     sdk: flutter
 
+  url_launcher: ^6.3.0
+  flutter_native_splash: ^2.4.0
+  flutter_launcher_icons: ^0.13.1
+
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
@@ -56,16 +60,16 @@ flutter_launcher_icons:
   image_path: "assets/images/icon_logo.png"
   min_sdk_android: 21
   # Adaptive Icon Setup (Prevents cropping/zooming)
-  adaptive_icon_background: "#F8FAFC" # Matches your app background
+  adaptive_icon_background: "#0D9488" # Matches your app background
   adaptive_icon_foreground: "assets/images/icon_logo.png"
 
 # 2. Splash Screen Configuration
 flutter_native_splash:
-  color: "#F8FAFC"
+  color: "#0D9488"
   image: assets/images/icon_logo.png
   fullscreen: true # Enables edge-to-edge full screen
   android_12:
     image: assets/images/icon_logo.png
-    color: "#F8FAFC"
-    icon_background_color: "#F8FAFC"
+    color: "#0D9488"
+    icon_background_color: "#0D9488"
 
