@@ -1,9 +1,13 @@
 // File: lib/app/routes.dart
-
 import 'package:flutter/material.dart';
 import 'package:mb_dental_app/screens/auth/login_screen.dart';
 import 'package:mb_dental_app/screens/auth/register_screen.dart';
 import 'package:mb_dental_app/screens/dashboard/dashboard_screen.dart';
+import 'package:mb_dental_app/screens/appointments/appointments_screen.dart';
+import 'package:mb_dental_app/screens/appointments/book_appointment_screen.dart';
+import 'package:mb_dental_app/screens/wallet/wallet_screen.dart';
+import 'package:mb_dental_app/screens/records/dental_records_screen.dart';
+import 'package:mb_dental_app/screens/profile/profile_screen.dart';
 
 class AppRoutes {
   static const String login = '/login';
@@ -20,14 +24,14 @@ class AppRoutes {
     login: (context) => const LoginScreen(),
     register: (context) => const RegisterScreen(),
     dashboard: (context) => const DashboardScreen(),
+    appointments: (context) => const AppointmentsScreen(),
+    wallet: (context) => const WalletScreen(),
+    records: (context) => const DentalRecordsScreen(),
+    profile: (context) => const ProfileScreen(),
+    bookAppointment: (context) => const BookAppointmentScreen(),
 
-    // Placeholder builders for navigation targets
-    appointments: (context) => _buildPlaceholderScreen(context, 'Appointments'),
-    wallet: (context) => _buildPlaceholderScreen(context, 'Wallet'),
-    records: (context) => _buildPlaceholderScreen(context, 'Records'),
-    profile: (context) => _buildPlaceholderScreen(context, 'Profile'),
+    // No dedicated Notifications screen yet; keep a placeholder for this route.
     notifications: (context) => _buildPlaceholderScreen(context, 'Notifications'),
-    bookAppointment: (context) => _buildPlaceholderScreen(context, 'Book Appointment'),
   };
 
   // Temporary screen builder so navigation works immediately

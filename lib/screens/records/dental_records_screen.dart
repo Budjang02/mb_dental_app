@@ -1,5 +1,57 @@
+import 'dart:math' as math;
+
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:mb_dental_app/app/theme.dart';
+import 'package:mb_dental_app/repositories/patient_repository.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
+
+/// Universal Numbering System (#1-32), starting at the upper-right wisdom
+/// tooth and ending at the lower-right wisdom tooth.
+const List<String> _toothNames = [
+  'Upper Right Third Molar (Wisdom Tooth)',
+  'Upper Right Second Molar',
+  'Upper Right First Molar',
+  'Upper Right Second Premolar',
+  'Upper Right First Premolar',
+  'Upper Right Canine',
+  'Upper Right Lateral Incisor',
+  'Upper Right Central Incisor',
+  'Upper Left Central Incisor',
+  'Upper Left Lateral Incisor',
+  'Upper Left Canine',
+  'Upper Left First Premolar',
+  'Upper Left Second Premolar',
+  'Upper Left First Molar',
+  'Upper Left Second Molar',
+  'Upper Left Third Molar (Wisdom Tooth)',
+  'Lower Left Third Molar (Wisdom Tooth)',
+  'Lower Left Second Molar',
+  'Lower Left First Molar',
+  'Lower Left Second Premolar',
+  'Lower Left First Premolar',
+  'Lower Left Canine',
+  'Lower Left Lateral Incisor',
+  'Lower Left Central Incisor',
+  'Lower Right Central Incisor',
+  'Lower Right Lateral Incisor',
+  'Lower Right Canine',
+  'Lower Right First Premolar',
+  'Lower Right Second Premolar',
+  'Lower Right First Molar',
+  'Lower Right Second Molar',
+  'Lower Right Third Molar (Wisdom Tooth)',
+];
+
+String toothName(int toothNumber) => _toothNames[toothNumber - 1];
+
+ToothType toothTypeOf(int toothNum) {
+  if ([1, 2, 3, 14, 15, 16, 17, 18, 19, 30, 31, 32].contains(toothNum)) return ToothType.molar;
+  if ([4, 5, 12, 13, 20, 21, 28, 29].contains(toothNum)) return ToothType.premolar;
+  if ([6, 11, 22, 27].contains(toothNum)) return ToothType.canine;
+  return ToothType.incisor;
+}
 
 class DentalRecordsScreen extends StatefulWidget {
   const DentalRecordsScreen({super.key});
@@ -45,6 +97,188 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
       'doctor': 'Dr. Rey Vincent Bolasoc',
     },
   ];
+
+  Future<void> _exportOdontogramPdf() async {
+    final patient = PatientRepository().patient;
+    final doc = pw.Document();
+    final rows = _toothConditions.entries.toList()..sort((a, b) => a.key.compareTo(b.key));
+
+    doc.addPage(
+      pw.Page(
+        build: (context) => pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.start,
+          children: [
+            pw.Text('Dental Record Summary', style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold)),
+            pw.SizedBox(height: 4),
+            pw.Text('Mariano & Bolasoc Dental Center'),
+            pw.SizedBox(height: 16),
+            pw.Text('Patient: ${patient.fullName}'),
+            pw.Text('Patient Code: ${patient.patientCode}'),
+            pw.Text('Generated: ${DateTime.now().toString().split('.').first}'),
+            pw.SizedBox(height: 20),
+            pw.Text('Tooth Conditions', style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold)),
+            pw.SizedBox(height: 8),
+            if (rows.isEmpty)
+              pw.Text('No conditions recorded. All teeth healthy.')
+            else
+              pw.TableHelper.fromTextArray(
+                headers: ['Tooth #', 'Name', 'Condition', 'Notes'],
+                data: rows
+                    .map((e) => [
+                          '#${e.key}',
+                          toothName(e.key),
+                          e.value['condition'].toString(),
+                          e.value['notes'].toString(),
+                        ])
+                    .toList(),
+              ),
+          ],
+        ),
+      ),
+    );
+
+    await Printing.layoutPdf(onLayout: (format) async => doc.save());
+  }
+
+  void _showExportSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 20, 20, 8),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Export Records', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(CupertinoIcons.doc_text, color: AppColors.primary),
+              title: const Text('Save as PDF'),
+              subtitle: const Text('Generates a summary you can save or share'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _exportOdontogramPdf();
+              },
+            ),
+            const SizedBox(height: 12),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showToothTypesInfoSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (context) => Padding(
+        padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: const [
+            Text('Tooth Types', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17, color: AppColors.textPrimary)),
+            SizedBox(height: 4),
+            Text(
+              'Each of the 32 adult teeth is numbered #1 to #32 (Universal Numbering System) and falls into one of four types.',
+              style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+            ),
+            SizedBox(height: 16),
+            _ToothTypeInfoRow(
+              title: 'Incisors',
+              subtitle: 'The 8 front teeth, top and bottom. Flat, chisel-shaped edges for cutting and biting.',
+            ),
+            SizedBox(height: 12),
+            _ToothTypeInfoRow(
+              title: 'Canines',
+              subtitle: 'The 4 pointed teeth at the corners of the arch. Used for tearing food.',
+            ),
+            SizedBox(height: 12),
+            _ToothTypeInfoRow(
+              title: 'Premolars',
+              subtitle: 'The 8 teeth behind the canines, with ridged surfaces for crushing food.',
+            ),
+            SizedBox(height: 12),
+            _ToothTypeInfoRow(
+              title: 'Molars',
+              subtitle: 'The 12 broad teeth at the back, including wisdom teeth, used for grinding.',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showTreatmentNoteDetail(Map<String, String> note) {
+    showDialog(
+      context: context,
+      barrierColor: Colors.black.withOpacity(0.45),
+      builder: (dialogContext) => Dialog(
+        backgroundColor: Colors.white,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: MediaQuery.of(dialogContext).size.height * 0.82),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: InkWell(
+                    onTap: () => Navigator.pop(dialogContext),
+                    borderRadius: BorderRadius.circular(20),
+                    child: const Padding(
+                      padding: EdgeInsets.all(4),
+                      child: Icon(CupertinoIcons.xmark_circle_fill, size: 22, color: AppColors.textSecondary),
+                    ),
+                  ),
+                ),
+                Text(
+                  note['procedure'] ?? '',
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                ),
+                const SizedBox(height: 4),
+                Text(note['date'] ?? '', style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                const SizedBox(height: 16),
+                _kv('Tooth', note['tooth'] ?? ''),
+                _kv('Condition', note['condition'] ?? ''),
+                _kv('Performed by', note['doctor'] ?? ''),
+                const SizedBox(height: 8),
+                const Text('Notes', style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+                const SizedBox(height: 4),
+                Text(note['notes'] ?? '', style: const TextStyle(fontSize: 14, color: AppColors.textPrimary)),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _kv(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(width: 90, child: Text(label, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary))),
+          Expanded(
+            child: Text(value, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -129,37 +363,30 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text(
-                      'Interactive Odontogram',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
+                    Row(
+                      children: [
+                        const Text(
+                          'Interactive Odontogram',
+                          style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(width: 6),
+                        GestureDetector(
+                          onTap: _showToothTypesInfoSheet,
+                          child: const Icon(CupertinoIcons.info_circle, color: Colors.white70, size: 17),
+                        ),
+                      ],
                     ),
                     ElevatedButton.icon(
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.white,
                         foregroundColor: AppColors.primary,
-                        minimumSize: const Size(100, 32),
+                        minimumSize: const Size(90, 32),
                         padding: const EdgeInsets.symmetric(horizontal: 10),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                       ),
-                      onPressed: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Generating PDF report...'),
-                            backgroundColor: AppColors.primary,
-                          ),
-                        );
-                      },
-                      icon: const Icon(Icons.picture_as_pdf_outlined, size: 14),
-                      label: const Text(
-                        'Save as PDF',
-                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
-                      ),
+                      onPressed: _showExportSheet,
+                      icon: const Icon(CupertinoIcons.square_arrow_up, size: 14),
+                      label: const Text('Export', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
                     ),
                   ],
                 ),
@@ -175,26 +402,19 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
                 ),
                 child: Column(
                   children: [
-                    const Text('Upper Arch (Teeth 1 - 16)',
-                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-                    const SizedBox(height: 12),
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
+                    _buildArch(isUpper: true),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
                       child: Row(
-                        children: List.generate(16, (i) => _buildAnatomicalTooth(i + 1)),
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          _pillLabel('Left', dark: true),
+                          _pillLabel('Right', dark: true),
+                        ],
                       ),
                     ),
-                    const SizedBox(height: 20),
-                    const Text('Lower Arch (Teeth 17 - 32)',
-                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-                    const SizedBox(height: 12),
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        children: List.generate(16, (i) => _buildAnatomicalTooth(32 - i)),
-                      ),
-                    ),
-                    const Divider(height: 24),
+                    _buildArch(isUpper: false),
+                    const Divider(height: 28),
 
                     // Condition Legend
                     Wrap(
@@ -232,9 +452,21 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text(
-                    'Selected: Tooth #$_selectedToothNumber',
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppColors.textPrimary),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Tooth #$_selectedToothNumber',
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppColors.textPrimary),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          toothName(_selectedToothNumber),
+                          style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                        ),
+                      ],
+                    ),
                   ),
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -253,7 +485,7 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
                   ),
                 ],
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 10),
               Text(
                 activeInfo?['notes'] ?? 'No specific clinical notes recorded for this tooth.',
                 style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
@@ -272,84 +504,75 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
         return Container(
           width: double.infinity,
           margin: const EdgeInsets.only(bottom: 12),
-          padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(16),
             border: Border.all(color: AppColors.border),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: () => _showTreatmentNoteDetail(note),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    note['procedure'] ?? '',
-                    style: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.textPrimary,
-                    ),
-                  ),
-                  Text(
-                    note['date'] ?? '',
-                    style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: AppColors.primary.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Text(
-                      note['tooth'] ?? '',
-                      style: const TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.primary,
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          note['procedure'] ?? '',
+                          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                        ),
                       ),
-                    ),
+                      Text(note['date'] ?? '', style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+                    ],
                   ),
-                  const SizedBox(width: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: Colors.grey.shade100,
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Text(
-                      'Condition: ${note['condition']}',
-                      style: const TextStyle(
-                        fontSize: 11,
-                        color: AppColors.textPrimary,
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: AppColors.primary.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          note['tooth'] ?? '',
+                          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.primary),
+                        ),
                       ),
-                    ),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade100,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          'Condition: ${note['condition']}',
+                          style: const TextStyle(fontSize: 11, color: AppColors.textPrimary),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Text(note['notes'] ?? '', style: const TextStyle(fontSize: 13, color: AppColors.textPrimary)),
+                  const Divider(height: 20),
+                  Row(
+                    children: [
+                      const Icon(CupertinoIcons.person, size: 16, color: AppColors.textSecondary),
+                      const SizedBox(width: 6),
+                      Text('Performed by ${note['doctor']}',
+                          style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                      const Spacer(),
+                      const Icon(CupertinoIcons.chevron_right, size: 16, color: AppColors.textSecondary),
+                    ],
                   ),
                 ],
               ),
-              const SizedBox(height: 12),
-              Text(
-                note['notes'] ?? '',
-                style: const TextStyle(fontSize: 13, color: AppColors.textPrimary),
-              ),
-              const Divider(height: 20),
-              Row(
-                children: [
-                  const Icon(Icons.person_outline, size: 16, color: AppColors.textSecondary),
-                  const SizedBox(width: 6),
-                  Text(
-                    'Attending: ${note['doctor']}',
-                    style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
-                  ),
-                ],
-              ),
-            ],
+            ),
           ),
         );
       }).toList(),
@@ -370,23 +593,36 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
-            'X - Rays & Files',
+            'X-Rays & Files',
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
           ),
           const SizedBox(height: 16),
           Container(
-            height: 300,
             width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 48),
             decoration: BoxDecoration(
               color: AppColors.background,
               borderRadius: BorderRadius.circular(12),
               border: Border.all(color: AppColors.border),
             ),
-            child: const Center(
-              child: Text(
-                'Uploaded File',
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: AppColors.textSecondary),
-              ),
+            child: Column(
+              children: [
+                Icon(CupertinoIcons.tray, size: 36, color: Colors.grey.shade400),
+                const SizedBox(height: 12),
+                const Text(
+                  'No X-rays or files yet',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textSecondary),
+                ),
+                const SizedBox(height: 6),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 32),
+                  child: Text(
+                    'Files your dentist uploads will appear here automatically once your records are connected.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -394,48 +630,129 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
     );
   }
 
-  // Anatomical Tooth Renderer
-  Widget _buildAnatomicalTooth(int toothNum) {
+  /// Horseshoe-shaped dental arch: teeth are placed along a half-ellipse so
+  /// the chart reads like a real jaw viewed from the front, front teeth at
+  /// the peak of the curve and molars trailing off toward the sides.
+  Widget _buildArch({required bool isUpper}) {
+    final numbers = isUpper ? List.generate(16, (i) => i + 1) : List.generate(16, (i) => 32 - i);
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final height = width * 0.52;
+        final radiusX = width / 2 - 22;
+        final radiusY = height - 52;
+        final centerY = isUpper ? height : 0.0;
+
+        return SizedBox(
+          width: width,
+          height: height,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Container(
+                width: width,
+                height: height,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF37474F),
+                  borderRadius: isUpper
+                      ? BorderRadius.vertical(top: Radius.elliptical(width / 2, height))
+                      : BorderRadius.vertical(bottom: Radius.elliptical(width / 2, height)),
+                ),
+              ),
+              Positioned(
+                top: isUpper ? 12 : null,
+                bottom: isUpper ? null : 12,
+                left: 0,
+                right: 0,
+                child: Center(child: _pillLabel('Front')),
+              ),
+              Positioned(
+                top: isUpper ? height * 0.44 : null,
+                bottom: isUpper ? null : height * 0.44,
+                left: 0,
+                right: 0,
+                child: Center(child: _pillLabel(isUpper ? 'Upper' : 'Lower')),
+              ),
+              for (int i = 0; i < numbers.length; i++)
+                _buildToothAtAngle(
+                  toothNum: numbers[i],
+                  angleDeg: 180 - i * (180 / (numbers.length - 1)),
+                  centerX: width / 2,
+                  centerY: centerY,
+                  radiusX: radiusX,
+                  radiusY: radiusY,
+                  isUpper: isUpper,
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildToothAtAngle({
+    required int toothNum,
+    required double angleDeg,
+    required double centerX,
+    required double centerY,
+    required double radiusX,
+    required double radiusY,
+    required bool isUpper,
+  }) {
+    final rad = angleDeg * math.pi / 180;
+    final dx = centerX + radiusX * math.cos(rad);
+    final dy = isUpper ? centerY - radiusY * math.sin(rad) : centerY + radiusY * math.sin(rad);
+    final rotation = isUpper ? (90 - angleDeg) * math.pi / 180 : (angleDeg - 90) * math.pi / 180;
+
     final isSelected = _selectedToothNumber == toothNum;
     final info = _toothConditions[toothNum];
-    final fillColor = info?['color'] ?? Colors.white;
+    final fillColor = info?['color'] as Color? ?? Colors.white;
+    final isMolar = toothTypeOf(toothNum) == ToothType.molar;
+    final toothWidth = isMolar ? 23.0 : 16.0;
+    const toothHeight = 26.0;
 
-    ToothType toothType;
-    if ([1, 2, 3, 14, 15, 16, 17, 18, 19, 30, 31, 32].contains(toothNum)) {
-      toothType = ToothType.molar;
-    } else if ([4, 5, 12, 13, 20, 21, 28, 29].contains(toothNum)) {
-      toothType = ToothType.premolar;
-    } else if ([6, 11, 22, 27].contains(toothNum)) {
-      toothType = ToothType.canine;
-    } else {
-      toothType = ToothType.incisor;
-    }
+    return Positioned(
+      left: dx - toothWidth / 2,
+      top: dy - toothHeight / 2,
+      child: Transform.rotate(
+        angle: rotation,
+        child: GestureDetector(
+          onTap: () => setState(() => _selectedToothNumber = toothNum),
+          child: Container(
+            width: toothWidth,
+            height: toothHeight,
+            decoration: BoxDecoration(
+              color: fillColor,
+              borderRadius: BorderRadius.circular(5),
+              border: Border.all(
+                color: isSelected ? AppColors.primary : Colors.black.withOpacity(0.18),
+                width: isSelected ? 2.5 : 1,
+              ),
+              boxShadow: isSelected
+                  ? [BoxShadow(color: AppColors.primary.withOpacity(0.5), blurRadius: 6)]
+                  : null,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
-    return GestureDetector(
-      onTap: () => setState(() => _selectedToothNumber = toothNum),
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 2),
-        child: Column(
-          children: [
-            CustomPaint(
-              size: Size(toothType == ToothType.molar ? 22 : 16, 28),
-              painter: AnatomicalToothPainter(
-                fillColor: fillColor,
-                borderColor: isSelected ? AppColors.primary : Colors.grey.shade400,
-                borderWidth: isSelected ? 2.5 : 1.0,
-                type: toothType,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              '$toothNum',
-              style: TextStyle(
-                fontSize: 9,
-                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                color: isSelected ? AppColors.primary : AppColors.textSecondary,
-              ),
-            ),
-          ],
+  Widget _pillLabel(String text, {bool dark = false}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+      decoration: BoxDecoration(
+        border: Border.all(color: dark ? AppColors.border : Colors.white54),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: dark ? AppColors.textSecondary : Colors.white70,
+          fontSize: 10,
+          letterSpacing: 1,
+          fontWeight: FontWeight.w600,
         ),
       ),
     );
@@ -461,81 +778,37 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
   }
 }
 
-enum ToothType { molar, premolar, canine, incisor }
+class _ToothTypeInfoRow extends StatelessWidget {
+  final String title;
+  final String subtitle;
 
-class AnatomicalToothPainter extends CustomPainter {
-  final Color fillColor;
-  final Color borderColor;
-  final double borderWidth;
-  final ToothType type;
-
-  AnatomicalToothPainter({
-    required this.fillColor,
-    required this.borderColor,
-    required this.borderWidth,
-    required this.type,
-  });
+  const _ToothTypeInfoRow({required this.title, required this.subtitle});
 
   @override
-  void paint(Canvas canvas, Size size) {
-    final paintFill = Paint()
-      ..color = fillColor
-      ..style = PaintingStyle.fill;
-
-    final paintBorder = Paint()
-      ..color = borderColor
-      ..strokeWidth = borderWidth
-      ..style = PaintingStyle.stroke;
-
-    final path = Path();
-
-    switch (type) {
-      case ToothType.molar:
-        path.moveTo(size.width * 0.1, size.height * 0.2);
-        path.quadraticBezierTo(size.width * 0.3, 0, size.width * 0.5, size.height * 0.1);
-        path.quadraticBezierTo(size.width * 0.7, 0, size.width * 0.9, size.height * 0.2);
-        path.lineTo(size.width, size.height * 0.5);
-        path.lineTo(size.width * 0.8, size.height);
-        path.lineTo(size.width * 0.5, size.height * 0.7);
-        path.lineTo(size.width * 0.2, size.height);
-        path.lineTo(0, size.height * 0.5);
-        path.close();
-        break;
-
-      case ToothType.premolar:
-        path.moveTo(size.width * 0.2, size.height * 0.15);
-        path.quadraticBezierTo(size.width * 0.5, 0, size.width * 0.8, size.height * 0.15);
-        path.lineTo(size.width * 0.9, size.height * 0.5);
-        path.lineTo(size.width * 0.6, size.height);
-        path.lineTo(size.width * 0.4, size.height);
-        path.lineTo(size.width * 0.1, size.height * 0.5);
-        path.close();
-        break;
-
-      case ToothType.canine:
-        path.moveTo(size.width * 0.5, 0);
-        path.lineTo(size.width, size.height * 0.35);
-        path.lineTo(size.width * 0.7, size.height);
-        path.lineTo(size.width * 0.3, size.height);
-        path.lineTo(0, size.height * 0.35);
-        path.close();
-        break;
-
-      case ToothType.incisor:
-        path.moveTo(size.width * 0.1, size.height * 0.05);
-        path.lineTo(size.width * 0.9, size.height * 0.05);
-        path.lineTo(size.width * 0.8, size.height * 0.45);
-        path.lineTo(size.width * 0.55, size.height);
-        path.lineTo(size.width * 0.45, size.height);
-        path.lineTo(size.width * 0.2, size.height * 0.45);
-        path.close();
-        break;
-    }
-
-    canvas.drawPath(path, paintFill);
-    canvas.drawPath(path, paintBorder);
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          margin: const EdgeInsets.only(top: 5),
+          width: 6,
+          height: 6,
+          decoration: const BoxDecoration(color: AppColors.primary, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textPrimary)),
+              const SizedBox(height: 2),
+              Text(subtitle, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary, height: 1.3)),
+            ],
+          ),
+        ),
+      ],
+    );
   }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
+
+enum ToothType { molar, premolar, canine, incisor }

@@ -8,6 +8,7 @@ class Patient {
   final String phone;
   final String gender;
   final DateTime dateOfBirth;
+  final String? avatarPath;
 
   Patient({
     required this.id,
@@ -18,7 +19,28 @@ class Patient {
     required this.phone,
     required this.gender,
     required this.dateOfBirth,
+    this.avatarPath,
   });
 
   String get fullName => '$firstName $lastName';
+
+  Patient copyWith({
+    String? firstName,
+    String? lastName,
+    String? phone,
+    String? gender,
+    String? avatarPath,
+  }) {
+    return Patient(
+      id: id,
+      patientCode: patientCode,
+      firstName: firstName ?? this.firstName,
+      lastName: lastName ?? this.lastName,
+      email: email,
+      phone: phone ?? this.phone,
+      gender: gender ?? this.gender,
+      dateOfBirth: dateOfBirth,
+      avatarPath: avatarPath ?? this.avatarPath,
+    );
+  }
 }

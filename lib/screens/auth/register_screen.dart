@@ -24,7 +24,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   bool _isPasswordVisible = false;
   bool _isConfirmPasswordVisible = false;
-  bool _agreeToTerms = false;
   bool _isLoading = false;
 
   @override
@@ -38,17 +37,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   void _handleRegister() async {
-    if (!_agreeToTerms) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please accept the Terms & Conditions to proceed.'),
-          backgroundColor: Colors.redAccent,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-      return;
-    }
-
     if (_formKey.currentState!.validate()) {
       setState(() => _isLoading = true);
       await Future.delayed(const Duration(milliseconds: 800));
@@ -65,54 +53,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
       Navigator.pushReplacementNamed(context, AppRoutes.dashboard);
     }
-  }
-
-  void _showTermsDialog() {
-    showCupertinoModalPopup(
-      context: context,
-      builder: (context) => Container(
-        height: 400,
-        color: CupertinoColors.systemBackground.resolveFrom(context),
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          children: [
-            Container(
-              width: 36,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey.shade300,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            const SizedBox(height: 16),
-            const Text(
-              'Terms & Conditions',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: AppColors.textPrimary,
-              ),
-            ),
-            const SizedBox(height: 12),
-            const Expanded(
-              child: SingleChildScrollView(
-                child: Text(
-                  'By registering for Mariano & Bolasoc Dental Center, you agree to provide accurate information for patient recording, appointment scheduling, and digital payment tracking. Your data is kept secure and confidential under standard health privacy regulations.',
-                  style: TextStyle(color: AppColors.textSecondary, fontSize: 13, height: 1.4),
-                ),
-              ),
-            ),
-            SizedBox(
-              width: double.infinity,
-              child: CupertinoButton.filled(
-                child: const Text('I Understand'),
-                onPressed: () => Navigator.pop(context),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
   }
 
   @override
@@ -150,7 +90,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   ),
                   const SizedBox(width: 10),
                   Image.asset(
-                    'assets/images/logo_login_screen.png',
+                    'assets/images/logo_login.png',
                     height: 34, // Scaled up logo to match font size
                     width: 34,
                     fit: BoxFit.contain,
@@ -340,42 +280,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   return null;
                 },
               ),
-              const SizedBox(height: 16),
-
-              // Terms & Conditions Switch
-              Row(
-                children: [
-                  CupertinoSwitch(
-                    value: _agreeToTerms,
-                    activeColor: _tealColor,
-                    onChanged: (bool value) {
-                      setState(() => _agreeToTerms = value);
-                    },
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: GestureDetector(
-                      onTap: _showTermsDialog,
-                      child: const Text.rich(
-                        TextSpan(
-                          text: 'I agree to the ',
-                          style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
-                          children: [
-                            TextSpan(
-                              text: 'Terms & Conditions',
-                              style: TextStyle(
-                                color: _tealColor,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 32),
 
               // Create Account Action Button
               SizedBox(
@@ -398,9 +303,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   ),
                 ),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 24),
 
-              // Login Redirection Link
+              // Login Redirection Footer
+              Divider(color: Colors.grey.shade200),
+              const SizedBox(height: 16),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [

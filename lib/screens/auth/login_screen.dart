@@ -1,5 +1,7 @@
 // File: lib/screens/auth/login_screen.dart
 
+import 'dart:math' as math;
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -42,12 +44,21 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  // Trial/demo mode: skips validation and goes straight to the dashboard.
+  // TODO: replace with a real auth call (e.g. POST /auth/login with
+  // _emailController.text / _passwordController.text) once the backend
+  // is ready, and only navigate on a successful response.
+  Future<bool> _authenticateWithBackend() async {
+    await Future.delayed(const Duration(milliseconds: 800));
+    return true;
+  }
+
   void _handleLogin() async {
-    if (_formKey.currentState!.validate()) {
-      setState(() => _isLoading = true);
-      await Future.delayed(const Duration(milliseconds: 800));
-      if (!mounted) return;
-      setState(() => _isLoading = false);
+    setState(() => _isLoading = true);
+    final success = await _authenticateWithBackend();
+    if (!mounted) return;
+    setState(() => _isLoading = false);
+    if (success) {
       Navigator.pushReplacementNamed(context, AppRoutes.dashboard);
     }
   }
@@ -159,52 +170,30 @@ class _LoginScreenState extends State<LoginScreen> {
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
-            child: Form(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(24.0, 32.0, 24.0, 24.0),
+          child: Form(
               key: _formKey,
               child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisAlignment: MainAxisAlignment.start,
                 children: [
-                  // iOS App Icon Squircle Container
-                  Container(
-                    height: 100,
-                    width: 100,
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(22),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.08),
-                          blurRadius: 20,
-                          offset: const Offset(0, 8),
-                        ),
-                      ],
-                    ),
-                    padding: const EdgeInsets.all(12),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(16),
-                      child: Image.asset(
-                        'assets/images/logo_login_screen.png',
-                        fit: BoxFit.contain,
-                        errorBuilder: (context, error, stackTrace) {
-                          return Container(
-                            decoration: BoxDecoration(
-                              color: AppColors.primary.withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                            child: const Icon(
-                              CupertinoIcons.heart_fill,
-                              size: 44,
-                              color: AppColors.primary,
-                            ),
-                          );
-                        },
-                      ),
+                  // Brand Logo
+                  SizedBox(
+                    height: 108,
+                    width: 108,
+                    child: Image.asset(
+                      'assets/images/logo_login.png',
+                      fit: BoxFit.contain,
+                      errorBuilder: (context, error, stackTrace) {
+                        return const Icon(
+                          CupertinoIcons.heart_fill,
+                          size: 64,
+                          color: AppColors.primary,
+                        );
+                      },
                     ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 12),
 
                   // Header Titles
                   const Text(
@@ -243,15 +232,6 @@ class _LoginScreenState extends State<LoginScreen> {
                         borderSide: BorderSide(color: Colors.grey.shade300),
                       ),
                     ),
-                    validator: (value) {
-                      if (value == null || value.trim().isEmpty) {
-                        return 'Please enter your email';
-                      }
-                      if (!value.contains('@')) {
-                        return 'Please enter a valid email address';
-                      }
-                      return null;
-                    },
                   ),
                   const SizedBox(height: 16),
 
@@ -285,12 +265,6 @@ class _LoginScreenState extends State<LoginScreen> {
                         borderSide: BorderSide(color: Colors.grey.shade300),
                       ),
                     ),
-                    validator: (value) {
-                      if (value == null || value.isEmpty) {
-                        return 'Please enter your password';
-                      }
-                      return null;
-                    },
                   ),
                   const SizedBox(height: 6),
 
@@ -380,8 +354,12 @@ class _LoginScreenState extends State<LoginScreen> {
                             child: Row(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: const [
-                                Icon(Icons.g_mobiledata_rounded, size: 30, color: Color(0xFFEA4335)),
-                                SizedBox(width: 4),
+                                SizedBox(
+                                  height: 20,
+                                  width: 20,
+                                  child: CustomPaint(painter: _GoogleLogoPainter()),
+                                ),
+                                SizedBox(width: 10),
                                 Text(
                                   'Google',
                                   style: TextStyle(
@@ -473,10 +451,53 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                 ],
               ),
-            ),
           ),
         ),
       ),
     );
   }
+}
+
+/// Draws the Google "G" mark's four-color ring + crossbar without needing an
+/// external logo asset.
+class _GoogleLogoPainter extends CustomPainter {
+  const _GoogleLogoPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = size.width / 2;
+    final strokeWidth = size.width * 0.24;
+    final ringRect = Rect.fromCircle(center: center, radius: radius - strokeWidth / 2);
+
+    void arc(double startDeg, double sweepDeg, Color color) {
+      final paint = Paint()
+        ..color = color
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = strokeWidth
+        ..strokeCap = StrokeCap.butt;
+      canvas.drawArc(ringRect, startDeg * math.pi / 180, sweepDeg * math.pi / 180, false, paint);
+    }
+
+    const gap = 8.0;
+    const seg = (360 - 4 * gap) / 4;
+    arc(-86, seg, const Color(0xFFEA4335)); // red
+    arc(-86 + seg + gap, seg, const Color(0xFF4285F4)); // blue
+    arc(-86 + 2 * (seg + gap), seg, const Color(0xFF34A853)); // green
+    arc(-86 + 3 * (seg + gap), seg, const Color(0xFFFBBC05)); // yellow
+
+    final barPaint = Paint()..color = const Color(0xFF4285F4);
+    canvas.drawRect(
+      Rect.fromLTWH(
+        center.dx - strokeWidth * 0.1,
+        center.dy - strokeWidth / 2,
+        radius - center.dx + strokeWidth * 0.6,
+        strokeWidth,
+      ),
+      barPaint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

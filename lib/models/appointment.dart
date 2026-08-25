@@ -20,4 +20,16 @@ class Appointment {
     required this.status,
     this.notes,
   });
+
+  Appointment copyWith({AppointmentStatus? status}) {
+    return Appointment(
+      id: id,
+      serviceName: serviceName,
+      doctorName: doctorName,
+      date: date,
+      timeSlot: timeSlot,
+      status: status ?? this.status,
+      notes: notes,
+    );
+  }
 }

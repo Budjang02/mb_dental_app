@@ -1,9 +1,23 @@
+import 'dart:io';
+
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:mb_dental_app/app/theme.dart';
 import 'package:mb_dental_app/app/routes.dart';
+import 'package:mb_dental_app/repositories/patient_repository.dart';
+import 'change_password_screen.dart';
+import 'edit_profile_screen.dart';
 
-class ProfileScreen extends StatelessWidget {
+class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
+
+  @override
+  State<ProfileScreen> createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends State<ProfileScreen> {
+  final PatientRepository _repository = PatientRepository();
 
   void _showLogoutDialog(BuildContext context) {
     showDialog(
@@ -43,111 +57,153 @@ class ProfileScreen extends StatelessWidget {
     );
   }
 
+  Future<void> _pickAvatar() async {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(CupertinoIcons.camera, color: AppColors.primary),
+              title: const Text('Take Photo'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _pickAndSetAvatar(ImageSource.camera);
+              },
+            ),
+            ListTile(
+              leading: const Icon(CupertinoIcons.photo, color: AppColors.primary),
+              title: const Text('Choose from Gallery'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _pickAndSetAvatar(ImageSource.gallery);
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickAndSetAvatar(ImageSource source) async {
+    try {
+      final picker = ImagePicker();
+      final picked = await picker.pickImage(source: source, imageQuality: 80, maxWidth: 800);
+      if (picked == null || !mounted) return;
+      _repository.updateAvatar(picked.path);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not set photo: $e')));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('My Profile'),
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          children: [
-            Center(
-              child: Column(
-                children: [
-                  CircleAvatar(
-                    radius: 40,
-                    backgroundColor: AppColors.primary.withOpacity(0.1),
-                    child: const Icon(
-                      Icons.person,
-                      size: 48,
-                      color: AppColors.primary,
-                    ),
+      body: ListenableBuilder(
+        listenable: _repository,
+        builder: (context, _) {
+          final patient = _repository.patient;
+          return SingleChildScrollView(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              children: [
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(vertical: 24),
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withOpacity(0.06),
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(color: AppColors.primary.withOpacity(0.12)),
                   ),
-                  const SizedBox(height: 12),
-                  const Text(
-                    'John Wilson Salvador',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.textPrimary,
-                    ),
+                  child: Column(
+                    children: [
+                      GestureDetector(
+                        onTap: _pickAvatar,
+                        child: Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            CircleAvatar(
+                              radius: 42,
+                              backgroundColor: AppColors.primary.withOpacity(0.12),
+                              backgroundImage: patient.avatarPath != null ? FileImage(File(patient.avatarPath!)) : null,
+                              child: patient.avatarPath == null
+                                  ? const Icon(CupertinoIcons.person_fill, size: 48, color: AppColors.primary)
+                                  : null,
+                            ),
+                            Positioned(
+                              right: -2,
+                              bottom: -2,
+                              child: Container(
+                                padding: const EdgeInsets.all(6),
+                                decoration: BoxDecoration(
+                                  color: AppColors.primary,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(color: Colors.white, width: 2),
+                                ),
+                                child: const Icon(CupertinoIcons.add, size: 14, color: Colors.white),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      Text(
+                        patient.fullName,
+                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                      ),
+                    ],
                   ),
-                  const Text(
-                    'Patient Code: PAT-2026-0089',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 24),
-            Card(
-              elevation: 0,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-                side: const BorderSide(color: AppColors.border),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  children: [
-                    _buildInfoRow(
-                      Icons.email_outlined,
-                      'Email',
-                      'salvadorjohnwilson55@gmail.com',
-                    ),
-                    const Divider(height: 24),
-                    _buildInfoRow(
-                      Icons.phone_outlined,
-                      'Phone',
-                      '+63 992 299 0844',
-                    ),
-                    const Divider(height: 24),
-                    _buildInfoRow(
-                      Icons.people_outline,
-                      'Gender',
-                      'Male',
-                    ),
-                  ],
                 ),
-              ),
-            ),
-            const SizedBox(height: 24),
-            _buildSettingTile(
-              icon: Icons.edit_outlined,
-              title: 'Edit Profile Information',
-              onTap: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Edit Profile form opens here.'),
+                const SizedBox(height: 20),
+                Card(
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    side: BorderSide(color: AppColors.primary.withOpacity(0.15)),
                   ),
-                );
-              },
-            ),
-            _buildSettingTile(
-              icon: Icons.lock_outline,
-              title: 'Change Password',
-              onTap: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Change Password form opens here.'),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      children: [
+                        _buildInfoRow(CupertinoIcons.mail, 'Email', patient.email),
+                        Divider(height: 24, color: AppColors.primary.withOpacity(0.1)),
+                        _buildInfoRow(CupertinoIcons.phone, 'Phone', patient.phone),
+                        Divider(height: 24, color: AppColors.primary.withOpacity(0.1)),
+                        _buildInfoRow(CupertinoIcons.person_2, 'Gender', patient.gender),
+                      ],
+                    ),
                   ),
-                );
-              },
+                ),
+                const SizedBox(height: 20),
+                _buildSettingTile(
+                  icon: CupertinoIcons.pencil,
+                  title: 'Edit Profile Information',
+                  onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const EditProfileScreen())),
+                ),
+                _buildSettingTile(
+                  icon: CupertinoIcons.lock,
+                  title: 'Change Password',
+                  onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ChangePasswordScreen())),
+                ),
+                _buildSettingTile(
+                  icon: CupertinoIcons.square_arrow_right,
+                  title: 'Log Out',
+                  textColor: AppColors.error,
+                  iconColor: AppColors.error,
+                  onTap: () => _showLogoutDialog(context),
+                ),
+              ],
             ),
-            _buildSettingTile(
-              icon: Icons.logout,
-              title: 'Log Out',
-              textColor: AppColors.error,
-              iconColor: AppColors.error,
-              onTap: () => _showLogoutDialog(context),
-            ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
@@ -193,7 +249,7 @@ class ProfileScreen extends StatelessWidget {
       elevation: 0,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: const BorderSide(color: AppColors.border),
+        side: BorderSide(color: AppColors.primary.withOpacity(0.15)),
       ),
       child: ListTile(
         leading: Icon(icon, color: iconColor),
@@ -206,7 +262,7 @@ class ProfileScreen extends StatelessWidget {
           ),
         ),
         trailing: const Icon(
-          Icons.chevron_right,
+          CupertinoIcons.chevron_right,
           color: AppColors.textSecondary,
         ),
         onTap: onTap,

@@ -1,5 +1,7 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import '../../app/theme.dart';
+import 'package:mb_dental_app/repositories/patient_repository.dart';
 
 class BookAppointmentScreen extends StatefulWidget {
   const BookAppointmentScreen({super.key});
@@ -11,12 +13,16 @@ class BookAppointmentScreen extends StatefulWidget {
 class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
   final _formKey = GlobalKey<FormState>();
   final _notesController = TextEditingController();
+  final _downPaymentController = TextEditingController(text: '500');
+  final PatientRepository _repository = PatientRepository();
 
   String _selectedService = 'Oral Prophylaxis (Cleaning)';
   String _selectedDoctor = 'Dr. Rey Vincent Bolasoc';
   DateTime? _selectedDate;
   String? _selectedTimeSlot;
   bool _isSubmitting = false;
+  bool _addDownPayment = false;
+  String? _downPaymentError;
 
   final List<String> _services = [
     'Oral Prophylaxis (Cleaning)',
@@ -40,16 +46,11 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
     '04:30 PM',
   ];
 
-  void _selectDate() async {
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: DateTime.now().add(const Duration(days: 1)),
-      firstDate: DateTime.now(),
-      lastDate: DateTime.now().add(const Duration(days: 90)),
-    );
-    if (picked != null) {
-      setState(() => _selectedDate = picked);
-    }
+  @override
+  void dispose() {
+    _notesController.dispose();
+    _downPaymentController.dispose();
+    super.dispose();
   }
 
   void _handleSubmit() async {
@@ -67,15 +68,42 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
       return;
     }
 
-    setState(() => _isSubmitting = true);
-    await Future.delayed(const Duration(seconds: 1));
+    double? downPaymentAmount;
+    if (_addDownPayment) {
+      downPaymentAmount = double.tryParse(_downPaymentController.text.trim());
+      if (downPaymentAmount == null || downPaymentAmount <= 0) {
+        setState(() => _downPaymentError = 'Enter a valid amount');
+        return;
+      }
+      if (downPaymentAmount > _repository.walletBalance) {
+        setState(() => _downPaymentError = 'Insufficient wallet balance');
+        return;
+      }
+    }
 
+    setState(() {
+      _isSubmitting = true;
+      _downPaymentError = null;
+    });
+    await Future.delayed(const Duration(seconds: 1));
     if (!mounted) return;
+
+    if (downPaymentAmount != null) {
+      _repository.deductForDownPayment(serviceName: _selectedService, amount: downPaymentAmount);
+    }
+    _repository.addAppointment(
+      serviceName: _selectedService,
+      doctorName: _selectedDoctor,
+      date: _selectedDate!,
+      timeSlot: _selectedTimeSlot!,
+      notes: _notesController.text.trim().isEmpty ? null : _notesController.text.trim(),
+    );
+
     setState(() => _isSubmitting = false);
 
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('Appointment requested successfully! Pending confirmation.'),
+        content: Text('Appointment scheduled! Check the Upcoming tab.'),
         backgroundColor: AppColors.success,
       ),
     );
@@ -100,7 +128,7 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
               const Text('Select Dental Service', style: TextStyle(fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(
-                value: _selectedService,
+                initialValue: _selectedService,
                 decoration: const InputDecoration(),
                 items: _services
                     .map((s) => DropdownMenuItem(value: s, child: Text(s)))
@@ -113,7 +141,7 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
               const Text('Preferred Dentist', style: TextStyle(fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(
-                value: _selectedDoctor,
+                initialValue: _selectedDoctor,
                 decoration: const InputDecoration(),
                 items: _doctors
                     .map((d) => DropdownMenuItem(value: d, child: Text(d)))
@@ -122,33 +150,24 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
               ),
               const SizedBox(height: 20),
 
-              // Date Selector Button
+              // Date Selector - inline calendar
               const Text('Appointment Date', style: TextStyle(fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
-              InkWell(
-                onTap: _selectDate,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                  decoration: BoxDecoration(
-                    color: AppColors.surface,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: AppColors.border),
+              Container(
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: Theme(
+                  data: Theme.of(context).copyWith(
+                    colorScheme: Theme.of(context).colorScheme.copyWith(primary: AppColors.primary),
                   ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        _selectedDate == null
-                            ? 'Select Date'
-                            : '${_selectedDate!.year}-${_selectedDate!.month.toString().padLeft(2, '0')}-${_selectedDate!.day.toString().padLeft(2, '0')}',
-                        style: TextStyle(
-                          color: _selectedDate == null
-                              ? AppColors.textSecondary
-                              : AppColors.textPrimary,
-                        ),
-                      ),
-                      const Icon(Icons.calendar_today_outlined, size: 20, color: AppColors.primary),
-                    ],
+                  child: CalendarDatePicker(
+                    initialDate: _selectedDate ?? DateTime.now().add(const Duration(days: 1)),
+                    firstDate: DateTime.now(),
+                    lastDate: DateTime.now().add(const Duration(days: 90)),
+                    onDateChanged: (date) => setState(() => _selectedDate = date),
                   ),
                 ),
               ),
@@ -187,6 +206,60 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
                 maxLines: 3,
                 decoration: const InputDecoration(
                   hintText: 'Describe any symptoms or specific requests...',
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              // Optional Down Payment
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withOpacity(0.05),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: AppColors.primary.withOpacity(0.2)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text('Add a Down Payment',
+                                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                              const SizedBox(height: 2),
+                              Text(
+                                'Wallet Balance: ₱${_repository.walletBalance.toStringAsFixed(2)}',
+                                style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                              ),
+                            ],
+                          ),
+                        ),
+                        CupertinoSwitch(
+                          value: _addDownPayment,
+                          activeTrackColor: AppColors.primary,
+                          onChanged: (val) => setState(() {
+                            _addDownPayment = val;
+                            _downPaymentError = null;
+                          }),
+                        ),
+                      ],
+                    ),
+                    if (_addDownPayment) ...[
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _downPaymentController,
+                        keyboardType: TextInputType.number,
+                        decoration: InputDecoration(
+                          prefixText: '₱ ',
+                          labelText: 'Down Payment Amount',
+                          errorText: _downPaymentError,
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ),
               const SizedBox(height: 32),

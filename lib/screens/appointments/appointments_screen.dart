@@ -1,7 +1,9 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import '../../app/theme.dart';
 import '../../models/appointment.dart';
 import 'package:mb_dental_app/repositories/patient_repository.dart';
+import 'package:mb_dental_app/widgets/appointment_detail_sheet.dart';
 import 'book_appointment_screen.dart';
 
 class AppointmentsScreen extends StatefulWidget {
@@ -15,13 +17,11 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
   final PatientRepository _repository = PatientRepository();
-  late List<Appointment> _allAppointments;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
-    _allAppointments = _repository.getMockAppointments();
   }
 
   @override
@@ -30,15 +30,13 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
     super.dispose();
   }
 
-  List<Appointment> _getFilteredAppointments(AppointmentStatus statusFilter) {
+  List<Appointment> _filter(List<Appointment> all, AppointmentStatus statusFilter) {
     if (statusFilter == AppointmentStatus.pending) {
-      return _allAppointments
-          .where((a) =>
-      a.status == AppointmentStatus.pending ||
-          a.status == AppointmentStatus.confirmed)
+      return all
+          .where((a) => a.status == AppointmentStatus.pending || a.status == AppointmentStatus.confirmed)
           .toList();
     }
-    return _allAppointments.where((a) => a.status == statusFilter).toList();
+    return all.where((a) => a.status == statusFilter).toList();
   }
 
   @override
@@ -58,25 +56,26 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
           ],
         ),
       ),
-      body: TabBarView(
-        controller: _tabController,
-        children: [
-          _buildAppointmentList(_getFilteredAppointments(AppointmentStatus.pending)),
-          _buildAppointmentList(_getFilteredAppointments(AppointmentStatus.completed)),
-          _buildAppointmentList(_getFilteredAppointments(AppointmentStatus.cancelled)),
-        ],
+      body: ListenableBuilder(
+        listenable: _repository,
+        builder: (context, _) {
+          final all = _repository.appointments;
+          return TabBarView(
+            controller: _tabController,
+            children: [
+              _buildAppointmentList(_filter(all, AppointmentStatus.pending)),
+              _buildAppointmentList(_filter(all, AppointmentStatus.completed)),
+              _buildAppointmentList(_filter(all, AppointmentStatus.cancelled)),
+            ],
+          );
+        },
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => const BookAppointmentScreen(),
-            ),
-          );
+          Navigator.push(context, MaterialPageRoute(builder: (_) => const BookAppointmentScreen()));
         },
         backgroundColor: AppColors.primary,
-        icon: const Icon(Icons.add, color: Colors.white),
+        icon: const Icon(CupertinoIcons.add, color: Colors.white),
         label: const Text('Book New', style: TextStyle(color: Colors.white)),
       ),
     );
@@ -85,109 +84,80 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
   Widget _buildAppointmentList(List<Appointment> appointments) {
     if (appointments.isEmpty) {
       return const Center(
-        child: Text(
-          'No appointments found.',
-          style: TextStyle(color: AppColors.textSecondary),
-        ),
+        child: Text('No appointments found.', style: TextStyle(color: AppColors.textSecondary)),
       );
     }
 
     return ListView.builder(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 90),
       itemCount: appointments.length,
-      itemBuilder: (context, index) {
-        final item = appointments[index];
-        return _buildAppointmentCard(item);
-      },
+      itemBuilder: (context, index) => _buildAppointmentCard(appointments[index]),
     );
   }
 
   Widget _buildAppointmentCard(Appointment item) {
-    Color badgeColor;
-    String statusText;
-
-    switch (item.status) {
-      case AppointmentStatus.confirmed:
-        badgeColor = AppColors.success;
-        statusText = 'Confirmed';
-        break;
-      case AppointmentStatus.pending:
-        badgeColor = AppColors.warning;
-        statusText = 'Pending';
-        break;
-      case AppointmentStatus.completed:
-        badgeColor = AppColors.primary;
-        statusText = 'Completed';
-        break;
-      case AppointmentStatus.cancelled:
-        badgeColor = AppColors.error;
-        statusText = 'Cancelled';
-        break;
-    }
-
-    return Card(
+    final color = statusColor(item.status);
+    return Container(
       margin: const EdgeInsets.only(bottom: 12),
-      elevation: 0,
-      shape: RoundedRectangleBorder(
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.08),
         borderRadius: BorderRadius.circular(12),
-        side: const BorderSide(color: AppColors.border),
+        border: Border.all(color: color.withOpacity(0.35)),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  item.serviceName,
-                  style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.textPrimary,
-                  ),
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: badgeColor.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    statusText,
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
-                      color: badgeColor,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: () => showAppointmentDetailSheet(context, item),
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: Text(
+                      item.serviceName,
+                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
                     ),
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                const Icon(Icons.person_outline, size: 16, color: AppColors.textSecondary),
-                const SizedBox(width: 6),
-                Text(
-                  item.doctorName,
-                  style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
-                ),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Row(
-              children: [
-                const Icon(Icons.event_outlined, size: 16, color: AppColors.textSecondary),
-                const SizedBox(width: 6),
-                Text(
-                  '${item.date.year}-${item.date.month.toString().padLeft(2, '0')}-${item.date.day.toString().padLeft(2, '0')} at ${item.timeSlot}',
-                  style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
-                ),
-              ],
-            ),
-          ],
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: statusColor(item.status).withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      statusLabel(item.status),
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: statusColor(item.status)),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const Icon(CupertinoIcons.person, size: 16, color: AppColors.textSecondary),
+                  const SizedBox(width: 6),
+                  Text(item.doctorName, style: const TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  const Icon(CupertinoIcons.calendar, size: 16, color: AppColors.textSecondary),
+                  const SizedBox(width: 6),
+                  Text(
+                    '${formatAppointmentDate(item.date)} at ${item.timeSlot}',
+                    style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          ),
         ),
       ),
     );

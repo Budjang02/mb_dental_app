@@ -1,75 +1,59 @@
 name: mb_dental_app
 description: "A dedicated mobile application for patients of Mariano and Bolasoc Dental Center."
-# The following line prevents the package from being accidentally published to
-# pub.dev using `flutter pub publish`. This is preferred for private packages.
-publish_to: 'none' # Remove this line if you wish to publish to pub.dev
+publish_to: 'none'
 
-# The following defines the version and build number for your application.
-# A version number is three numbers separated by dots, like 1.2.43
-# followed by an optional build number separated by a +.
-# Both the version and the builder number may be overridden in flutter
-# build by specifying --build-name and --build-number, respectively.
-# In Android, build-name is used as versionName while build-number used as versionCode.
-# Read more about Android versioning at https://developer.android.com/studio/publish/versioning
-# In iOS, build-name is used as CFBundleShortVersionString while build-number is used as CFBundleVersion.
-# Read more about iOS versioning at
-# https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
-# In Windows, build-name is used as the major, minor, and patch parts
-# of the product and file versions while build-number is used as the build suffix.
 version: 1.0.0+1
 
 environment:
   sdk: ^3.12.2
 
-# Dependencies specify other packages that your package needs in order to work.
-# To automatically upgrade your package dependencies to the latest versions
-# consider running `flutter pub upgrade --major-versions`. Alternatively,
-# dependencies can be manually updated by changing the version numbers below to
-# the latest version available on pub.dev. To see which dependencies have newer
-# versions available, run `flutter pub outdated`.
 dependencies:
   flutter:
     sdk: flutter
 
   url_launcher: ^6.3.0
-  flutter_native_splash: ^2.4.0
-  flutter_launcher_icons: ^0.13.1
-
-  # The following adds the Cupertino Icons font to your application.
-  # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
+  image_picker: ^1.1.2
+  pdf: ^3.11.1
+  printing: ^5.13.4
+  lottie: ^3.1.2
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^2.0.0
   flutter_launcher_icons: ^0.13.1
-  flutter_native_splash: ^2.3.8
+  flutter_native_splash: ^2.4.0
 
 # Asset Configuration
 flutter:
   uses-material-design: true
   assets:
-    - assets/images/icon_logo.png
-    - assets/images/logo_login_screen.png
+    - assets/images/logo_icon.png
+    - assets/images/logo_login.png
+    - assets/images/transparent_icon.png
+    - assets/animations/animation_splash.json
 
 # 1. App Icon Configuration
 flutter_launcher_icons:
   android: true
   ios: true
-  image_path: "assets/images/icon_logo.png"
+  image_path: "assets/images/logo_icon.png"
   min_sdk_android: 21
-  # Adaptive Icon Setup (Prevents cropping/zooming)
-  adaptive_icon_background: "#0D9488" # Matches your app background
-  adaptive_icon_foreground: "assets/images/icon_logo.png"
+  adaptive_icon_background: '#0D9488'
+  adaptive_icon_foreground: "assets/images/logo_icon.png"
 
 # 2. Splash Screen Configuration
+# No real image here on purpose: the animated Lottie splash (see
+# lib/screens/splash/splash_screen.dart) is the only logo the user should
+# see. This native splash is just a solid color bridging the gap before
+# Flutter's first frame renders. Android 12+ always draws *some* icon in its
+# mandatory system splash (defaulting to the launcher icon if none is given),
+# so we hand it a fully transparent 1px icon to keep that moment blank.
 flutter_native_splash:
-  color: "#0D9488"
-  image: assets/images/icon_logo.png
-  fullscreen: true # Enables edge-to-edge full screen
+  color: '#0D9488'
+  fullscreen: true
   android_12:
-    image: assets/images/icon_logo.png
-    color: "#0D9488"
-    icon_background_color: "#0D9488"
-
+    image: assets/images/transparent_icon.png
+    color: '#0D9488'
+    icon_background_color: '#0D9488'
