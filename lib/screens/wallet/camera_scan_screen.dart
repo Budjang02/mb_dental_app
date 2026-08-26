@@ -55,12 +55,12 @@ class _CameraScanScreenState extends State<CameraScanScreen> {
             const SizedBox(height: 12),
             const Text('Code Recognized', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
             const SizedBox(height: 6),
-            const Text('Pay to', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
-            const Text(merchant,
+            Text('Pay to', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+            Text(merchant,
                 textAlign: TextAlign.center,
                 style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: AppColors.textPrimary)),
             const SizedBox(height: 12),
-            const Text('₱350.00', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 28, color: AppColors.primary)),
+            Text('₱350.00', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 28, color: AppColors.primary)),
             const SizedBox(height: 20),
             Row(
               children: [

@@ -10,6 +10,7 @@ class Appointment {
   final String timeSlot;
   final AppointmentStatus status;
   final String? notes;
+  final String? paymentMethod;
 
   Appointment({
     required this.id,
@@ -19,6 +20,7 @@ class Appointment {
     required this.timeSlot,
     required this.status,
     this.notes,
+    this.paymentMethod,
   });
 
   Appointment copyWith({AppointmentStatus? status}) {
@@ -30,6 +32,7 @@ class Appointment {
       timeSlot: timeSlot,
       status: status ?? this.status,
       notes: notes,
+      paymentMethod: paymentMethod,
     );
   }
 }

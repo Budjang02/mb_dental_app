@@ -18,15 +18,34 @@ class TransactionHistoryScreen extends StatelessWidget {
         builder: (context, _) {
           final transactions = repository.transactions;
           if (transactions.isEmpty) {
-            return const Center(
+            return Center(
               child: Text('No transactions yet.', style: TextStyle(color: AppColors.textSecondary)),
             );
           }
-          return ListView.separated(
+
+          final grouped = <String, List<WalletTransaction>>{};
+          for (final t in transactions) {
+            grouped.putIfAbsent(formatTxnDate(t.dateTime), () => []).add(t);
+          }
+
+          return ListView(
             padding: const EdgeInsets.all(20),
-            itemCount: transactions.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 10),
-            itemBuilder: (context, index) => _buildTile(context, transactions[index]),
+            children: [
+              for (final entry in grouped.entries) ...[
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8, top: 4),
+                  child: Text(
+                    entry.key,
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.primary),
+                  ),
+                ),
+                for (final txn in entry.value) ...[
+                  _buildTile(context, txn),
+                  const SizedBox(height: 10),
+                ],
+                const SizedBox(height: 10),
+              ],
+            ],
           );
         },
       ),
@@ -46,22 +65,16 @@ class TransactionHistoryScreen extends StatelessWidget {
         ),
         child: Row(
           children: [
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(color: AppColors.primary.withOpacity(0.12), shape: BoxShape.circle),
-              child: Icon(txn.icon, color: AppColors.primary, size: 20),
-            ),
-            const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(txn.title,
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textPrimary)),
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textPrimary)),
                   const SizedBox(height: 2),
                   Text(
-                    '${txn.subtitle} • ${formatTxnDate(txn.dateTime)} • ${formatTxnTime(txn.dateTime)}',
-                    style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                    '${txn.subtitle} • ${formatTxnTime(txn.dateTime)}',
+                    style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
                   ),
                 ],
               ),

@@ -35,6 +35,7 @@ class PatientRepository extends ChangeNotifier {
       patientCode: 'PAT-2026-0089',
       firstName: 'John Wilson',
       lastName: 'Salvador',
+      username: 'jwsalvador',
       email: 'salvadorjohnwilson55@gmail.com',
       phone: '+63 992 299 0844',
       gender: 'Male',
@@ -228,6 +229,7 @@ class PatientRepository extends ChangeNotifier {
     required DateTime date,
     required String timeSlot,
     String? notes,
+    String? paymentMethod,
   }) {
     final appointment = Appointment(
       id: 'app-${(_appointmentSeq++).toString().padLeft(2, '0')}',
@@ -237,6 +239,7 @@ class PatientRepository extends ChangeNotifier {
       timeSlot: timeSlot,
       status: AppointmentStatus.pending,
       notes: notes,
+      paymentMethod: paymentMethod,
     );
     _appointments = [..._appointments, appointment];
     notifyListeners();
@@ -279,20 +282,6 @@ class PatientRepository extends ChangeNotifier {
     return txn;
   }
 
-  /// Returns false without changing anything if the balance is insufficient.
-  bool deductForDownPayment({required String serviceName, required double amount}) {
-    if (amount > _walletBalance) return false;
-    addWalletTransaction(
-      title: 'Down Payment - $serviceName',
-      subtitle: 'Appointment Booking',
-      amount: amount,
-      type: TransactionType.debit,
-      icon: CupertinoIcons.calendar,
-      method: 'Wallet',
-    );
-    return true;
-  }
-
   void markNotificationRead(String id) {
     _notifications = _notifications
         .map((n) => n.id == id
@@ -303,12 +292,21 @@ class PatientRepository extends ChangeNotifier {
     notifyListeners();
   }
 
-  void updatePatient({String? firstName, String? lastName, String? phone, String? gender}) {
+  void updatePatient({
+    String? firstName,
+    String? lastName,
+    String? username,
+    String? phone,
+    String? gender,
+    DateTime? dateOfBirth,
+  }) {
     _patient = _patient.copyWith(
       firstName: firstName,
       lastName: lastName,
+      username: username,
       phone: phone,
       gender: gender,
+      dateOfBirth: dateOfBirth,
     );
     notifyListeners();
   }

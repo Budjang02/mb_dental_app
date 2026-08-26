@@ -2,9 +2,11 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:mb_dental_app/app/theme.dart';
 import 'package:mb_dental_app/models/appointment.dart';
+import 'package:mb_dental_app/models/notification.dart';
 import 'package:mb_dental_app/models/wallet_transaction.dart';
 import 'package:mb_dental_app/repositories/patient_repository.dart';
 import 'package:mb_dental_app/screens/appointments/book_appointment_screen.dart';
+import 'package:mb_dental_app/screens/dashboard/notifications_screen.dart';
 import 'package:mb_dental_app/screens/wallet/transaction_history_screen.dart';
 import 'package:mb_dental_app/widgets/appointment_detail_sheet.dart';
 import 'package:mb_dental_app/widgets/transaction_detail_sheet.dart';
@@ -15,6 +17,42 @@ const List<String> _monthNames = [
 ];
 
 String _formatDateHeading(DateTime date) => '${_monthNames[date.month - 1]} ${date.day}, ${date.year}';
+
+/// Picks an icon + accent color for a notification based on keywords in its
+/// title, so the list reads at a glance instead of every row looking the same.
+IconData notificationIcon(NotificationItem n) {
+  final title = n.title.toLowerCase();
+  if (title.contains('payment') || title.contains('wallet') || title.contains('receipt')) {
+    return CupertinoIcons.creditcard_fill;
+  }
+  if (title.contains('reminder')) {
+    return CupertinoIcons.bell_fill;
+  }
+  if (title.contains('appointment') || title.contains('confirm') || title.contains('schedule')) {
+    return CupertinoIcons.calendar;
+  }
+  return CupertinoIcons.sparkles;
+}
+
+Color notificationColor(NotificationItem n) {
+  final title = n.title.toLowerCase();
+  if (title.contains('payment') || title.contains('wallet') || title.contains('receipt')) {
+    return AppColors.success;
+  }
+  if (title.contains('reminder')) {
+    return AppColors.warning;
+  }
+  return AppColors.primary;
+}
+
+String formatNotificationDate(DateTime date) => '${_monthNames[date.month - 1].substring(0, 1)}${_monthNames[date.month - 1].substring(1).toLowerCase()} ${date.day}, ${date.year}';
+
+String formatNotificationTime(DateTime date) {
+  final hour = date.hour % 12 == 0 ? 12 : date.hour % 12;
+  final minute = date.minute.toString().padLeft(2, '0');
+  final period = date.hour >= 12 ? 'PM' : 'AM';
+  return '$hour:$minute $period';
+}
 
 class HomeTab extends StatefulWidget {
   final ValueChanged<int> onNavigateToTab;
@@ -49,35 +87,6 @@ class _HomeTabState extends State<HomeTab> {
         ],
       );
 
-  void _showComingSoonSheet(String title) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (context) => Padding(
-        padding: const EdgeInsets.fromLTRB(24, 28, 24, 40),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(CupertinoIcons.sparkles, color: AppColors.primary, size: 32),
-            const SizedBox(height: 12),
-            Text(
-              title,
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColors.textPrimary),
-            ),
-            const SizedBox(height: 6),
-            const Text(
-              'Coming soon.',
-              style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   void _toggleNotifications() {
     if (_notificationOverlay != null) {
       _closeNotifications();
@@ -104,7 +113,13 @@ class _HomeTabState extends State<HomeTab> {
             targetAnchor: Alignment.bottomRight,
             followerAnchor: Alignment.topRight,
             offset: const Offset(0, 10),
-            child: _NotificationDropdown(repository: _repository),
+            child: _NotificationDropdown(
+              repository: _repository,
+              onSeeAll: () {
+                _closeNotifications();
+                Navigator.push(context, MaterialPageRoute(builder: (_) => const NotificationsScreen()));
+              },
+            ),
           ),
         ],
       ),
@@ -141,7 +156,7 @@ class _HomeTabState extends State<HomeTab> {
                   const SizedBox(height: 16),
                   _buildWalletCard(),
                   const SizedBox(height: 20),
-                  const Text(
+                  Text(
                     'Quick Actions',
                     style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
                   ),
@@ -151,7 +166,7 @@ class _HomeTabState extends State<HomeTab> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text(
+                      Text(
                         'Recent Activity',
                         style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
                       ),
@@ -160,13 +175,13 @@ class _HomeTabState extends State<HomeTab> {
                           context,
                           MaterialPageRoute(builder: (_) => const TransactionHistoryScreen()),
                         ),
-                        child: const Row(
+                        child: Row(
                           children: [
                             Text(
                               'See All',
                               style: TextStyle(color: AppColors.primary, fontSize: 12, fontWeight: FontWeight.bold),
                             ),
-                            SizedBox(width: 2),
+                            const SizedBox(width: 2),
                             Icon(CupertinoIcons.chevron_right, color: AppColors.primary, size: 16),
                           ],
                         ),
@@ -191,13 +206,13 @@ class _HomeTabState extends State<HomeTab> {
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Good morning,', style: TextStyle(fontSize: 14, color: AppColors.textSecondary)),
+            Text('Welcome back,', style: TextStyle(fontSize: 14, color: AppColors.textSecondary)),
             const SizedBox(height: 2),
             Row(
               children: [
                 Text(
                   _repository.patient.firstName,
-                  style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
                 ),
                 const SizedBox(width: 6),
                 const Text('👋', style: TextStyle(fontSize: 20)),
@@ -231,7 +246,7 @@ class _HomeTabState extends State<HomeTab> {
                     top: -2,
                     child: Container(
                       padding: const EdgeInsets.all(4),
-                      decoration: const BoxDecoration(color: AppColors.primary, shape: BoxShape.circle),
+                      decoration: BoxDecoration(color: AppColors.primary, shape: BoxShape.circle),
                       child: Text(
                         '${_repository.unreadNotificationCount}',
                         style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
@@ -260,28 +275,30 @@ class _HomeTabState extends State<HomeTab> {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(color: AppColors.primary.withOpacity(0.12), shape: BoxShape.circle),
-                child: const Icon(CupertinoIcons.calendar_badge_plus, color: AppColors.primary, size: 24),
+                child: Icon(CupertinoIcons.calendar_badge_plus, color: AppColors.primary, size: 24),
               ),
               const SizedBox(width: 14),
-              const Expanded(
+              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text('No upcoming appointments',
                         style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.textPrimary)),
-                    SizedBox(height: 2),
+                    const SizedBox(height: 2),
                     Text('Tap to book your next visit.',
                         style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
                   ],
                 ),
               ),
-              const Icon(CupertinoIcons.chevron_right, color: AppColors.primary, size: 18),
+              Icon(CupertinoIcons.chevron_right, color: AppColors.primary, size: 18),
             ],
           ),
         ),
       );
     }
 
+    // Colored to match the wallet balance card treatment: solid teal
+    // background with light/white text and icons for contrast.
     return InkWell(
       borderRadius: BorderRadius.circular(22),
       onTap: () {
@@ -291,7 +308,18 @@ class _HomeTabState extends State<HomeTab> {
       child: Container(
         width: double.infinity,
         clipBehavior: Clip.antiAlias,
-        decoration: _flatCardDecoration,
+        decoration: BoxDecoration(
+          color: AppColors.primary,
+          borderRadius: BorderRadius.circular(22),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.primary.withOpacity(0.28),
+              blurRadius: 26,
+              offset: const Offset(0, 12),
+              spreadRadius: -8,
+            ),
+          ],
+        ),
         child: Column(
           children: [
             Padding(
@@ -302,33 +330,28 @@ class _HomeTabState extends State<HomeTab> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(
-                        'Ref: ${appointmentReference(appointment.id)}',
-                        style: const TextStyle(fontSize: 11, color: AppColors.textSecondary, fontWeight: FontWeight.w600),
-                      ),
+                      const Text('Next Appointment',
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.white)),
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                         decoration: BoxDecoration(
-                          color: statusColor(appointment.status).withOpacity(0.1),
+                          color: Colors.white.withOpacity(0.18),
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: Text(
                           statusLabel(appointment.status),
-                          style: TextStyle(color: statusColor(appointment.status), fontSize: 11, fontWeight: FontWeight.bold),
+                          style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 4),
-                  const Text('Next Appointment',
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textPrimary)),
                   const SizedBox(height: 14),
                   Row(
                     children: [
                       Container(
                         padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(color: AppColors.primary.withOpacity(0.15), shape: BoxShape.circle),
-                        child: const Icon(CupertinoIcons.sparkles, color: AppColors.primary, size: 26),
+                        decoration: BoxDecoration(color: Colors.white.withOpacity(0.18), shape: BoxShape.circle),
+                        child: const Icon(CupertinoIcons.sparkles, color: Colors.white, size: 26),
                       ),
                       const SizedBox(width: 14),
                       Expanded(
@@ -340,31 +363,31 @@ class _HomeTabState extends State<HomeTab> {
                               style: const TextStyle(
                                 fontWeight: FontWeight.bold,
                                 fontSize: 13,
-                                color: AppColors.primary,
+                                color: Colors.white,
                                 letterSpacing: 0.4,
                               ),
                             ),
                             const SizedBox(height: 4),
                             Text(
                               appointment.serviceName,
-                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppColors.textPrimary),
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.white),
                             ),
                             const SizedBox(height: 4),
                             Row(
                               children: [
-                                const Icon(CupertinoIcons.clock, size: 13, color: AppColors.textSecondary),
+                                const Icon(CupertinoIcons.clock, size: 13, color: Colors.white70),
                                 const SizedBox(width: 4),
                                 Text(appointment.timeSlot,
-                                    style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                                    style: const TextStyle(fontSize: 12, color: Colors.white70)),
                               ],
                             ),
                             const SizedBox(height: 2),
                             Row(
                               children: [
-                                const Icon(CupertinoIcons.person, size: 13, color: AppColors.textSecondary),
+                                const Icon(CupertinoIcons.person, size: 13, color: Colors.white70),
                                 const SizedBox(width: 4),
                                 Text(appointment.doctorName,
-                                    style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                                    style: const TextStyle(fontSize: 12, color: Colors.white70)),
                               ],
                             ),
                           ],
@@ -377,14 +400,14 @@ class _HomeTabState extends State<HomeTab> {
             ),
             const SizedBox(height: 16),
             _buildTicketDivider(),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(18, 8, 18, 14),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(18, 8, 18, 14),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: const [
+                children: [
                   Text('View full details',
-                      style: TextStyle(color: AppColors.primary, fontSize: 12, fontWeight: FontWeight.bold)),
-                  Icon(CupertinoIcons.chevron_right, color: AppColors.primary, size: 16),
+                      style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                  Icon(CupertinoIcons.chevron_right, color: Colors.white, size: 16),
                 ],
               ),
             ),
@@ -412,7 +435,7 @@ class _HomeTabState extends State<HomeTab> {
                   child: Container(
                     margin: const EdgeInsets.symmetric(horizontal: 2),
                     height: 1.5,
-                    color: AppColors.border,
+                    color: Colors.white.withOpacity(0.35),
                   ),
                 );
               }),
@@ -436,11 +459,11 @@ class _HomeTabState extends State<HomeTab> {
           children: [
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: const [
+              children: [
                 Row(
                   children: [
                     Icon(CupertinoIcons.creditcard, color: AppColors.primary, size: 18),
-                    SizedBox(width: 8),
+                    const SizedBox(width: 8),
                     Text('Wallet Balance',
                         style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textPrimary)),
                   ],
@@ -457,16 +480,16 @@ class _HomeTabState extends State<HomeTab> {
                   children: [
                     Text(
                       '₱ ${_repository.walletBalance.toStringAsFixed(2)}',
-                      style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                      style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
                     ),
                     const SizedBox(height: 2),
-                    const Text('Available Balance', style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+                    Text('Available Balance', style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
                   ],
                 ),
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(color: AppColors.primary.withOpacity(0.12), shape: BoxShape.circle),
-                  child: const Icon(CupertinoIcons.creditcard_fill, color: AppColors.primary, size: 24),
+                  child: Icon(CupertinoIcons.creditcard_fill, color: AppColors.primary, size: 24),
                 ),
               ],
             ),
@@ -485,11 +508,6 @@ class _HomeTabState extends State<HomeTab> {
       ),
       _QuickAction(icon: CupertinoIcons.folder, label: 'My\nRecords', onTap: () => widget.onNavigateToTab(3)),
       _QuickAction(icon: CupertinoIcons.creditcard, label: 'Wallet', onTap: () => widget.onNavigateToTab(2)),
-      _QuickAction(
-        icon: CupertinoIcons.shield,
-        label: 'Dental\nPackages',
-        onTap: () => _showComingSoonSheet('Dental Packages'),
-      ),
     ];
 
     return Row(
@@ -512,7 +530,7 @@ class _HomeTabState extends State<HomeTab> {
           borderRadius: BorderRadius.circular(20),
           border: Border.all(color: AppColors.border),
         ),
-        child: const Center(
+        child: Center(
           child: Text('No recent activity yet.', style: TextStyle(color: AppColors.textSecondary, fontSize: 13)),
         ),
       );
@@ -550,28 +568,29 @@ class _TicketNotch extends StatelessWidget {
     return Container(
       width: 20,
       height: 20,
-      decoration: const BoxDecoration(color: AppColors.background, shape: BoxShape.circle),
+      decoration: BoxDecoration(color: AppColors.background, shape: BoxShape.circle),
     );
   }
 }
 
 class _NotificationDropdown extends StatelessWidget {
   final PatientRepository repository;
+  final VoidCallback onSeeAll;
 
-  const _NotificationDropdown({required this.repository});
+  const _NotificationDropdown({required this.repository, required this.onSeeAll});
 
   @override
   Widget build(BuildContext context) {
     return Material(
       color: Colors.transparent,
       child: Container(
-        width: 300,
-        constraints: const BoxConstraints(maxHeight: 380),
+        width: 310,
+        constraints: const BoxConstraints(maxHeight: 420),
         decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(20),
           boxShadow: [
-            BoxShadow(color: Colors.black.withOpacity(0.15), blurRadius: 24, offset: const Offset(0, 10)),
+            BoxShadow(color: Colors.black.withOpacity(0.18), blurRadius: 28, offset: const Offset(0, 12)),
           ],
         ),
         child: ListenableBuilder(
@@ -581,18 +600,32 @@ class _NotificationDropdown extends StatelessWidget {
             return Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(16, 14, 16, 8),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text('Notifications',
-                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.textPrimary)),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 16, 16, 10),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('Notifications',
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppColors.textPrimary)),
+                      if (repository.unreadNotificationCount > 0)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: AppColors.primary.withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            '${repository.unreadNotificationCount} new',
+                            style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.primary),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
-                const Divider(height: 1),
+                Divider(height: 1, color: AppColors.border),
                 if (notifications.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 32),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 36),
                     child: Text('No notifications yet.',
                         style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
                   )
@@ -602,24 +635,24 @@ class _NotificationDropdown extends StatelessWidget {
                       shrinkWrap: true,
                       padding: EdgeInsets.zero,
                       itemCount: notifications.length,
-                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      separatorBuilder: (_, __) => Divider(height: 1, color: AppColors.border),
                       itemBuilder: (context, index) {
                         final n = notifications[index];
                         return InkWell(
                           onTap: () => repository.markNotificationRead(n.id),
-                          child: Padding(
+                          child: Container(
+                            color: n.isRead ? Colors.transparent : AppColors.primary.withOpacity(0.05),
                             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                             child: Row(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Container(
-                                  margin: const EdgeInsets.only(top: 4),
-                                  width: 7,
-                                  height: 7,
+                                  padding: const EdgeInsets.all(8),
                                   decoration: BoxDecoration(
+                                    color: notificationColor(n).withOpacity(0.14),
                                     shape: BoxShape.circle,
-                                    color: n.isRead ? Colors.transparent : AppColors.primary,
                                   ),
+                                  child: Icon(notificationIcon(n), color: notificationColor(n), size: 16),
                                 ),
                                 const SizedBox(width: 10),
                                 Expanded(
@@ -635,10 +668,22 @@ class _NotificationDropdown extends StatelessWidget {
                                         ),
                                       ),
                                       const SizedBox(height: 2),
-                                      Text(n.body, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                                      Text(n.body, style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        '${formatNotificationDate(n.createdAt)} • ${formatNotificationTime(n.createdAt)}',
+                                        style: TextStyle(fontSize: 10.5, color: AppColors.textSecondary),
+                                      ),
                                     ],
                                   ),
                                 ),
+                                if (!n.isRead)
+                                  Container(
+                                    margin: const EdgeInsets.only(top: 4, left: 4),
+                                    width: 7,
+                                    height: 7,
+                                    decoration: BoxDecoration(color: AppColors.primary, shape: BoxShape.circle),
+                                  ),
                               ],
                             ),
                           ),
@@ -646,6 +691,21 @@ class _NotificationDropdown extends StatelessWidget {
                       },
                     ),
                   ),
+                Divider(height: 1, color: AppColors.border),
+                InkWell(
+                  onTap: onSeeAll,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 13),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text('See All', style: TextStyle(color: AppColors.primary, fontSize: 13, fontWeight: FontWeight.bold)),
+                        const SizedBox(width: 4),
+                        Icon(CupertinoIcons.chevron_right, color: AppColors.primary, size: 14),
+                      ],
+                    ),
+                  ),
+                ),
               ],
             );
           },
@@ -683,7 +743,7 @@ class _QuickAction extends StatelessWidget {
               height: 28,
               child: Text(
                 label,
-                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
                 textAlign: TextAlign.center,
               ),
             ),
@@ -714,11 +774,11 @@ class _ActivityRow extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(transaction.title,
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textPrimary)),
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textPrimary)),
               const SizedBox(height: 2),
               Text(
                 '${transaction.subtitle} • ${transaction.dateTime.month}/${transaction.dateTime.day}',
-                style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
               ),
             ],
           ),

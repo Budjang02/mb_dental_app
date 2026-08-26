@@ -79,7 +79,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  const Text(
+                  Text(
                     'Mariano & Bolasoc',
                     style: TextStyle(
                       fontSize: 30, // Scaled larger than Create Account (26px)
@@ -111,8 +111,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 alignment: Alignment.centerLeft,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  children: const [
-                    Text(
+                  children: [
+                    const Text(
                       'Create Account',
                       style: TextStyle(
                         fontSize: 24, // Proportionately sized under branding
@@ -121,7 +121,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         color: _tealColor,
                       ),
                     ),
-                    SizedBox(height: 4),
+                    const SizedBox(height: 4),
                     Text(
                       'Fill in your details to get started',
                       style: TextStyle(
@@ -311,7 +311,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Text(
+                  Text(
                     "Already have an account?",
                     style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
                   ),

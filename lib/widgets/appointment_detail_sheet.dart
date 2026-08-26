@@ -66,14 +66,14 @@ void showAppointmentDetailSheet(BuildContext context, Appointment appointment) {
                     Expanded(
                       child: Text(
                         appointmentReference(appointment.id),
-                        style: const TextStyle(fontSize: 12, color: AppColors.textSecondary, fontWeight: FontWeight.w600),
+                        style: TextStyle(fontSize: 12, color: AppColors.textSecondary, fontWeight: FontWeight.w600),
                       ),
                     ),
                     InkWell(
                       onTap: () => Navigator.pop(dialogContext),
                       borderRadius: BorderRadius.circular(20),
-                      child: const Padding(
-                        padding: EdgeInsets.all(4),
+                      child: Padding(
+                        padding: const EdgeInsets.all(4),
                         child: Icon(CupertinoIcons.xmark_circle_fill, size: 22, color: AppColors.textSecondary),
                       ),
                     ),
@@ -86,7 +86,7 @@ void showAppointmentDetailSheet(BuildContext context, Appointment appointment) {
                     Expanded(
                       child: Text(
                         appointment.serviceName,
-                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
                       ),
                     ),
                     Container(
@@ -147,9 +147,9 @@ Widget _detailRow(IconData icon, String label, String value) {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(label, style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+            Text(label, style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
             const SizedBox(height: 2),
-            Text(value, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+            Text(value, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
           ],
         ),
       ),

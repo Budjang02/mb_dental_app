@@ -39,7 +39,7 @@ class _WalletScreenState extends State<WalletScreen> {
         title: const Text('My Wallet'),
         actions: [
           IconButton(
-            icon: const Icon(CupertinoIcons.clock, color: AppColors.textPrimary),
+            icon: Icon(CupertinoIcons.clock, color: AppColors.textPrimary),
             onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const TransactionHistoryScreen())),
           ),
         ],
@@ -63,7 +63,7 @@ class _WalletScreenState extends State<WalletScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text(
+                    Text(
                       'Recent Transactions',
                       style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
                     ),
@@ -73,8 +73,8 @@ class _WalletScreenState extends State<WalletScreen> {
                 _buildFilterChips(),
                 const SizedBox(height: 16),
                 if (grouped.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 40),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 40),
                     child: Center(
                       child: Text('No transactions yet.', style: TextStyle(color: AppColors.textSecondary)),
                     ),
@@ -83,7 +83,7 @@ class _WalletScreenState extends State<WalletScreen> {
                   for (final entry in grouped.entries) ...[
                     Text(
                       entry.key,
-                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.primary),
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.primary),
                     ),
                     const SizedBox(height: 8),
                     for (final txn in entry.value) ...[
@@ -228,21 +228,15 @@ class _WalletScreenState extends State<WalletScreen> {
         ),
         child: Row(
           children: [
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(color: AppColors.primary.withOpacity(0.12), shape: BoxShape.circle),
-              child: Icon(txn.icon, color: AppColors.primary, size: 20),
-            ),
-            const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(txn.title,
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textPrimary)),
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textPrimary)),
                   const SizedBox(height: 2),
                   Text('${txn.subtitle} • ${formatTxnTime(txn.dateTime)}',
-                      style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+                      style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
                 ],
               ),
             ),
@@ -257,7 +251,7 @@ class _WalletScreenState extends State<WalletScreen> {
                   ),
                 ),
                 const SizedBox(width: 4),
-                const Icon(CupertinoIcons.chevron_right, color: AppColors.textSecondary, size: 16),
+                Icon(CupertinoIcons.chevron_right, color: AppColors.textSecondary, size: 16),
               ],
             ),
           ],

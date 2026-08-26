@@ -1,7 +1,5 @@
 // File: lib/screens/auth/login_screen.dart
 
-import 'dart:math' as math;
-
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -68,7 +66,7 @@ class _LoginScreenState extends State<LoginScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
@@ -95,7 +93,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                 ),
               ),
-              const Text(
+              Text(
                 'Reset Password',
                 style: TextStyle(
                   fontSize: 20,
@@ -105,7 +103,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
               ),
               const SizedBox(height: 8),
-              const Text(
+              Text(
                 'Enter your registered email address to receive a password recovery link.',
                 style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
               ),
@@ -115,7 +113,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 keyboardType: TextInputType.emailAddress,
                 decoration: InputDecoration(
                   labelText: 'Email Address',
-                  prefixIcon: const Icon(CupertinoIcons.mail, color: AppColors.primary, size: 20),
+                  prefixIcon: Icon(CupertinoIcons.mail, color: AppColors.primary, size: 20),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(14),
                     borderSide: BorderSide(color: Colors.grey.shade300),
@@ -185,7 +183,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       'assets/images/logo_login.png',
                       fit: BoxFit.contain,
                       errorBuilder: (context, error, stackTrace) {
-                        return const Icon(
+                        return Icon(
                           CupertinoIcons.heart_fill,
                           size: 64,
                           color: AppColors.primary,
@@ -196,7 +194,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   const SizedBox(height: 12),
 
                   // Header Titles
-                  const Text(
+                  Text(
                     'Mariano & Bolasoc',
                     style: TextStyle(
                       fontSize: 24,
@@ -206,7 +204,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ),
                   const SizedBox(height: 4),
-                  const Text(
+                  Text(
                     'Dental Center',
                     style: TextStyle(
                       fontSize: 14,
@@ -222,7 +220,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     keyboardType: TextInputType.emailAddress,
                     decoration: InputDecoration(
                       labelText: 'Email Address',
-                      prefixIcon: const Icon(CupertinoIcons.mail, color: AppColors.primary, size: 20),
+                      prefixIcon: Icon(CupertinoIcons.mail, color: AppColors.primary, size: 20),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(14),
                         borderSide: BorderSide(color: Colors.grey.shade300),
@@ -241,7 +239,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     obscureText: !_isPasswordVisible,
                     decoration: InputDecoration(
                       labelText: 'Password',
-                      prefixIcon: const Icon(CupertinoIcons.lock, color: AppColors.primary, size: 20),
+                      prefixIcon: Icon(CupertinoIcons.lock, color: AppColors.primary, size: 20),
                       suffixIcon: IconButton(
                         icon: Icon(
                           _isPasswordVisible
@@ -273,7 +271,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     alignment: Alignment.centerRight,
                     child: TextButton(
                       onPressed: _showForgotPasswordBottomSheet,
-                      child: const Text(
+                      child: Text(
                         'Forgot Password?',
                         style: TextStyle(
                           color: AppColors.primary,
@@ -312,8 +310,8 @@ class _LoginScreenState extends State<LoginScreen> {
                   Row(
                     children: [
                       Expanded(child: Divider(color: Colors.grey.shade300)),
-                      const Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 14.0),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 14.0),
                         child: Text(
                           'OR CONTINUE WITH',
                           style: TextStyle(
@@ -340,9 +338,9 @@ class _LoginScreenState extends State<LoginScreen> {
                           child: Container(
                             height: 50,
                             decoration: BoxDecoration(
-                              color: Colors.white,
+                              color: AppColors.surface,
                               borderRadius: BorderRadius.circular(14),
-                              border: Border.all(color: Colors.grey.shade200, width: 1.5),
+                              border: Border.all(color: AppColors.border, width: 1.5),
                               boxShadow: [
                                 BoxShadow(
                                   color: Colors.black.withOpacity(0.03),
@@ -353,13 +351,13 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                             child: Row(
                               mainAxisAlignment: MainAxisAlignment.center,
-                              children: const [
-                                SizedBox(
+                              children: [
+                                const SizedBox(
                                   height: 20,
                                   width: 20,
                                   child: CustomPaint(painter: _GoogleLogoPainter()),
                                 ),
-                                SizedBox(width: 10),
+                                const SizedBox(width: 10),
                                 Text(
                                   'Google',
                                   style: TextStyle(
@@ -383,9 +381,9 @@ class _LoginScreenState extends State<LoginScreen> {
                           child: Container(
                             height: 50,
                             decoration: BoxDecoration(
-                              color: Colors.white,
+                              color: AppColors.surface,
                               borderRadius: BorderRadius.circular(14),
-                              border: Border.all(color: Colors.grey.shade200, width: 1.5),
+                              border: Border.all(color: AppColors.border, width: 1.5),
                               boxShadow: [
                                 BoxShadow(
                                   color: Colors.black.withOpacity(0.03),
@@ -396,9 +394,9 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                             child: Row(
                               mainAxisAlignment: MainAxisAlignment.center,
-                              children: const [
-                                Icon(Icons.facebook_rounded, size: 22, color: Color(0xFF1877F2)),
-                                SizedBox(width: 8),
+                              children: [
+                                const Icon(Icons.facebook_rounded, size: 22, color: Color(0xFF1877F2)),
+                                const SizedBox(width: 8),
                                 Text(
                                   'Facebook',
                                   style: TextStyle(
@@ -420,7 +418,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Text(
+                      Text(
                         "Don't have an account?",
                         style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
                       ),
@@ -438,7 +436,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           minimumSize: Size.zero,
                           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                         ),
-                        child: const Text(
+                        child: Text(
                           'Register',
                           style: TextStyle(
                             color: AppColors.primary,
@@ -458,44 +456,100 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 }
 
-/// Draws the Google "G" mark's four-color ring + crossbar without needing an
-/// external logo asset.
+/// Draws the actual Google "G" brand mark (the four-color G used on every
+/// "Sign in with Google" button), traced from Google's official 48x48 vector
+/// artwork so no external logo asset/network fetch is needed.
 class _GoogleLogoPainter extends CustomPainter {
   const _GoogleLogoPainter();
 
+  static const double _viewBoxSize = 48;
+
   @override
   void paint(Canvas canvas, Size size) {
-    final center = Offset(size.width / 2, size.height / 2);
-    final radius = size.width / 2;
-    final strokeWidth = size.width * 0.24;
-    final ringRect = Rect.fromCircle(center: center, radius: radius - strokeWidth / 2);
+    final scale = size.width / _viewBoxSize;
+    canvas.save();
+    canvas.scale(scale, scale);
 
-    void arc(double startDeg, double sweepDeg, Color color) {
-      final paint = Paint()
-        ..color = color
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = strokeWidth
-        ..strokeCap = StrokeCap.butt;
-      canvas.drawArc(ringRect, startDeg * math.pi / 180, sweepDeg * math.pi / 180, false, paint);
-    }
+    final paint = Paint()..style = PaintingStyle.fill;
 
-    const gap = 8.0;
-    const seg = (360 - 4 * gap) / 4;
-    arc(-86, seg, const Color(0xFFEA4335)); // red
-    arc(-86 + seg + gap, seg, const Color(0xFF4285F4)); // blue
-    arc(-86 + 2 * (seg + gap), seg, const Color(0xFF34A853)); // green
-    arc(-86 + 3 * (seg + gap), seg, const Color(0xFFFBBC05)); // yellow
+    // Yellow arc
+    paint.color = const Color(0xFFFFC107);
+    canvas.drawPath(_yellowPath(), paint);
 
-    final barPaint = Paint()..color = const Color(0xFF4285F4);
-    canvas.drawRect(
-      Rect.fromLTWH(
-        center.dx - strokeWidth * 0.1,
-        center.dy - strokeWidth / 2,
-        radius - center.dx + strokeWidth * 0.6,
-        strokeWidth,
-      ),
-      barPaint,
-    );
+    // Red arc
+    paint.color = const Color(0xFFFF3D00);
+    canvas.drawPath(_redPath(), paint);
+
+    // Green arc
+    paint.color = const Color(0xFF4CAF50);
+    canvas.drawPath(_greenPath(), paint);
+
+    // Blue arc
+    paint.color = const Color(0xFF1976D2);
+    canvas.drawPath(_bluePath(), paint);
+
+    canvas.restore();
+  }
+
+  Path _yellowPath() {
+    return Path()
+      ..moveTo(43.611, 20.083)
+      ..lineTo(42, 20.083)
+      ..lineTo(42, 20)
+      ..lineTo(24, 20)
+      ..lineTo(24, 28)
+      ..lineTo(35.303, 28)
+      ..cubicTo(33.654, 32.657, 29.223, 36, 24, 36)
+      ..cubicTo(17.373, 36, 12, 30.627, 12, 24)
+      ..cubicTo(12, 17.373, 17.373, 12, 24, 12)
+      ..cubicTo(27.059, 12, 29.842, 13.154, 31.961, 15.039)
+      ..lineTo(37.618, 9.382)
+      ..cubicTo(34.046, 6.053, 29.268, 4, 24, 4)
+      ..cubicTo(12.955, 4, 4, 12.955, 4, 24)
+      ..cubicTo(4, 35.045, 12.955, 44, 24, 44)
+      ..cubicTo(35.045, 44, 44, 35.045, 44, 24)
+      ..cubicTo(44, 22.659, 43.862, 21.35, 43.611, 20.083)
+      ..close();
+  }
+
+  Path _redPath() {
+    return Path()
+      ..moveTo(6.306, 14.691)
+      ..lineTo(12.877, 19.51)
+      ..cubicTo(14.655, 15.108, 18.961, 12, 24, 12)
+      ..cubicTo(27.059, 12, 29.842, 13.154, 31.961, 15.039)
+      ..lineTo(37.618, 9.382)
+      ..cubicTo(34.046, 6.053, 29.268, 4, 24, 4)
+      ..cubicTo(16.318, 4, 9.656, 8.337, 6.306, 14.691)
+      ..close();
+  }
+
+  Path _greenPath() {
+    return Path()
+      ..moveTo(24, 44)
+      ..cubicTo(29.166, 44, 33.86, 42.023, 37.409, 38.808)
+      ..lineTo(31.219, 33.57)
+      ..cubicTo(29.211, 35.091, 26.715, 36, 24, 36)
+      ..cubicTo(18.798, 36, 14.381, 32.683, 12.717, 28.054)
+      ..lineTo(6.195, 33.079)
+      ..cubicTo(9.505, 39.556, 16.227, 44, 24, 44)
+      ..close();
+  }
+
+  Path _bluePath() {
+    return Path()
+      ..moveTo(43.611, 20.083)
+      ..lineTo(42, 20.083)
+      ..lineTo(42, 20)
+      ..lineTo(24, 20)
+      ..lineTo(24, 28)
+      ..lineTo(35.303, 28)
+      ..cubicTo(34.511, 30.237, 33.072, 32.166, 31.216, 33.571)
+      ..cubicTo(31.217, 33.57, 31.218, 33.57, 31.219, 33.569)
+      ..lineTo(37.409, 38.807)
+      ..cubicTo(36.971, 39.205, 44, 34, 44, 24)
+      ..cubicTo(44, 22.659, 43.862, 21.35, 43.611, 20.083)
+      ..close();
   }
 
   @override

@@ -17,13 +17,15 @@ dependencies:
   pdf: ^3.11.1
   printing: ^5.13.4
   lottie: ^3.1.2
+  table_calendar: ^3.1.2
+  shared_preferences: ^2.3.2
+  flutter_native_splash: ^2.4.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^2.0.0
   flutter_launcher_icons: ^0.13.1
-  flutter_native_splash: ^2.4.0
 
 # Asset Configuration
 flutter:
@@ -51,9 +53,9 @@ flutter_launcher_icons:
 # mandatory system splash (defaulting to the launcher icon if none is given),
 # so we hand it a fully transparent 1px icon to keep that moment blank.
 flutter_native_splash:
-  color: '#0D9488'
+  color: '#119589'
   fullscreen: true
   android_12:
     image: assets/images/transparent_icon.png
-    color: '#0D9488'
-    icon_background_color: '#0D9488'
+    color: '#119589'
+    icon_background_color: '#119589'

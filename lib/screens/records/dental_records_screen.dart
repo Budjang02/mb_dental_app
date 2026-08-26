@@ -157,7 +157,7 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
               ),
             ),
             ListTile(
-              leading: const Icon(CupertinoIcons.doc_text, color: AppColors.primary),
+              leading: Icon(CupertinoIcons.doc_text, color: AppColors.primary),
               title: const Text('Save as PDF'),
               subtitle: const Text('Generates a summary you can save or share'),
               onTap: () {
@@ -183,30 +183,30 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
-          children: const [
+          children: [
             Text('Tooth Types', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17, color: AppColors.textPrimary)),
-            SizedBox(height: 4),
+            const SizedBox(height: 4),
             Text(
               'Each of the 32 adult teeth is numbered #1 to #32 (Universal Numbering System) and falls into one of four types.',
               style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
             ),
-            SizedBox(height: 16),
-            _ToothTypeInfoRow(
+            const SizedBox(height: 16),
+            const _ToothTypeInfoRow(
               title: 'Incisors',
               subtitle: 'The 8 front teeth, top and bottom. Flat, chisel-shaped edges for cutting and biting.',
             ),
-            SizedBox(height: 12),
-            _ToothTypeInfoRow(
+            const SizedBox(height: 12),
+            const _ToothTypeInfoRow(
               title: 'Canines',
               subtitle: 'The 4 pointed teeth at the corners of the arch. Used for tearing food.',
             ),
-            SizedBox(height: 12),
-            _ToothTypeInfoRow(
+            const SizedBox(height: 12),
+            const _ToothTypeInfoRow(
               title: 'Premolars',
               subtitle: 'The 8 teeth behind the canines, with ridged surfaces for crushing food.',
             ),
-            SizedBox(height: 12),
-            _ToothTypeInfoRow(
+            const SizedBox(height: 12),
+            const _ToothTypeInfoRow(
               title: 'Molars',
               subtitle: 'The 12 broad teeth at the back, including wisdom teeth, used for grinding.',
             ),
@@ -237,26 +237,26 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
                   child: InkWell(
                     onTap: () => Navigator.pop(dialogContext),
                     borderRadius: BorderRadius.circular(20),
-                    child: const Padding(
-                      padding: EdgeInsets.all(4),
+                    child: Padding(
+                      padding: const EdgeInsets.all(4),
                       child: Icon(CupertinoIcons.xmark_circle_fill, size: 22, color: AppColors.textSecondary),
                     ),
                   ),
                 ),
                 Text(
                   note['procedure'] ?? '',
-                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
                 ),
                 const SizedBox(height: 4),
-                Text(note['date'] ?? '', style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                Text(note['date'] ?? '', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
                 const SizedBox(height: 16),
                 _kv('Tooth', note['tooth'] ?? ''),
                 _kv('Condition', note['condition'] ?? ''),
                 _kv('Performed by', note['doctor'] ?? ''),
                 const SizedBox(height: 8),
-                const Text('Notes', style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+                Text('Notes', style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
                 const SizedBox(height: 4),
-                Text(note['notes'] ?? '', style: const TextStyle(fontSize: 14, color: AppColors.textPrimary)),
+                Text(note['notes'] ?? '', style: TextStyle(fontSize: 14, color: AppColors.textPrimary)),
               ],
             ),
           ),
@@ -271,9 +271,9 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(width: 90, child: Text(label, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary))),
+          SizedBox(width: 90, child: Text(label, style: TextStyle(fontSize: 12, color: AppColors.textSecondary))),
           Expanded(
-            child: Text(value, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+            child: Text(value, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
           ),
         ],
       ),
@@ -458,12 +458,12 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
                       children: [
                         Text(
                           'Tooth #$_selectedToothNumber',
-                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppColors.textPrimary),
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppColors.textPrimary),
                         ),
                         const SizedBox(height: 2),
                         Text(
                           toothName(_selectedToothNumber),
-                          style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                          style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
                         ),
                       ],
                     ),
@@ -488,7 +488,7 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
               const SizedBox(height: 10),
               Text(
                 activeInfo?['notes'] ?? 'No specific clinical notes recorded for this tooth.',
-                style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
               ),
             ],
           ),
@@ -523,10 +523,10 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
                       Expanded(
                         child: Text(
                           note['procedure'] ?? '',
-                          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                          style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
                         ),
                       ),
-                      Text(note['date'] ?? '', style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+                      Text(note['date'] ?? '', style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
                     ],
                   ),
                   const SizedBox(height: 8),
@@ -540,7 +540,7 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
                         ),
                         child: Text(
                           note['tooth'] ?? '',
-                          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.primary),
+                          style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.primary),
                         ),
                       ),
                       const SizedBox(width: 8),
@@ -552,22 +552,22 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
                         ),
                         child: Text(
                           'Condition: ${note['condition']}',
-                          style: const TextStyle(fontSize: 11, color: AppColors.textPrimary),
+                          style: TextStyle(fontSize: 11, color: AppColors.textPrimary),
                         ),
                       ),
                     ],
                   ),
                   const SizedBox(height: 12),
-                  Text(note['notes'] ?? '', style: const TextStyle(fontSize: 13, color: AppColors.textPrimary)),
+                  Text(note['notes'] ?? '', style: TextStyle(fontSize: 13, color: AppColors.textPrimary)),
                   const Divider(height: 20),
                   Row(
                     children: [
-                      const Icon(CupertinoIcons.person, size: 16, color: AppColors.textSecondary),
+                      Icon(CupertinoIcons.person, size: 16, color: AppColors.textSecondary),
                       const SizedBox(width: 6),
                       Text('Performed by ${note['doctor']}',
-                          style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                          style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
                       const Spacer(),
-                      const Icon(CupertinoIcons.chevron_right, size: 16, color: AppColors.textSecondary),
+                      Icon(CupertinoIcons.chevron_right, size: 16, color: AppColors.textSecondary),
                     ],
                   ),
                 ],
@@ -592,7 +592,7 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
+          Text(
             'X-Rays & Files',
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
           ),
@@ -609,7 +609,7 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
               children: [
                 Icon(CupertinoIcons.tray, size: 36, color: Colors.grey.shade400),
                 const SizedBox(height: 12),
-                const Text(
+                Text(
                   'No X-rays or files yet',
                   style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textSecondary),
                 ),
@@ -772,7 +772,7 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
           ),
         ),
         const SizedBox(width: 4),
-        Text(label, style: const TextStyle(fontSize: 10, color: AppColors.textSecondary)),
+        Text(label, style: TextStyle(fontSize: 10, color: AppColors.textSecondary)),
       ],
     );
   }
@@ -793,16 +793,16 @@ class _ToothTypeInfoRow extends StatelessWidget {
           margin: const EdgeInsets.only(top: 5),
           width: 6,
           height: 6,
-          decoration: const BoxDecoration(color: AppColors.primary, shape: BoxShape.circle),
+          decoration: BoxDecoration(color: AppColors.primary, shape: BoxShape.circle),
         ),
         const SizedBox(width: 10),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textPrimary)),
+              Text(title, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textPrimary)),
               const SizedBox(height: 2),
-              Text(subtitle, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary, height: 1.3)),
+              Text(subtitle, style: TextStyle(fontSize: 12, color: AppColors.textSecondary, height: 1.3)),
             ],
           ),
         ),

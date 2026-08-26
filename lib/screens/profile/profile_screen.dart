@@ -4,10 +4,18 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mb_dental_app/app/theme.dart';
+import 'package:mb_dental_app/app/theme_controller.dart';
 import 'package:mb_dental_app/app/routes.dart';
 import 'package:mb_dental_app/repositories/patient_repository.dart';
 import 'change_password_screen.dart';
 import 'edit_profile_screen.dart';
+
+String _formatBirthdate(DateTime date) {
+  const months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+  return '${months[date.month - 1]} ${date.day}, ${date.year}';
+}
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -60,14 +68,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<void> _pickAvatar() async {
     showModalBottomSheet(
       context: context,
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.surface,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (sheetContext) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: const Icon(CupertinoIcons.camera, color: AppColors.primary),
+              leading: Icon(CupertinoIcons.camera, color: AppColors.primary),
               title: const Text('Take Photo'),
               onTap: () {
                 Navigator.pop(sheetContext);
@@ -75,7 +83,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               },
             ),
             ListTile(
-              leading: const Icon(CupertinoIcons.photo, color: AppColors.primary),
+              leading: Icon(CupertinoIcons.photo, color: AppColors.primary),
               title: const Text('Choose from Gallery'),
               onTap: () {
                 Navigator.pop(sheetContext);
@@ -135,7 +143,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               backgroundColor: AppColors.primary.withOpacity(0.12),
                               backgroundImage: patient.avatarPath != null ? FileImage(File(patient.avatarPath!)) : null,
                               child: patient.avatarPath == null
-                                  ? const Icon(CupertinoIcons.person_fill, size: 48, color: AppColors.primary)
+                                  ? Icon(CupertinoIcons.person_fill, size: 48, color: AppColors.primary)
                                   : null,
                             ),
                             Positioned(
@@ -146,7 +154,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 decoration: BoxDecoration(
                                   color: AppColors.primary,
                                   shape: BoxShape.circle,
-                                  border: Border.all(color: Colors.white, width: 2),
+                                  border: Border.all(color: AppColors.surface, width: 2),
                                 ),
                                 child: const Icon(CupertinoIcons.add, size: 14, color: Colors.white),
                               ),
@@ -157,13 +165,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       const SizedBox(height: 14),
                       Text(
                         patient.fullName,
-                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '@${patient.username}',
+                        style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
                       ),
                     ],
                   ),
                 ),
                 const SizedBox(height: 20),
                 Card(
+                  color: AppColors.surface,
                   elevation: 0,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(16),
@@ -178,11 +192,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         _buildInfoRow(CupertinoIcons.phone, 'Phone', patient.phone),
                         Divider(height: 24, color: AppColors.primary.withOpacity(0.1)),
                         _buildInfoRow(CupertinoIcons.person_2, 'Gender', patient.gender),
+                        Divider(height: 24, color: AppColors.primary.withOpacity(0.1)),
+                        _buildInfoRow(CupertinoIcons.gift, 'Birthdate', _formatBirthdate(patient.dateOfBirth)),
+                        Divider(height: 24, color: AppColors.primary.withOpacity(0.1)),
+                        _buildInfoRow(CupertinoIcons.at, 'Username', patient.username),
                       ],
                     ),
                   ),
                 ),
                 const SizedBox(height: 20),
+                _buildThemeToggleTile(),
                 _buildSettingTile(
                   icon: CupertinoIcons.pencil,
                   title: 'Edit Profile Information',
@@ -218,14 +237,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
           children: [
             Text(
               label,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 11,
                 color: AppColors.textSecondary,
               ),
             ),
             Text(
               value,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.bold,
                 color: AppColors.textPrimary,
@@ -237,14 +256,50 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  Widget _buildThemeToggleTile() {
+    return ListenableBuilder(
+      listenable: ThemeController(),
+      builder: (context, _) {
+        final isDark = ThemeController().isDark;
+        return Card(
+          color: AppColors.surface,
+          margin: const EdgeInsets.only(bottom: 8),
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: BorderSide(color: AppColors.primary.withOpacity(0.15)),
+          ),
+          child: ListTile(
+            leading: Icon(isDark ? CupertinoIcons.moon_fill : CupertinoIcons.sun_max_fill, color: AppColors.primary),
+            title: Text(
+              'Dark Mode',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+            ),
+            subtitle: Text(
+              isDark ? 'On' : 'Off',
+              style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+            ),
+            trailing: Switch(
+              value: isDark,
+              activeColor: AppColors.primary,
+              onChanged: (value) => ThemeController().setDark(value),
+            ),
+            onTap: () => ThemeController().toggle(),
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildSettingTile({
     required IconData icon,
     required String title,
     required VoidCallback onTap,
-    Color textColor = AppColors.textPrimary,
-    Color iconColor = AppColors.primary,
+    Color? textColor,
+    Color? iconColor,
   }) {
     return Card(
+      color: AppColors.surface,
       margin: const EdgeInsets.only(bottom: 8),
       elevation: 0,
       shape: RoundedRectangleBorder(
@@ -252,16 +307,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
         side: BorderSide(color: AppColors.primary.withOpacity(0.15)),
       ),
       child: ListTile(
-        leading: Icon(icon, color: iconColor),
+        leading: Icon(icon, color: iconColor ?? AppColors.primary),
         title: Text(
           title,
           style: TextStyle(
             fontSize: 14,
             fontWeight: FontWeight.bold,
-            color: textColor,
+            color: textColor ?? AppColors.textPrimary,
           ),
         ),
-        trailing: const Icon(
+        trailing: Icon(
           CupertinoIcons.chevron_right,
           color: AppColors.textSecondary,
         ),

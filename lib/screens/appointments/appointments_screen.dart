@@ -4,6 +4,7 @@ import '../../app/theme.dart';
 import '../../models/appointment.dart';
 import 'package:mb_dental_app/repositories/patient_repository.dart';
 import 'package:mb_dental_app/widgets/appointment_detail_sheet.dart';
+import 'package:mb_dental_app/widgets/app_calendar.dart';
 import 'book_appointment_screen.dart';
 
 class AppointmentsScreen extends StatefulWidget {
@@ -18,6 +19,9 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
   late TabController _tabController;
   final PatientRepository _repository = PatientRepository();
 
+  DateTime _focusedDay = DateTime.now();
+  DateTime? _selectedDay;
+
   @override
   void initState() {
     super.initState();
@@ -31,12 +35,20 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
   }
 
   List<Appointment> _filter(List<Appointment> all, AppointmentStatus statusFilter) {
+    Iterable<Appointment> result;
     if (statusFilter == AppointmentStatus.pending) {
-      return all
-          .where((a) => a.status == AppointmentStatus.pending || a.status == AppointmentStatus.confirmed)
-          .toList();
+      result = all.where((a) => a.status == AppointmentStatus.pending || a.status == AppointmentStatus.confirmed);
+    } else {
+      result = all.where((a) => a.status == statusFilter);
     }
-    return all.where((a) => a.status == statusFilter).toList();
+    if (_selectedDay != null) {
+      result = result.where((a) => isSameDay(a.date, _selectedDay));
+    }
+    return result.toList();
+  }
+
+  List<Object> _appointmentsOnDay(DateTime day) {
+    return _repository.appointments.where((a) => isSameDay(a.date, day)).toList();
   }
 
   @override
@@ -60,12 +72,51 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
         listenable: _repository,
         builder: (context, _) {
           final all = _repository.appointments;
-          return TabBarView(
-            controller: _tabController,
+          return Column(
             children: [
-              _buildAppointmentList(_filter(all, AppointmentStatus.pending)),
-              _buildAppointmentList(_filter(all, AppointmentStatus.completed)),
-              _buildAppointmentList(_filter(all, AppointmentStatus.cancelled)),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                child: AppCalendar(
+                  focusedDay: _focusedDay,
+                  selectedDay: _selectedDay,
+                  firstDay: DateTime.now().subtract(const Duration(days: 365)),
+                  lastDay: DateTime.now().add(const Duration(days: 365)),
+                  eventLoader: _appointmentsOnDay,
+                  onDaySelected: (selected, focused) {
+                    setState(() {
+                      _selectedDay = isSameDay(_selectedDay, selected) ? null : selected;
+                      _focusedDay = focused;
+                    });
+                  },
+                  onPageChanged: (focused) => _focusedDay = focused,
+                ),
+              ),
+              if (_selectedDay != null)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: InputChip(
+                      label: Text('Showing ${_selectedDay!.month}/${_selectedDay!.day}/${_selectedDay!.year}'),
+                      labelStyle: TextStyle(color: AppColors.primary, fontSize: 12, fontWeight: FontWeight.w600),
+                      backgroundColor: AppColors.primary.withOpacity(0.1),
+                      deleteIcon: const Icon(CupertinoIcons.xmark_circle_fill, size: 16),
+                      deleteIconColor: AppColors.primary,
+                      side: BorderSide(color: AppColors.primary.withOpacity(0.3)),
+                      onDeleted: () => setState(() => _selectedDay = null),
+                    ),
+                  ),
+                ),
+              Expanded(
+                child: TabBarView(
+                  controller: _tabController,
+                  children: [
+                    _buildAppointmentList(_filter(all, AppointmentStatus.pending)),
+                    _buildAppointmentList(_filter(all, AppointmentStatus.completed)),
+                    _buildAppointmentList(_filter(all, AppointmentStatus.cancelled)),
+                  ],
+                ),
+              ),
             ],
           );
         },
@@ -83,7 +134,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
 
   Widget _buildAppointmentList(List<Appointment> appointments) {
     if (appointments.isEmpty) {
-      return const Center(
+      return Center(
         child: Text('No appointments found.', style: TextStyle(color: AppColors.textSecondary)),
       );
     }
@@ -120,7 +171,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
                   Expanded(
                     child: Text(
                       item.serviceName,
-                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
                     ),
                   ),
                   Container(
@@ -139,19 +190,19 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
               const SizedBox(height: 8),
               Row(
                 children: [
-                  const Icon(CupertinoIcons.person, size: 16, color: AppColors.textSecondary),
+                  Icon(CupertinoIcons.person, size: 16, color: AppColors.textSecondary),
                   const SizedBox(width: 6),
-                  Text(item.doctorName, style: const TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+                  Text(item.doctorName, style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
                 ],
               ),
               const SizedBox(height: 4),
               Row(
                 children: [
-                  const Icon(CupertinoIcons.calendar, size: 16, color: AppColors.textSecondary),
+                  Icon(CupertinoIcons.calendar, size: 16, color: AppColors.textSecondary),
                   const SizedBox(width: 6),
                   Text(
                     '${formatAppointmentDate(item.date)} at ${item.timeSlot}',
-                    style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                    style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
                   ),
                 ],
               ),

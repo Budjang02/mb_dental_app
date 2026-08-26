@@ -37,8 +37,8 @@ void showTransactionDetailSheet(BuildContext context, WalletTransaction txn) {
                 child: InkWell(
                   onTap: () => Navigator.pop(dialogContext),
                   borderRadius: BorderRadius.circular(20),
-                  child: const Padding(
-                    padding: EdgeInsets.all(4),
+                  child: Padding(
+                    padding: const EdgeInsets.all(4),
                     child: Icon(CupertinoIcons.xmark_circle_fill, size: 22, color: AppColors.textSecondary),
                   ),
                 ),
@@ -62,7 +62,7 @@ void showTransactionDetailSheet(BuildContext context, WalletTransaction txn) {
                 ),
               ),
               const SizedBox(height: 4),
-              Center(child: Text(txn.title, style: const TextStyle(fontSize: 14, color: AppColors.textSecondary))),
+              Center(child: Text(txn.title, style: TextStyle(fontSize: 14, color: AppColors.textSecondary))),
               const SizedBox(height: 20),
               const Divider(),
               _kv('Reference No.', txn.referenceNo),
@@ -84,8 +84,8 @@ Widget _kv(String label, String value) {
     child: Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(label, style: const TextStyle(fontSize: 13, color: AppColors.textSecondary)),
-        Text(value, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+        Text(label, style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+        Text(value, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
       ],
     ),
   );
