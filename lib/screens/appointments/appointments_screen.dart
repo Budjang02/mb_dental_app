@@ -1,10 +1,10 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import '../../app/theme.dart';
+import '../../app/theme_controller.dart';
 import '../../models/appointment.dart';
 import 'package:mb_dental_app/repositories/patient_repository.dart';
 import 'package:mb_dental_app/widgets/appointment_detail_sheet.dart';
-import 'package:mb_dental_app/widgets/app_calendar.dart';
 import 'book_appointment_screen.dart';
 
 class AppointmentsScreen extends StatefulWidget {
@@ -19,9 +19,6 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
   late TabController _tabController;
   final PatientRepository _repository = PatientRepository();
 
-  DateTime _focusedDay = DateTime.now();
-  DateTime? _selectedDay;
-
   @override
   void initState() {
     super.initState();
@@ -35,20 +32,10 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
   }
 
   List<Appointment> _filter(List<Appointment> all, AppointmentStatus statusFilter) {
-    Iterable<Appointment> result;
     if (statusFilter == AppointmentStatus.pending) {
-      result = all.where((a) => a.status == AppointmentStatus.pending || a.status == AppointmentStatus.confirmed);
-    } else {
-      result = all.where((a) => a.status == statusFilter);
+      return all.where((a) => a.status == AppointmentStatus.pending || a.status == AppointmentStatus.confirmed).toList();
     }
-    if (_selectedDay != null) {
-      result = result.where((a) => isSameDay(a.date, _selectedDay));
-    }
-    return result.toList();
-  }
-
-  List<Object> _appointmentsOnDay(DateTime day) {
-    return _repository.appointments.where((a) => isSameDay(a.date, day)).toList();
+    return all.where((a) => a.status == statusFilter).toList();
   }
 
   @override
@@ -69,65 +56,31 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
         ),
       ),
       body: ListenableBuilder(
-        listenable: _repository,
+        listenable: Listenable.merge([_repository, ThemeController()]),
         builder: (context, _) {
           final all = _repository.appointments;
-          return Column(
+          return TabBarView(
+            controller: _tabController,
             children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                child: AppCalendar(
-                  focusedDay: _focusedDay,
-                  selectedDay: _selectedDay,
-                  firstDay: DateTime.now().subtract(const Duration(days: 365)),
-                  lastDay: DateTime.now().add(const Duration(days: 365)),
-                  eventLoader: _appointmentsOnDay,
-                  onDaySelected: (selected, focused) {
-                    setState(() {
-                      _selectedDay = isSameDay(_selectedDay, selected) ? null : selected;
-                      _focusedDay = focused;
-                    });
-                  },
-                  onPageChanged: (focused) => _focusedDay = focused,
-                ),
-              ),
-              if (_selectedDay != null)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: InputChip(
-                      label: Text('Showing ${_selectedDay!.month}/${_selectedDay!.day}/${_selectedDay!.year}'),
-                      labelStyle: TextStyle(color: AppColors.primary, fontSize: 12, fontWeight: FontWeight.w600),
-                      backgroundColor: AppColors.primary.withOpacity(0.1),
-                      deleteIcon: const Icon(CupertinoIcons.xmark_circle_fill, size: 16),
-                      deleteIconColor: AppColors.primary,
-                      side: BorderSide(color: AppColors.primary.withOpacity(0.3)),
-                      onDeleted: () => setState(() => _selectedDay = null),
-                    ),
-                  ),
-                ),
-              Expanded(
-                child: TabBarView(
-                  controller: _tabController,
-                  children: [
-                    _buildAppointmentList(_filter(all, AppointmentStatus.pending)),
-                    _buildAppointmentList(_filter(all, AppointmentStatus.completed)),
-                    _buildAppointmentList(_filter(all, AppointmentStatus.cancelled)),
-                  ],
-                ),
-              ),
+              _buildAppointmentList(_filter(all, AppointmentStatus.pending)),
+              _buildAppointmentList(_filter(all, AppointmentStatus.completed)),
+              _buildAppointmentList(_filter(all, AppointmentStatus.cancelled)),
             ],
           );
         },
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () {
-          Navigator.push(context, MaterialPageRoute(builder: (_) => const BookAppointmentScreen()));
-        },
-        backgroundColor: AppColors.primary,
-        icon: const Icon(CupertinoIcons.add, color: Colors.white),
-        label: const Text('Book New', style: TextStyle(color: Colors.white)),
+      // Lifted clear of the dashboard's floating navigation bar, which now
+      // overlays the bottom of this screen.
+      floatingActionButton: Padding(
+        padding: const EdgeInsets.only(bottom: 84),
+        child: FloatingActionButton.extended(
+          onPressed: () {
+            Navigator.push(context, MaterialPageRoute(builder: (_) => const BookAppointmentScreen()));
+          },
+          backgroundColor: AppColors.primary,
+          icon: const Icon(CupertinoIcons.add, color: Colors.white),
+          label: const Text('Book New', style: TextStyle(color: Colors.white)),
+        ),
       ),
     );
   }
@@ -140,7 +93,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
     }
 
     return ListView.builder(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 90),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 104),
       itemCount: appointments.length,
       itemBuilder: (context, index) => _buildAppointmentCard(appointments[index]),
     );

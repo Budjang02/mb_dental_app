@@ -5,7 +5,10 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:mb_dental_app/app/routes.dart';
 import 'package:mb_dental_app/app/theme.dart';
+import 'package:mb_dental_app/app/theme_controller.dart';
 import 'package:mb_dental_app/screens/auth/register_screen.dart'; // REQUIRED IMPORT
+import 'package:mb_dental_app/widgets/app_dialog.dart';
+import 'package:mb_dental_app/widgets/app_toast.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -35,9 +38,7 @@ class _LoginScreenState extends State<LoginScreen> {
     final Uri uri = Uri.parse(url);
     if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not launch $url')),
-        );
+        showAppToast(context, 'Could not launch $url', isError: true);
       }
     }
   }
@@ -61,46 +62,31 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  void _showForgotPasswordBottomSheet() {
+  void _showForgotPasswordDialog() {
     _resetEmailController.text = _emailController.text;
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: AppColors.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
-      builder: (context) {
+    showAppDialog(
+      context,
+      builder: (dialogContext) {
         return Padding(
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.of(context).viewInsets.bottom + 24,
-            top: 24,
-            left: 24,
-            right: 24,
-          ),
+          padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Center(
-                child: Container(
-                  width: 36,
-                  height: 4,
-                  margin: const EdgeInsets.only(bottom: 20),
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade300,
-                    borderRadius: BorderRadius.circular(2),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Reset Password',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: -0.5,
+                      color: AppColors.textPrimary,
+                    ),
                   ),
-                ),
-              ),
-              Text(
-                'Reset Password',
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: -0.5,
-                  color: AppColors.textPrimary,
-                ),
+                  const AppDialogCloseButton(),
+                ],
               ),
               const SizedBox(height: 8),
               Text(
@@ -111,16 +97,17 @@ class _LoginScreenState extends State<LoginScreen> {
               TextField(
                 controller: _resetEmailController,
                 keyboardType: TextInputType.emailAddress,
+                style: TextStyle(color: AppColors.textPrimary),
                 decoration: InputDecoration(
                   labelText: 'Email Address',
                   prefixIcon: Icon(CupertinoIcons.mail, color: AppColors.primary, size: 20),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(14),
-                    borderSide: BorderSide(color: Colors.grey.shade300),
+                    borderSide: BorderSide(color: AppColors.border),
                   ),
                   enabledBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(14),
-                    borderSide: BorderSide(color: Colors.grey.shade300),
+                    borderSide: BorderSide(color: AppColors.border),
                   ),
                 ),
               ),
@@ -138,15 +125,10 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   onPressed: () {
                     if (_resetEmailController.text.trim().isNotEmpty) {
-                      Navigator.pop(context);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            'Password reset link sent to ${_resetEmailController.text}',
-                          ),
-                          backgroundColor: AppColors.primary,
-                          behavior: SnackBarBehavior.floating,
-                        ),
+                      Navigator.pop(dialogContext);
+                      showAppToast(
+                        context,
+                        'Password reset link sent to ${_resetEmailController.text}',
                       );
                     }
                   },
@@ -165,7 +147,9 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return ListenableBuilder(
+      listenable: ThemeController(),
+      builder: (context, _) => Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
         child: SingleChildScrollView(
@@ -175,12 +159,15 @@ class _LoginScreenState extends State<LoginScreen> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.start,
                 children: [
-                  // Brand Logo
+                  // Brand Logo — swaps with the theme, light/dark each have
+                  // an icon designed for that background.
                   SizedBox(
                     height: 108,
                     width: 108,
                     child: Image.asset(
-                      'assets/images/logo_login.png',
+                      ThemeController().isDark
+                          ? 'assets/images/dark_mode_icon.png'
+                          : 'assets/images/light_mode_icon.png',
                       fit: BoxFit.contain,
                       errorBuilder: (context, error, stackTrace) {
                         return Icon(
@@ -270,7 +257,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   Align(
                     alignment: Alignment.centerRight,
                     child: TextButton(
-                      onPressed: _showForgotPasswordBottomSheet,
+                      onPressed: _showForgotPasswordDialog,
                       child: Text(
                         'Forgot Password?',
                         style: TextStyle(
@@ -451,6 +438,7 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
           ),
         ),
+      ),
       ),
     );
   }

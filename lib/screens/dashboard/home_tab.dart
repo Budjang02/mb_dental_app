@@ -1,13 +1,16 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:mb_dental_app/app/theme.dart';
+import 'package:mb_dental_app/app/theme_controller.dart';
 import 'package:mb_dental_app/models/appointment.dart';
 import 'package:mb_dental_app/models/notification.dart';
 import 'package:mb_dental_app/models/wallet_transaction.dart';
 import 'package:mb_dental_app/repositories/patient_repository.dart';
+import 'package:mb_dental_app/screens/appointments/appointments_screen.dart';
 import 'package:mb_dental_app/screens/appointments/book_appointment_screen.dart';
 import 'package:mb_dental_app/screens/dashboard/notifications_screen.dart';
 import 'package:mb_dental_app/screens/wallet/transaction_history_screen.dart';
+import 'package:mb_dental_app/widgets/app_dialog.dart';
 import 'package:mb_dental_app/widgets/appointment_detail_sheet.dart';
 import 'package:mb_dental_app/widgets/transaction_detail_sheet.dart';
 
@@ -52,6 +55,104 @@ String formatNotificationTime(DateTime date) {
   final minute = date.minute.toString().padLeft(2, '0');
   final period = date.hour >= 12 ? 'PM' : 'AM';
   return '$hour:$minute $period';
+}
+
+/// True when a notification has somewhere concrete to take the user —
+/// decides where tapping its detail dialog lands.
+bool notificationHasTarget(NotificationItem n) =>
+    n.relatedAppointmentId != null || n.relatedTransactionId != null;
+
+/// Navigates to whatever this notification is about: an appointment (pushes
+/// Appointments and opens that appointment's detail dialog) or a wallet
+/// transaction (pushes Transaction History and opens that transaction's
+/// detail dialog). Uses `context` after a short delay so the target screen's
+/// push transition finishes before the follow-up dialog appears on top of it.
+void _navigateForNotification(BuildContext context, NotificationItem n) {
+  final repository = PatientRepository();
+  if (n.relatedAppointmentId != null) {
+    Appointment? appointment;
+    for (final a in repository.appointments) {
+      if (a.id == n.relatedAppointmentId) appointment = a;
+    }
+    Navigator.push(context, MaterialPageRoute(builder: (_) => const AppointmentsScreen()));
+    if (appointment != null) {
+      final found = appointment;
+      Future.delayed(const Duration(milliseconds: 300), () {
+        if (context.mounted) showAppointmentDetailSheet(context, found);
+      });
+    }
+  } else if (n.relatedTransactionId != null) {
+    WalletTransaction? txn;
+    for (final t in repository.transactions) {
+      if (t.id == n.relatedTransactionId) txn = t;
+    }
+    Navigator.push(context, MaterialPageRoute(builder: (_) => const TransactionHistoryScreen()));
+    if (txn != null) {
+      final found = txn;
+      Future.delayed(const Duration(milliseconds: 300), () {
+        if (context.mounted) showTransactionDetailSheet(context, found);
+      });
+    }
+  }
+}
+
+/// Compact floating dialog with a notification's full detail — used from the
+/// home dropdown, the "See All" list, and the standalone Notifications screen.
+/// The whole dialog is always tappable: it opens whatever the notification is
+/// about (an appointment or a wallet transaction) and otherwise just dismisses,
+/// so there is no need for a "tap to view" hint.
+void showNotificationDetailDialog(BuildContext context, NotificationItem n) {
+  final hasTarget = notificationHasTarget(n);
+  showAppDialog(
+    context,
+    maxHeightFactor: 0.6,
+    builder: (dialogContext) => InkWell(
+      borderRadius: BorderRadius.circular(24),
+      onTap: () {
+        Navigator.pop(dialogContext);
+        if (hasTarget) _navigateForNotification(context, n);
+      },
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(color: notificationColor(n).withOpacity(0.14), shape: BoxShape.circle),
+                  child: Icon(notificationIcon(n), color: notificationColor(n), size: 20),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    n.title,
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                  ),
+                ),
+                const AppDialogCloseButton(),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Text(n.body, style: TextStyle(fontSize: 14, color: AppColors.textPrimary, height: 1.4)),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Icon(CupertinoIcons.clock, size: 13, color: AppColors.textSecondary),
+                const SizedBox(width: 6),
+                Text(
+                  '${formatNotificationDate(n.createdAt)} • ${formatNotificationTime(n.createdAt)}',
+                  style: TextStyle(fontSize: 12, color: AppColors.textSecondary, fontWeight: FontWeight.w600),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
 }
 
 class HomeTab extends StatefulWidget {
@@ -119,6 +220,11 @@ class _HomeTabState extends State<HomeTab> {
                 _closeNotifications();
                 Navigator.push(context, MaterialPageRoute(builder: (_) => const NotificationsScreen()));
               },
+              onNotificationTap: (n) {
+                _closeNotifications();
+                _repository.markNotificationRead(n.id);
+                showNotificationDetailDialog(context, n);
+              },
             ),
           ),
         ],
@@ -140,13 +246,13 @@ class _HomeTabState extends State<HomeTab> {
       backgroundColor: AppColors.background,
       body: SafeArea(
         child: ListenableBuilder(
-          listenable: _repository,
+          listenable: Listenable.merge([_repository, ThemeController()]),
           builder: (context, _) {
             final appointment = _repository.nextUpcomingAppointment;
             final recentTransactions = _repository.transactions.take(3).toList();
 
             return SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 16.0),
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 104),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -170,20 +276,24 @@ class _HomeTabState extends State<HomeTab> {
                         'Recent Activity',
                         style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
                       ),
-                      GestureDetector(
+                      InkWell(
+                        borderRadius: BorderRadius.circular(8),
                         onTap: () => Navigator.push(
                           context,
                           MaterialPageRoute(builder: (_) => const TransactionHistoryScreen()),
                         ),
-                        child: Row(
-                          children: [
-                            Text(
-                              'See All',
-                              style: TextStyle(color: AppColors.primary, fontSize: 12, fontWeight: FontWeight.bold),
-                            ),
-                            const SizedBox(width: 2),
-                            Icon(CupertinoIcons.chevron_right, color: AppColors.primary, size: 16),
-                          ],
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                          child: Row(
+                            children: [
+                              Text(
+                                'See All',
+                                style: TextStyle(color: AppColors.primary, fontSize: 12, fontWeight: FontWeight.bold),
+                              ),
+                              const SizedBox(width: 2),
+                              Icon(CupertinoIcons.chevron_right, color: AppColors.primary, size: 16),
+                            ],
+                          ),
                         ),
                       ),
                     ],
@@ -222,38 +332,42 @@ class _HomeTabState extends State<HomeTab> {
         ),
         CompositedTransformTarget(
           link: _bellLink,
-          child: GestureDetector(
-            onTap: _toggleNotifications,
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: _notificationOverlay != null ? AppColors.primary.withOpacity(0.1) : AppColors.surface,
-                    shape: BoxShape.circle,
-                    border: Border.all(color: AppColors.border),
-                  ),
-                  child: Icon(
-                    _notificationOverlay != null ? CupertinoIcons.bell_fill : CupertinoIcons.bell,
-                    color: AppColors.primary,
-                    size: 22,
-                  ),
-                ),
-                if (_repository.unreadNotificationCount > 0)
-                  Positioned(
-                    right: -2,
-                    top: -2,
-                    child: Container(
-                      padding: const EdgeInsets.all(4),
-                      decoration: BoxDecoration(color: AppColors.primary, shape: BoxShape.circle),
-                      child: Text(
-                        '${_repository.unreadNotificationCount}',
-                        style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
-                      ),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: _toggleNotifications,
+              customBorder: const CircleBorder(),
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: _notificationOverlay != null ? AppColors.primary.withOpacity(0.1) : AppColors.surface,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: AppColors.border),
+                    ),
+                    child: Icon(
+                      _notificationOverlay != null ? CupertinoIcons.bell_fill : CupertinoIcons.bell,
+                      color: AppColors.primary,
+                      size: 22,
                     ),
                   ),
-              ],
+                  if (_repository.unreadNotificationCount > 0)
+                    Positioned(
+                      right: -2,
+                      top: -2,
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: BoxDecoration(color: AppColors.primary, shape: BoxShape.circle),
+                        child: Text(
+                          '${_repository.unreadNotificationCount}',
+                          style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
             ),
           ),
         ),
@@ -301,15 +415,12 @@ class _HomeTabState extends State<HomeTab> {
     // background with light/white text and icons for contrast.
     return InkWell(
       borderRadius: BorderRadius.circular(22),
-      onTap: () {
-        widget.onNavigateToTab(1);
-        showAppointmentDetailSheet(context, appointment);
-      },
+      onTap: () => showAppointmentDetailSheet(context, appointment),
       child: Container(
         width: double.infinity,
-        clipBehavior: Clip.antiAlias,
+        padding: const EdgeInsets.all(18),
         decoration: BoxDecoration(
-          color: AppColors.primary,
+          color: const Color(0xFF14B8A6),
           borderRadius: BorderRadius.circular(22),
           boxShadow: [
             BoxShadow(
@@ -321,129 +432,56 @@ class _HomeTabState extends State<HomeTab> {
           ],
         ),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(18, 16, 18, 0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text('Next Appointment',
-                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.white)),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.18),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Text(
-                          statusLabel(appointment.status),
-                          style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                    ],
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('NEXT APPOINTMENT',
+                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 11, color: Colors.white70, letterSpacing: 0.6)),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.18),
+                    borderRadius: BorderRadius.circular(12),
                   ),
-                  const SizedBox(height: 14),
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(color: Colors.white.withOpacity(0.18), shape: BoxShape.circle),
-                        child: const Icon(CupertinoIcons.sparkles, color: Colors.white, size: 26),
-                      ),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              _formatDateHeading(appointment.date),
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 13,
-                                color: Colors.white,
-                                letterSpacing: 0.4,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              appointment.serviceName,
-                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.white),
-                            ),
-                            const SizedBox(height: 4),
-                            Row(
-                              children: [
-                                const Icon(CupertinoIcons.clock, size: 13, color: Colors.white70),
-                                const SizedBox(width: 4),
-                                Text(appointment.timeSlot,
-                                    style: const TextStyle(fontSize: 12, color: Colors.white70)),
-                              ],
-                            ),
-                            const SizedBox(height: 2),
-                            Row(
-                              children: [
-                                const Icon(CupertinoIcons.person, size: 13, color: Colors.white70),
-                                const SizedBox(width: 4),
-                                Text(appointment.doctorName,
-                                    style: const TextStyle(fontSize: 12, color: Colors.white70)),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
+                  child: Text(
+                    statusLabel(appointment.status),
+                    style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
-            const SizedBox(height: 16),
-            _buildTicketDivider(),
-            const Padding(
-              padding: EdgeInsets.fromLTRB(18, 8, 18, 14),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text('View full details',
-                      style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
-                  Icon(CupertinoIcons.chevron_right, color: Colors.white, size: 16),
-                ],
-              ),
+            const SizedBox(height: 8),
+            Text(
+              _formatDateHeading(appointment.date),
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.white),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              appointment.serviceName,
+              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: Colors.white),
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                const Icon(CupertinoIcons.clock, size: 14, color: Colors.white70),
+                const SizedBox(width: 4),
+                Text(appointment.timeSlot, style: const TextStyle(fontSize: 12, color: Colors.white70)),
+                const SizedBox(width: 14),
+                const Icon(CupertinoIcons.person, size: 14, color: Colors.white70),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    appointment.doctorName,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12, color: Colors.white70),
+                  ),
+                ),
+              ],
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  /// A boarding-pass-style tear line: a dashed rule with two semicircle
-  /// notches punched into the card's edges, colored to match the page
-  /// background so they read as cutouts.
-  Widget _buildTicketDivider() {
-    return SizedBox(
-      height: 22,
-      child: Stack(
-        clipBehavior: Clip.none,
-        alignment: Alignment.center,
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: Row(
-              children: List.generate(24, (i) {
-                return Expanded(
-                  child: Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 2),
-                    height: 1.5,
-                    color: Colors.white.withOpacity(0.35),
-                  ),
-                );
-              }),
-            ),
-          ),
-          const Positioned(left: -10, child: _TicketNotch()),
-          const Positioned(right: -10, child: _TicketNotch()),
-        ],
       ),
     );
   }
@@ -506,8 +544,8 @@ class _HomeTabState extends State<HomeTab> {
         label: 'Book\nAppointment',
         onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const BookAppointmentScreen())),
       ),
+      _QuickAction(icon: CupertinoIcons.money_dollar_circle, label: 'Billing', onTap: () => widget.onNavigateToTab(2)),
       _QuickAction(icon: CupertinoIcons.folder, label: 'My\nRecords', onTap: () => widget.onNavigateToTab(3)),
-      _QuickAction(icon: CupertinoIcons.creditcard, label: 'Wallet', onTap: () => widget.onNavigateToTab(2)),
     ];
 
     return Row(
@@ -548,7 +586,14 @@ class _HomeTabState extends State<HomeTab> {
           for (int i = 0; i < transactions.length; i++) ...[
             if (i > 0) const Divider(height: 20),
             InkWell(
-              onTap: () => showTransactionDetailSheet(context, transactions[i]),
+              onTap: () => showTransactionDetailSheet(
+                context,
+                transactions[i],
+                onTapNavigate: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const TransactionHistoryScreen()),
+                ),
+              ),
               child: _ActivityRow(transaction: transactions[i]),
             ),
           ],
@@ -560,24 +605,12 @@ class _HomeTabState extends State<HomeTab> {
 
 /// The semicircle "punch" at each end of the ticket divider. Its color
 /// matches the page background so it reads as a cutout in the card edge.
-class _TicketNotch extends StatelessWidget {
-  const _TicketNotch();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 20,
-      height: 20,
-      decoration: BoxDecoration(color: AppColors.background, shape: BoxShape.circle),
-    );
-  }
-}
-
 class _NotificationDropdown extends StatelessWidget {
   final PatientRepository repository;
   final VoidCallback onSeeAll;
+  final ValueChanged<NotificationItem> onNotificationTap;
 
-  const _NotificationDropdown({required this.repository, required this.onSeeAll});
+  const _NotificationDropdown({required this.repository, required this.onSeeAll, required this.onNotificationTap});
 
   @override
   Widget build(BuildContext context) {
@@ -639,7 +672,7 @@ class _NotificationDropdown extends StatelessWidget {
                       itemBuilder: (context, index) {
                         final n = notifications[index];
                         return InkWell(
-                          onTap: () => repository.markNotificationRead(n.id),
+                          onTap: () => onNotificationTap(n),
                           child: Container(
                             color: n.isRead ? Colors.transparent : AppColors.primary.withOpacity(0.05),
                             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),

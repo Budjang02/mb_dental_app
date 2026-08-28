@@ -4,6 +4,8 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:mb_dental_app/app/routes.dart';
 import 'package:mb_dental_app/app/theme.dart';
+import 'package:mb_dental_app/app/theme_controller.dart';
+import 'package:mb_dental_app/widgets/app_toast.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -43,13 +45,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       if (!mounted) return;
       setState(() => _isLoading = false);
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Account created successfully!'),
-          backgroundColor: _tealColor,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+      showAppToast(context, 'Account created successfully!', color: _tealColor);
 
       Navigator.pushReplacementNamed(context, AppRoutes.dashboard);
     }
@@ -59,7 +55,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Widget build(BuildContext context) {
     final double statusBarHeight = MediaQuery.of(context).padding.top;
 
-    return Scaffold(
+    return ListenableBuilder(
+      listenable: ThemeController(),
+      builder: (context, _) => Scaffold(
       backgroundColor: AppColors.background,
       body: SingleChildScrollView(
         padding: EdgeInsets.only(
@@ -79,28 +77,38 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  Text(
-                    'Mariano & Bolasoc',
-                    style: TextStyle(
-                      fontSize: 30, // Scaled larger than Create Account (26px)
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: -0.5,
-                      color: AppColors.textPrimary,
+                  SizedBox(
+                    height: 32,
+                    child: Text(
+                      'Mariano & Bolasoc',
+                      style: TextStyle(
+                        fontSize: 30, // Scaled larger than Create Account (26px)
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -0.5,
+                        height: 1.0,
+                        color: AppColors.textPrimary,
+                      ),
                     ),
                   ),
                   const SizedBox(width: 10),
-                  Image.asset(
-                    'assets/images/logo_login.png',
-                    height: 34, // Scaled up logo to match font size
-                    width: 34,
-                    fit: BoxFit.contain,
-                    errorBuilder: (context, error, stackTrace) {
-                      return const Icon(
-                        CupertinoIcons.heart_fill,
-                        size: 34,
-                        color: _tealColor,
-                      );
-                    },
+                  // Brand logo — swaps with the theme, and matches the
+                  // branding text's height exactly (both boxed at 32).
+                  SizedBox(
+                    height: 32,
+                    width: 32,
+                    child: Image.asset(
+                      ThemeController().isDark
+                          ? 'assets/images/dark_mode_icon.png'
+                          : 'assets/images/light_mode_icon.png',
+                      fit: BoxFit.contain,
+                      errorBuilder: (context, error, stackTrace) {
+                        return const Icon(
+                          CupertinoIcons.heart_fill,
+                          size: 32,
+                          color: _tealColor,
+                        );
+                      },
+                    ),
                   ),
                 ],
               ),
@@ -336,6 +344,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             ],
           ),
         ),
+      ),
       ),
     );
   }

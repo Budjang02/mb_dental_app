@@ -11,6 +11,12 @@ class Patient {
   final DateTime dateOfBirth;
   final String? avatarPath;
 
+  // Optional profile-completion fields — not required at registration.
+  final String? bloodType;
+  final String? address;
+  final String? maritalStatus;
+  final String? medicalHistory;
+
   Patient({
     required this.id,
     required this.patientCode,
@@ -22,6 +28,10 @@ class Patient {
     required this.gender,
     required this.dateOfBirth,
     this.avatarPath,
+    this.bloodType,
+    this.address,
+    this.maritalStatus,
+    this.medicalHistory,
   });
 
   String get fullName => '$firstName $lastName';
@@ -34,6 +44,10 @@ class Patient {
     String? gender,
     DateTime? dateOfBirth,
     String? avatarPath,
+    String? bloodType,
+    String? address,
+    String? maritalStatus,
+    String? medicalHistory,
   }) {
     return Patient(
       id: id,
@@ -46,6 +60,10 @@ class Patient {
       gender: gender ?? this.gender,
       dateOfBirth: dateOfBirth ?? this.dateOfBirth,
       avatarPath: avatarPath ?? this.avatarPath,
+      bloodType: bloodType ?? this.bloodType,
+      address: address ?? this.address,
+      maritalStatus: maritalStatus ?? this.maritalStatus,
+      medicalHistory: medicalHistory ?? this.medicalHistory,
     );
   }
 }

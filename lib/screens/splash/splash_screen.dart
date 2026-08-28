@@ -1,14 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_native_splash/flutter_native_splash.dart';
 import 'package:lottie/lottie.dart';
-import '../../app/theme.dart';
 import '../auth/login_screen.dart';
 
 /// Full-bleed animated splash. The Lottie composition is decoded before this
 /// widget paints anything (see [initState]), and the native OS splash is
 /// kept pinned until that decode finishes — so the very first thing drawn is
-/// an animation frame, never a bare plain-color screen. It then loops for as
-/// long as the app takes to get ready.
+/// an animation frame, never a bare plain-color screen. It then plays once
+/// through before handing off to Login.
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
 
@@ -17,7 +16,11 @@ class SplashScreen extends StatefulWidget {
 }
 
 class _SplashScreenState extends State<SplashScreen> {
-  static const _assetPath = 'assets/animations/animation_splash.json';
+  static const _assetPath = 'assets/animations/splash_logo.json';
+
+  /// The teal the animation paints its own background rect with. Used behind
+  /// the animation so there is never a visible seam at the screen edges.
+  static const _backdrop = Color(0xFF119589);
 
   double _opacity = 1;
   LottieComposition? _composition;
@@ -35,9 +38,9 @@ class _SplashScreenState extends State<SplashScreen> {
     // The native splash stays up until now, so the handoff to this frame is seamless.
     FlutterNativeSplash.remove();
 
-    // Total time the splash stays up while the animation loops. Long enough
-    // to see it repeat at least once (the file itself runs ~3s per cycle).
-    Future.delayed(const Duration(milliseconds: 4200), () {
+    // Hold for exactly one pass of the animation, read off the composition, so
+    // swapping the asset for a longer or shorter one never truncates it.
+    Future.delayed(composition.duration, () {
       if (!mounted) return;
       setState(() => _opacity = 0);
       Future.delayed(const Duration(milliseconds: 350), () {
@@ -53,7 +56,7 @@ class _SplashScreenState extends State<SplashScreen> {
   Widget build(BuildContext context) {
     final composition = _composition;
     return Scaffold(
-      backgroundColor: AppColors.primary,
+      backgroundColor: _backdrop,
       body: AnimatedOpacity(
         opacity: _opacity,
         duration: const Duration(milliseconds: 350),
@@ -62,8 +65,10 @@ class _SplashScreenState extends State<SplashScreen> {
               ? const SizedBox.shrink()
               : Lottie(
                   composition: composition,
-                  fit: BoxFit.contain,
-                  repeat: true,
+                  // The composition carries its own edge-to-edge background,
+                  // so cover it fully rather than letterboxing it.
+                  fit: BoxFit.cover,
+                  repeat: false,
                 ),
         ),
       ),

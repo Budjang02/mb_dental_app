@@ -11,6 +11,7 @@ class Appointment {
   final AppointmentStatus status;
   final String? notes;
   final String? paymentMethod;
+  final String? cancellationReason;
 
   Appointment({
     required this.id,
@@ -21,18 +22,26 @@ class Appointment {
     required this.status,
     this.notes,
     this.paymentMethod,
+    this.cancellationReason,
   });
 
-  Appointment copyWith({AppointmentStatus? status}) {
+  Appointment copyWith({
+    AppointmentStatus? status,
+    DateTime? date,
+    String? timeSlot,
+    String? notes,
+    String? cancellationReason,
+  }) {
     return Appointment(
       id: id,
       serviceName: serviceName,
       doctorName: doctorName,
-      date: date,
-      timeSlot: timeSlot,
+      date: date ?? this.date,
+      timeSlot: timeSlot ?? this.timeSlot,
       status: status ?? this.status,
-      notes: notes,
+      notes: notes ?? this.notes,
       paymentMethod: paymentMethod,
+      cancellationReason: cancellationReason ?? this.cancellationReason,
     );
   }
 }

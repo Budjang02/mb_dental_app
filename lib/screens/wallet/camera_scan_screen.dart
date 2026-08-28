@@ -2,8 +2,10 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../app/theme.dart';
+import '../../app/theme_controller.dart';
 import 'package:mb_dental_app/models/wallet_transaction.dart';
 import 'package:mb_dental_app/repositories/patient_repository.dart';
+import 'package:mb_dental_app/widgets/app_toast.dart';
 
 /// Opens the device camera to capture a payment QR code.
 ///
@@ -32,9 +34,7 @@ class _CameraScanScreenState extends State<CameraScanScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _isProcessing = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Camera unavailable: $e')),
-      );
+      showAppToast(context, 'Camera unavailable: $e', isError: true);
     }
   }
 
@@ -44,7 +44,7 @@ class _CameraScanScreenState extends State<CameraScanScreen> {
 
     showModalBottomSheet(
       context: context,
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.surface,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (context) => Padding(
         padding: const EdgeInsets.fromLTRB(24, 28, 24, 40),
@@ -78,9 +78,7 @@ class _CameraScanScreenState extends State<CameraScanScreen> {
                       final repository = PatientRepository();
                       if (repository.walletBalance < amount) {
                         Navigator.pop(context);
-                        ScaffoldMessenger.of(this.context).showSnackBar(
-                          const SnackBar(content: Text('Insufficient wallet balance.')),
-                        );
+                        showAppToast(this.context, 'Insufficient wallet balance.', isError: true);
                         return;
                       }
                       repository.addWalletTransaction(
@@ -93,9 +91,7 @@ class _CameraScanScreenState extends State<CameraScanScreen> {
                       );
                       Navigator.pop(context);
                       Navigator.pop(this.context);
-                      ScaffoldMessenger.of(this.context).showSnackBar(
-                        const SnackBar(content: Text('Payment sent.'), backgroundColor: AppColors.success),
-                      );
+                      showAppToast(this.context, 'Payment sent.');
                     },
                     child: const Text('Confirm Payment'),
                   ),
@@ -110,7 +106,9 @@ class _CameraScanScreenState extends State<CameraScanScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return ListenableBuilder(
+      listenable: ThemeController(),
+      builder: (context, _) => Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
         backgroundColor: Colors.black,
@@ -154,6 +152,7 @@ class _CameraScanScreenState extends State<CameraScanScreen> {
             ),
           ],
         ),
+      ),
       ),
     );
   }

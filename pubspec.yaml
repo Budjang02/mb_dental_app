@@ -31,31 +31,34 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
-    - assets/images/logo_icon.png
-    - assets/images/logo_login.png
+    - assets/images/logo_icon_final.png
+    - assets/images/light_mode_icon.png
+    - assets/images/dark_mode_icon.png
     - assets/images/transparent_icon.png
-    - assets/animations/animation_splash.json
+    - assets/animations/splash_logo.json
 
 # 1. App Icon Configuration
 flutter_launcher_icons:
   android: true
   ios: true
-  image_path: "assets/images/logo_icon.png"
+  image_path: "assets/images/logo_icon_final.png"
   min_sdk_android: 21
   adaptive_icon_background: '#0D9488'
-  adaptive_icon_foreground: "assets/images/logo_icon.png"
+  adaptive_icon_foreground: "assets/images/logo_icon_final.png"
 
 # 2. Splash Screen Configuration
 # No real image here on purpose: the animated Lottie splash (see
 # lib/screens/splash/splash_screen.dart) is the only logo the user should
 # see. This native splash is just a solid color bridging the gap before
-# Flutter's first frame renders. Android 12+ always draws *some* icon in its
-# mandatory system splash (defaulting to the launcher icon if none is given),
-# so we hand it a fully transparent 1px icon to keep that moment blank.
+# Flutter's first frame renders — its color matches the Scaffold background
+# behind the Lottie animation exactly, so the handoff is invisible. Android
+# 12+ always draws *some* icon in its mandatory system splash (defaulting to
+# the launcher icon on a white disc if none is given), so we hand it a fully
+# transparent 1x1 icon to keep that moment a plain color instead.
 flutter_native_splash:
-  color: '#119589'
+  color: '#0D9488'
   fullscreen: true
   android_12:
     image: assets/images/transparent_icon.png
-    color: '#119589'
-    icon_background_color: '#119589'
+    color: '#0D9488'
+    icon_background_color: '#0D9488'

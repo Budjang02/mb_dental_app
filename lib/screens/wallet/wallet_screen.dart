@@ -1,8 +1,10 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:mb_dental_app/app/theme.dart';
+import 'package:mb_dental_app/app/theme_controller.dart';
 import 'package:mb_dental_app/models/wallet_transaction.dart';
 import 'package:mb_dental_app/repositories/patient_repository.dart';
+import 'package:mb_dental_app/widgets/app_toast.dart';
 import 'package:mb_dental_app/widgets/transaction_detail_sheet.dart';
 import 'camera_scan_screen.dart';
 import 'transaction_history_screen.dart';
@@ -19,6 +21,7 @@ class WalletScreen extends StatefulWidget {
 class _WalletScreenState extends State<WalletScreen> {
   final PatientRepository _repository = PatientRepository();
   _TxnFilter _filter = _TxnFilter.all;
+  bool _balanceHidden = false;
 
   List<WalletTransaction> _applyFilter(List<WalletTransaction> all) {
     switch (_filter) {
@@ -45,7 +48,7 @@ class _WalletScreenState extends State<WalletScreen> {
         ],
       ),
       body: ListenableBuilder(
-        listenable: _repository,
+        listenable: Listenable.merge([_repository, ThemeController()]),
         builder: (context, _) {
           final filtered = _applyFilter(_repository.transactions);
           final grouped = <String, List<WalletTransaction>>{};
@@ -54,7 +57,7 @@ class _WalletScreenState extends State<WalletScreen> {
           }
 
           return SingleChildScrollView(
-            padding: const EdgeInsets.all(20.0),
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 104),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -105,17 +108,32 @@ class _WalletScreenState extends State<WalletScreen> {
       width: double.infinity,
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: AppColors.primary,
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [AppColors.primary, AppColors.primaryDark],
+        ),
         borderRadius: BorderRadius.circular(24),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(
+          Row(
             children: [
-              Text('Available Balance', style: TextStyle(color: Colors.white70, fontSize: 13)),
-              SizedBox(width: 6),
-              Icon(CupertinoIcons.eye, color: Colors.white70, size: 16),
+              const Text('Available Balance', style: TextStyle(color: Colors.white70, fontSize: 13)),
+              const SizedBox(width: 6),
+              InkWell(
+                onTap: () => setState(() => _balanceHidden = !_balanceHidden),
+                borderRadius: BorderRadius.circular(12),
+                child: Padding(
+                  padding: const EdgeInsets.all(2),
+                  child: Icon(
+                    _balanceHidden ? CupertinoIcons.eye_slash : CupertinoIcons.eye,
+                    color: Colors.white70,
+                    size: 16,
+                  ),
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 8),
@@ -123,7 +141,7 @@ class _WalletScreenState extends State<WalletScreen> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                '₱ ${_repository.walletBalance.toStringAsFixed(2)}',
+                _balanceHidden ? '₱ ••••••' : '₱ ${_repository.walletBalance.toStringAsFixed(2)}',
                 style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold),
               ),
               Container(
@@ -156,9 +174,7 @@ class _WalletScreenState extends State<WalletScreen> {
                       icon: CupertinoIcons.creditcard,
                       method: 'GCash',
                     );
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('₱500.00 added to your wallet.')),
-                    );
+                    showAppToast(context, '₱500.00 added to your wallet.');
                   },
                   icon: const Icon(CupertinoIcons.add, size: 18),
                   label: const Text('Add Money', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
@@ -193,6 +209,7 @@ class _WalletScreenState extends State<WalletScreen> {
         child: ChoiceChip(
           label: Text(label),
           selected: isSelected,
+          showCheckmark: false,
           selectedColor: AppColors.primary,
           labelStyle: TextStyle(
             color: isSelected ? Colors.white : AppColors.textPrimary,

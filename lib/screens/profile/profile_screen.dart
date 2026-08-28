@@ -7,6 +7,7 @@ import 'package:mb_dental_app/app/theme.dart';
 import 'package:mb_dental_app/app/theme_controller.dart';
 import 'package:mb_dental_app/app/routes.dart';
 import 'package:mb_dental_app/repositories/patient_repository.dart';
+import 'package:mb_dental_app/widgets/app_toast.dart';
 import 'change_password_screen.dart';
 import 'edit_profile_screen.dart';
 
@@ -105,7 +106,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       _repository.updateAvatar(picked.path);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not set photo: $e')));
+      showAppToast(context, 'Could not set photo: $e', isError: true);
     }
   }
 
@@ -116,61 +117,70 @@ class _ProfileScreenState extends State<ProfileScreen> {
         title: const Text('My Profile'),
       ),
       body: ListenableBuilder(
-        listenable: _repository,
+        listenable: Listenable.merge([_repository, ThemeController()]),
         builder: (context, _) {
           final patient = _repository.patient;
           return SingleChildScrollView(
-            padding: const EdgeInsets.all(20),
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 104),
             child: Column(
               children: [
                 Container(
                   width: double.infinity,
-                  padding: const EdgeInsets.symmetric(vertical: 24),
+                  padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
                     color: AppColors.primary.withOpacity(0.06),
                     borderRadius: BorderRadius.circular(24),
                     border: Border.all(color: AppColors.primary.withOpacity(0.12)),
                   ),
-                  child: Column(
+                  child: Row(
                     children: [
-                      GestureDetector(
+                      InkWell(
                         onTap: _pickAvatar,
+                        borderRadius: BorderRadius.circular(42),
                         child: Stack(
                           clipBehavior: Clip.none,
                           children: [
                             CircleAvatar(
-                              radius: 42,
+                              radius: 36,
                               backgroundColor: AppColors.primary.withOpacity(0.12),
                               backgroundImage: patient.avatarPath != null ? FileImage(File(patient.avatarPath!)) : null,
                               child: patient.avatarPath == null
-                                  ? Icon(CupertinoIcons.person_fill, size: 48, color: AppColors.primary)
+                                  ? Icon(CupertinoIcons.person_fill, size: 40, color: AppColors.primary)
                                   : null,
                             ),
                             Positioned(
                               right: -2,
                               bottom: -2,
                               child: Container(
-                                padding: const EdgeInsets.all(6),
+                                padding: const EdgeInsets.all(5),
                                 decoration: BoxDecoration(
                                   color: AppColors.primary,
                                   shape: BoxShape.circle,
                                   border: Border.all(color: AppColors.surface, width: 2),
                                 ),
-                                child: const Icon(CupertinoIcons.add, size: 14, color: Colors.white),
+                                child: const Icon(CupertinoIcons.add, size: 13, color: Colors.white),
                               ),
                             ),
                           ],
                         ),
                       ),
-                      const SizedBox(height: 14),
-                      Text(
-                        patient.fullName,
-                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        '@${patient.username}',
-                        style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              patient.fullName,
+                              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              patient.email,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                   ),
@@ -194,8 +204,35 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         _buildInfoRow(CupertinoIcons.person_2, 'Gender', patient.gender),
                         Divider(height: 24, color: AppColors.primary.withOpacity(0.1)),
                         _buildInfoRow(CupertinoIcons.gift, 'Birthdate', _formatBirthdate(patient.dateOfBirth)),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Card(
+                  color: AppColors.surface,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    side: BorderSide(color: AppColors.primary.withOpacity(0.15)),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Additional Info',
+                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.textSecondary),
+                        ),
+                        const SizedBox(height: 12),
+                        _buildInfoRow(CupertinoIcons.drop, 'Blood Type', patient.bloodType ?? 'Not set'),
                         Divider(height: 24, color: AppColors.primary.withOpacity(0.1)),
-                        _buildInfoRow(CupertinoIcons.at, 'Username', patient.username),
+                        _buildInfoRow(CupertinoIcons.map_pin_ellipse, 'Address', patient.address ?? 'Not set'),
+                        Divider(height: 24, color: AppColors.primary.withOpacity(0.1)),
+                        _buildInfoRow(Icons.diversity_1, 'Marital Status', patient.maritalStatus ?? 'Not set'),
+                        Divider(height: 24, color: AppColors.primary.withOpacity(0.1)),
+                        _buildInfoRow(CupertinoIcons.doc_text_search, 'Medical History', patient.medicalHistory ?? 'Not set'),
                       ],
                     ),
                   ),

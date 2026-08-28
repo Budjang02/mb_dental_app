@@ -1,7 +1,9 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:mb_dental_app/app/theme.dart';
+import 'package:mb_dental_app/app/theme_controller.dart';
 import 'package:mb_dental_app/repositories/patient_repository.dart';
+import 'package:mb_dental_app/widgets/app_toast.dart';
 
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({super.key});
@@ -16,11 +18,17 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
   late final TextEditingController _firstNameController;
   late final TextEditingController _lastNameController;
-  late final TextEditingController _usernameController;
   late final TextEditingController _phoneController;
+  late final TextEditingController _addressController;
+  late final TextEditingController _medicalHistoryController;
   late String _gender;
   late DateTime _dateOfBirth;
+  String? _bloodType;
+  String? _maritalStatus;
   bool _isSaving = false;
+
+  static const List<String> _bloodTypes = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
+  static const List<String> _maritalStatuses = ['Single', 'Married', 'Widowed', 'Divorced'];
 
   @override
   void initState() {
@@ -28,18 +36,22 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     final patient = _repository.patient;
     _firstNameController = TextEditingController(text: patient.firstName);
     _lastNameController = TextEditingController(text: patient.lastName);
-    _usernameController = TextEditingController(text: patient.username);
     _phoneController = TextEditingController(text: patient.phone);
+    _addressController = TextEditingController(text: patient.address ?? '');
+    _medicalHistoryController = TextEditingController(text: patient.medicalHistory ?? '');
     _gender = patient.gender;
     _dateOfBirth = patient.dateOfBirth;
+    _bloodType = patient.bloodType;
+    _maritalStatus = patient.maritalStatus;
   }
 
   @override
   void dispose() {
     _firstNameController.dispose();
     _lastNameController.dispose();
-    _usernameController.dispose();
     _phoneController.dispose();
+    _addressController.dispose();
+    _medicalHistoryController.dispose();
     super.dispose();
   }
 
@@ -71,22 +83,25 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     _repository.updatePatient(
       firstName: _firstNameController.text.trim(),
       lastName: _lastNameController.text.trim(),
-      username: _usernameController.text.trim(),
       phone: _phoneController.text.trim(),
       gender: _gender,
       dateOfBirth: _dateOfBirth,
+      bloodType: _bloodType,
+      address: _addressController.text.trim().isEmpty ? null : _addressController.text.trim(),
+      maritalStatus: _maritalStatus,
+      medicalHistory: _medicalHistoryController.text.trim().isEmpty ? null : _medicalHistoryController.text.trim(),
     );
 
     setState(() => _isSaving = false);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: const Text('Profile updated.'), backgroundColor: AppColors.success),
-    );
+    showAppToast(context, 'Profile updated.');
     Navigator.pop(context);
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return ListenableBuilder(
+      listenable: ThemeController(),
+      builder: (context, _) => Scaffold(
       appBar: AppBar(title: const Text('Edit Profile')),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(20),
@@ -108,12 +123,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
               ),
               const SizedBox(height: 16),
               TextFormField(
-                controller: _usernameController,
-                decoration: const InputDecoration(labelText: 'Username'),
-                validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
-              ),
-              const SizedBox(height: 16),
-              TextFormField(
                 controller: _phoneController,
                 keyboardType: TextInputType.phone,
                 decoration: const InputDecoration(labelText: 'Phone Number'),
@@ -122,7 +131,15 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
               const SizedBox(height: 16),
               DropdownButtonFormField<String>(
                 initialValue: _gender,
-                decoration: const InputDecoration(labelText: 'Gender'),
+                isExpanded: true,
+                icon: Icon(CupertinoIcons.chevron_down, color: AppColors.primary, size: 18),
+                decoration: InputDecoration(
+                  labelText: 'Gender',
+                  prefixIcon: Icon(CupertinoIcons.person_2, color: AppColors.primary, size: 20),
+                ),
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+                dropdownColor: AppColors.surface,
+                borderRadius: BorderRadius.circular(14),
                 items: const [
                   DropdownMenuItem(value: 'Male', child: Text('Male')),
                   DropdownMenuItem(value: 'Female', child: Text('Female')),
@@ -148,6 +165,59 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   ),
                 ),
               ),
+              const SizedBox(height: 28),
+              Text(
+                'Additional Info (Optional)',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.textSecondary),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                initialValue: _bloodType,
+                isExpanded: true,
+                icon: Icon(CupertinoIcons.chevron_down, color: AppColors.primary, size: 18),
+                decoration: InputDecoration(
+                  labelText: 'Blood Type',
+                  prefixIcon: Icon(CupertinoIcons.drop, color: AppColors.primary, size: 20),
+                ),
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+                dropdownColor: AppColors.surface,
+                borderRadius: BorderRadius.circular(14),
+                items: _bloodTypes.map((b) => DropdownMenuItem(value: b, child: Text(b))).toList(),
+                onChanged: (v) => setState(() => _bloodType = v),
+              ),
+              const SizedBox(height: 16),
+              DropdownButtonFormField<String>(
+                initialValue: _maritalStatus,
+                isExpanded: true,
+                icon: Icon(CupertinoIcons.chevron_down, color: AppColors.primary, size: 18),
+                decoration: InputDecoration(
+                  labelText: 'Marital Status',
+                  prefixIcon: Icon(Icons.diversity_1, color: AppColors.primary, size: 20),
+                ),
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+                dropdownColor: AppColors.surface,
+                borderRadius: BorderRadius.circular(14),
+                items: _maritalStatuses.map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
+                onChanged: (v) => setState(() => _maritalStatus = v),
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _addressController,
+                maxLines: 2,
+                decoration: InputDecoration(
+                  labelText: 'Address',
+                  prefixIcon: Icon(CupertinoIcons.map_pin_ellipse, color: AppColors.primary, size: 20),
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _medicalHistoryController,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                  labelText: 'Medical History',
+                  hintText: 'Allergies, conditions, medications, etc.',
+                ),
+              ),
               const SizedBox(height: 32),
               ElevatedButton(
                 onPressed: _isSaving ? null : _save,
@@ -159,6 +229,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             ],
           ),
         ),
+      ),
       ),
     );
   }

@@ -115,12 +115,14 @@ class PatientRepository extends ChangeNotifier {
         title: 'Appointment Confirmed',
         body: 'Your Oral Prophylaxis on Aug 28, 2026 at 10:00 AM is confirmed.',
         createdAt: DateTime(2026, 8, 23, 9, 0),
+        relatedAppointmentId: 'app-01',
       ),
       NotificationItem(
         id: 'notif-02',
         title: 'Payment Received',
         body: 'We received your payment of ₱800.00 for Dental Cleaning.',
         createdAt: DateTime(2026, 8, 20, 10, 20),
+        relatedTransactionId: 'txn-01',
       ),
       NotificationItem(
         id: 'notif-03',
@@ -128,6 +130,7 @@ class PatientRepository extends ChangeNotifier {
         body: 'Your next visit is coming up in 5 days. See you soon!',
         createdAt: DateTime(2026, 8, 18, 8, 0),
         isRead: true,
+        relatedAppointmentId: 'app-01',
       ),
     ];
 
@@ -246,9 +249,22 @@ class PatientRepository extends ChangeNotifier {
     return appointment;
   }
 
-  void cancelAppointment(String id) {
+  void cancelAppointment(String id, {required String reason}) {
     _appointments = _appointments
-        .map((a) => a.id == id ? a.copyWith(status: AppointmentStatus.cancelled) : a)
+        .map((a) => a.id == id
+            ? a.copyWith(status: AppointmentStatus.cancelled, cancellationReason: reason)
+            : a)
+        .toList();
+    notifyListeners();
+  }
+
+  /// Moves an existing appointment to a new date/time in place (does not
+  /// create a new appointment) and resets it to pending re-confirmation.
+  void rescheduleAppointment(String id, {required DateTime date, required String timeSlot, String? notes}) {
+    _appointments = _appointments
+        .map((a) => a.id == id
+            ? a.copyWith(date: date, timeSlot: timeSlot, status: AppointmentStatus.pending, notes: notes)
+            : a)
         .toList();
     notifyListeners();
   }
@@ -286,7 +302,14 @@ class PatientRepository extends ChangeNotifier {
     _notifications = _notifications
         .map((n) => n.id == id
             ? NotificationItem(
-                id: n.id, title: n.title, body: n.body, createdAt: n.createdAt, isRead: true)
+                id: n.id,
+                title: n.title,
+                body: n.body,
+                createdAt: n.createdAt,
+                isRead: true,
+                relatedAppointmentId: n.relatedAppointmentId,
+                relatedTransactionId: n.relatedTransactionId,
+              )
             : n)
         .toList();
     notifyListeners();
@@ -299,6 +322,10 @@ class PatientRepository extends ChangeNotifier {
     String? phone,
     String? gender,
     DateTime? dateOfBirth,
+    String? bloodType,
+    String? address,
+    String? maritalStatus,
+    String? medicalHistory,
   }) {
     _patient = _patient.copyWith(
       firstName: firstName,
@@ -307,6 +334,10 @@ class PatientRepository extends ChangeNotifier {
       phone: phone,
       gender: gender,
       dateOfBirth: dateOfBirth,
+      bloodType: bloodType,
+      address: address,
+      maritalStatus: maritalStatus,
+      medicalHistory: medicalHistory,
     );
     notifyListeners();
   }

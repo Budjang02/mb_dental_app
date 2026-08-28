@@ -1,6 +1,7 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:mb_dental_app/app/theme.dart';
+import 'package:mb_dental_app/app/theme_controller.dart';
 import 'package:mb_dental_app/models/notification.dart';
 import 'package:mb_dental_app/repositories/patient_repository.dart';
 import 'package:mb_dental_app/screens/dashboard/home_tab.dart';
@@ -15,7 +16,7 @@ class NotificationsScreen extends StatelessWidget {
       backgroundColor: AppColors.background,
       appBar: AppBar(title: const Text('Notifications')),
       body: ListenableBuilder(
-        listenable: repository,
+        listenable: Listenable.merge([repository, ThemeController()]),
         builder: (context, _) {
           final notifications = repository.notifications;
           if (notifications.isEmpty) {
@@ -75,7 +76,10 @@ class _NotificationTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final n = notification;
     return InkWell(
-      onTap: () => repository.markNotificationRead(n.id),
+      onTap: () {
+        repository.markNotificationRead(n.id);
+        showNotificationDetailDialog(context, n);
+      },
       child: Container(
         color: n.isRead ? Colors.transparent : AppColors.primary.withOpacity(0.05),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),

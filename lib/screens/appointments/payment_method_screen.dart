@@ -1,8 +1,10 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import '../../app/theme.dart';
+import '../../app/theme_controller.dart';
 import 'package:mb_dental_app/repositories/patient_repository.dart';
 import 'package:mb_dental_app/widgets/appointment_detail_sheet.dart';
+import 'package:mb_dental_app/widgets/app_toast.dart';
 
 enum _PaymentOption { cash, wallet }
 
@@ -47,12 +49,7 @@ class _PaymentMethodScreenState extends State<PaymentMethodScreen> {
 
     setState(() => _isConfirming = false);
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text('Appointment scheduled! Check the Upcoming tab.'),
-        backgroundColor: AppColors.success,
-      ),
-    );
+    showAppToast(context, 'Appointment scheduled! Check the Upcoming tab.');
 
     // Pop this payment screen and the booking form beneath it, back to
     // whichever screen (Dashboard or Appointments) started the booking flow.
@@ -62,7 +59,9 @@ class _PaymentMethodScreenState extends State<PaymentMethodScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return ListenableBuilder(
+      listenable: ThemeController(),
+      builder: (context, _) => Scaffold(
       appBar: AppBar(title: const Text('Payment')),
       body: Column(
         children: [
@@ -131,6 +130,7 @@ class _PaymentMethodScreenState extends State<PaymentMethodScreen> {
             ),
           ),
         ],
+      ),
       ),
     );
   }
