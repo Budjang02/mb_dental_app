@@ -8,6 +8,7 @@ import 'package:mb_dental_app/models/wallet_transaction.dart';
 import 'package:mb_dental_app/repositories/patient_repository.dart';
 import 'package:mb_dental_app/screens/appointments/appointments_screen.dart';
 import 'package:mb_dental_app/screens/appointments/book_appointment_screen.dart';
+import 'package:mb_dental_app/screens/chat/chat_screen.dart';
 import 'package:mb_dental_app/screens/dashboard/notifications_screen.dart';
 import 'package:mb_dental_app/screens/wallet/transaction_history_screen.dart';
 import 'package:mb_dental_app/widgets/app_dialog.dart';
@@ -19,7 +20,20 @@ const List<String> _monthNames = [
   'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER',
 ];
 
-String _formatDateHeading(DateTime date) => '${_monthNames[date.month - 1]} ${date.day}, ${date.year}';
+const List<String> _weekdayNames = [
+  'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday',
+];
+
+/// "Wednesday, September 2, 2026" — the full heading used on the next
+/// appointment card.
+String _formatFullDate(DateTime date) {
+  final month = _monthNames[date.month - 1];
+  final titleCased = '${month[0]}${month.substring(1).toLowerCase()}';
+  return '${_weekdayNames[date.weekday - 1]}, $titleCased ${date.day}, ${date.year}';
+}
+
+/// Three-letter month for the date badge, e.g. "SEP".
+String _shortMonth(DateTime date) => _monthNames[date.month - 1].substring(0, 3);
 
 /// Picks an icon + accent color for a notification based on keywords in its
 /// title, so the list reads at a glance instead of every row looking the same.
@@ -74,7 +88,16 @@ void _navigateForNotification(BuildContext context, NotificationItem n) {
     for (final a in repository.appointments) {
       if (a.id == n.relatedAppointmentId) appointment = a;
     }
-    Navigator.push(context, MaterialPageRoute(builder: (_) => const AppointmentsScreen()));
+    // Open the Schedule tab that actually lists this appointment: a confirmed
+    // or pending booking lands on Upcoming, a finished one on Completed, a
+    // cancelled one on Cancelled — instead of always dropping on Upcoming.
+    final tabIndex = appointment == null
+        ? 0
+        : AppointmentsScreen.tabIndexForStatus(appointment.status);
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => AppointmentsScreen(initialTabIndex: tabIndex)),
+    );
     if (appointment != null) {
       final found = appointment;
       Future.delayed(const Duration(milliseconds: 300), () {
@@ -272,9 +295,14 @@ class _HomeTabState extends State<HomeTab> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(
-                        'Recent Activity',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                      // Flexible so a large system font size shrinks the
+                      // heading instead of overflowing the row.
+                      Flexible(
+                        child: Text(
+                          'Recent Activity',
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                        ),
                       ),
                       InkWell(
                         borderRadius: BorderRadius.circular(8),
@@ -313,23 +341,47 @@ class _HomeTabState extends State<HomeTab> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Welcome back,', style: TextStyle(fontSize: 14, color: AppColors.textSecondary)),
-            const SizedBox(height: 2),
-            Row(
-              children: [
-                Text(
-                  _repository.patient.firstName,
-                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
-                ),
-                const SizedBox(width: 6),
-                const Text('👋', style: TextStyle(fontSize: 20)),
-              ],
-            ),
-          ],
+        // Expanded so a long name yields to the two action buttons beside it
+        // rather than pushing the row past the screen edge.
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Welcome back,', style: TextStyle(fontSize: 14, color: AppColors.textSecondary)),
+              const SizedBox(height: 2),
+              Row(
+                children: [
+                  Flexible(
+                    child: Text(
+                      _repository.patient.firstName,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                ],
+              ),
+            ],
+          ),
         ),
+        // Messages and notifications share the top-right corner.
+        Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ChatScreen())),
+            customBorder: const CircleBorder(),
+            child: Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                shape: BoxShape.circle,
+                border: Border.all(color: AppColors.border),
+              ),
+              child: Icon(CupertinoIcons.ellipses_bubble, color: AppColors.primary, size: 22),
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
         CompositedTransformTarget(
           link: _bellLink,
           child: Material(
@@ -411,8 +463,8 @@ class _HomeTabState extends State<HomeTab> {
       );
     }
 
-    // Colored to match the wallet balance card treatment: solid teal
-    // background with light/white text and icons for contrast.
+    // Deep gradient panel (dark navy -> forest green) with a date badge on the
+    // left and the visit details stacked beside it.
     return InkWell(
       borderRadius: BorderRadius.circular(22),
       onTap: () => showAppointmentDetailSheet(context, appointment),
@@ -420,7 +472,16 @@ class _HomeTabState extends State<HomeTab> {
         width: double.infinity,
         padding: const EdgeInsets.all(18),
         decoration: BoxDecoration(
-          color: const Color(0xFF14B8A6),
+          gradient: LinearGradient(
+            begin: Alignment.centerLeft,
+            end: Alignment.centerRight,
+            // Light mode gets a brighter teal-to-emerald wash so the card
+            // lifts off the pale page instead of sitting on it as a dark slab.
+            colors: ThemeController().isDark
+                ? const [Color(0xFF0B1D2A), Color(0xFF0E4A46), Color(0xFF12604A)]
+                : const [Color(0xFF11796D), Color(0xFF19A38D), Color(0xFF33B384)],
+            stops: const [0.0, 0.55, 1.0],
+          ),
           borderRadius: BorderRadius.circular(22),
           boxShadow: [
             BoxShadow(
@@ -435,47 +496,52 @@ class _HomeTabState extends State<HomeTab> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text('NEXT APPOINTMENT',
-                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 11, color: Colors.white70, letterSpacing: 0.6)),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.18),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    statusLabel(appointment.status),
-                    style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                const Icon(CupertinoIcons.calendar, size: 13, color: Colors.white70),
+                const SizedBox(width: 6),
+                const Text(
+                  'NEXT APPOINTMENT',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 11,
+                    color: Colors.white70,
+                    letterSpacing: 1.0,
                   ),
                 ),
+                const Spacer(),
+                _buildStatusPill(appointment.status),
               ],
             ),
-            const SizedBox(height: 8),
-            Text(
-              _formatDateHeading(appointment.date),
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.white),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              appointment.serviceName,
-              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: Colors.white),
-            ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 14),
             Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Icon(CupertinoIcons.clock, size: 14, color: Colors.white70),
-                const SizedBox(width: 4),
-                Text(appointment.timeSlot, style: const TextStyle(fontSize: 12, color: Colors.white70)),
-                const SizedBox(width: 14),
-                const Icon(CupertinoIcons.person, size: 14, color: Colors.white70),
-                const SizedBox(width: 4),
+                _buildDateBadge(appointment.date),
+                const SizedBox(width: 16),
                 Expanded(
-                  child: Text(
-                    appointment.doctorName,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 12, color: Colors.white70),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _formatFullDate(appointment.date),
+                        style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: Colors.white),
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          const Icon(CupertinoIcons.clock, size: 18, color: Colors.white),
+                          const SizedBox(width: 8),
+                          Text(
+                            appointment.timeSlot,
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 22, color: Colors.white),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      _buildDetailLine(CupertinoIcons.person_alt, appointment.doctorName),
+                      const SizedBox(height: 6),
+                      _buildDetailLine(CupertinoIcons.bandage, appointment.serviceName),
+                    ],
                   ),
                 ),
               ],
@@ -483,6 +549,67 @@ class _HomeTabState extends State<HomeTab> {
           ],
         ),
       ),
+    );
+  }
+
+  /// The "SEP / 2" tile on the left of the next appointment card.
+  Widget _buildDateBadge(DateTime date) {
+    return Container(
+      width: 62,
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white.withOpacity(0.18)),
+      ),
+      child: Column(
+        children: [
+          Text(
+            _shortMonth(date),
+            style: const TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: Colors.white70,
+              letterSpacing: 0.8,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            '${date.day}',
+            style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: Colors.white, height: 1.1),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatusPill(AppointmentStatus status) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: const Color(0xFFD9F5E3),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Text(
+        statusLabel(status),
+        style: const TextStyle(color: Color(0xFF106B45), fontSize: 11, fontWeight: FontWeight.bold),
+      ),
+    );
+  }
+
+  Widget _buildDetailLine(IconData icon, String text) {
+    return Row(
+      children: [
+        Icon(icon, size: 14, color: Colors.white70),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            text,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 13, color: Colors.white),
+          ),
+        ),
+      ],
     );
   }
 
@@ -544,14 +671,26 @@ class _HomeTabState extends State<HomeTab> {
         label: 'Book\nAppointment',
         onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const BookAppointmentScreen())),
       ),
-      _QuickAction(icon: CupertinoIcons.money_dollar_circle, label: 'Billing', onTap: () => widget.onNavigateToTab(2)),
+      _QuickAction(
+        icon: Icons.receipt_long_rounded,
+        label: 'Billing',
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const TransactionHistoryScreen(initialTabIndex: 1)),
+        ),
+      ),
+      _QuickAction(
+        icon: CupertinoIcons.plus_circle,
+        label: 'Add\nMoney',
+        onTap: () => widget.onNavigateToTab(2),
+      ),
       _QuickAction(icon: CupertinoIcons.folder, label: 'My\nRecords', onTap: () => widget.onNavigateToTab(3)),
     ];
 
     return Row(
       children: [
         for (int i = 0; i < actions.length; i++) ...[
-          if (i > 0) const SizedBox(width: 10),
+          if (i > 0) const SizedBox(width: 8),
           Expanded(child: actions[i]),
         ],
       ],
@@ -641,16 +780,33 @@ class _NotificationDropdown extends StatelessWidget {
                       Text('Notifications',
                           style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppColors.textPrimary)),
                       if (repository.unreadNotificationCount > 0)
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: AppColors.primary.withOpacity(0.12),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Text(
-                            '${repository.unreadNotificationCount} new',
-                            style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.primary),
-                          ),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: AppColors.primary.withOpacity(0.12),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Text(
+                                '${repository.unreadNotificationCount} new',
+                                style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.primary),
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Tooltip(
+                              message: 'Mark all as read',
+                              child: InkWell(
+                                customBorder: const CircleBorder(),
+                                onTap: repository.markAllNotificationsRead,
+                                child: Padding(
+                                  padding: const EdgeInsets.all(6),
+                                  child: Icon(Icons.done_all_rounded, size: 18, color: AppColors.primary),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                     ],
                   ),
@@ -761,7 +917,7 @@ class _QuickAction extends StatelessWidget {
       borderRadius: BorderRadius.circular(16),
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 6),
+        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 4),
         decoration: BoxDecoration(
           color: AppColors.surface,
           borderRadius: BorderRadius.circular(16),
@@ -774,10 +930,13 @@ class _QuickAction extends StatelessWidget {
             const SizedBox(height: 8),
             SizedBox(
               height: 28,
-              child: Text(
-                label,
-                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
-                textAlign: TextAlign.center,
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  label,
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+                  textAlign: TextAlign.center,
+                ),
               ),
             ),
           ],

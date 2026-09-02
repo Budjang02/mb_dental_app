@@ -91,6 +91,8 @@ class PatientRepository extends ChangeNotifier {
       Payment(
         id: 'bill-01',
         referenceNo: 'REC-2026-8801',
+        invoiceNo: 'INV-2026-0114',
+        receiptNo: 'RCPT-2026-0114',
         procedureName: 'Tooth Filling',
         doctorName: 'Dr. Rey Vincent Bolasoc',
         amount: 2000.0,
@@ -101,11 +103,24 @@ class PatientRepository extends ChangeNotifier {
       Payment(
         id: 'bill-02',
         referenceNo: 'REC-2026-9042',
+        invoiceNo: 'INV-2026-0228',
         procedureName: 'Oral Prophylaxis',
         doctorName: 'Dr. Rey Vincent Bolasoc',
         amount: 1000.0,
         billedOn: DateTime(2026, 8, 28),
         status: 'Unpaid',
+      ),
+      Payment(
+        id: 'bill-03',
+        referenceNo: 'REC-2025-7714',
+        invoiceNo: 'INV-2025-0912',
+        receiptNo: 'RCPT-2025-0912',
+        procedureName: 'Dental X-Ray',
+        doctorName: 'Dr. Jenneline Mariano',
+        amount: 500.0,
+        billedOn: DateTime(2025, 12, 10),
+        status: 'Paid',
+        paymentMethod: 'Wallet',
       ),
     ];
 
@@ -226,6 +241,8 @@ class PatientRepository extends ChangeNotifier {
     if (changed) notifyListeners();
   }
 
+  /// [status] defaults to pending — the clinic confirms manually. Bookings
+  /// paid with a wallet down payment come in already confirmed.
   Appointment addAppointment({
     required String serviceName,
     required String doctorName,
@@ -233,6 +250,7 @@ class PatientRepository extends ChangeNotifier {
     required String timeSlot,
     String? notes,
     String? paymentMethod,
+    AppointmentStatus status = AppointmentStatus.pending,
   }) {
     final appointment = Appointment(
       id: 'app-${(_appointmentSeq++).toString().padLeft(2, '0')}',
@@ -240,7 +258,7 @@ class PatientRepository extends ChangeNotifier {
       doctorName: doctorName,
       date: date,
       timeSlot: timeSlot,
-      status: AppointmentStatus.pending,
+      status: status,
       notes: notes,
       paymentMethod: paymentMethod,
     );
@@ -298,20 +316,24 @@ class PatientRepository extends ChangeNotifier {
     return txn;
   }
 
+  NotificationItem _copyRead(NotificationItem n) => NotificationItem(
+        id: n.id,
+        title: n.title,
+        body: n.body,
+        createdAt: n.createdAt,
+        isRead: true,
+        relatedAppointmentId: n.relatedAppointmentId,
+        relatedTransactionId: n.relatedTransactionId,
+      );
+
+  void markAllNotificationsRead() {
+    if (unreadNotificationCount == 0) return;
+    _notifications = _notifications.map((n) => n.isRead ? n : _copyRead(n)).toList();
+    notifyListeners();
+  }
+
   void markNotificationRead(String id) {
-    _notifications = _notifications
-        .map((n) => n.id == id
-            ? NotificationItem(
-                id: n.id,
-                title: n.title,
-                body: n.body,
-                createdAt: n.createdAt,
-                isRead: true,
-                relatedAppointmentId: n.relatedAppointmentId,
-                relatedTransactionId: n.relatedTransactionId,
-              )
-            : n)
-        .toList();
+    _notifications = _notifications.map((n) => n.id == id ? _copyRead(n) : n).toList();
     notifyListeners();
   }
 

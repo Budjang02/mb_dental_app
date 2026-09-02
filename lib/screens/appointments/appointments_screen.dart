@@ -8,7 +8,26 @@ import 'package:mb_dental_app/widgets/appointment_detail_sheet.dart';
 import 'book_appointment_screen.dart';
 
 class AppointmentsScreen extends StatefulWidget {
-  const AppointmentsScreen({super.key});
+  /// Which status tab opens first: 0 = Upcoming, 1 = Completed, 2 = Cancelled.
+  /// Notifications use [tabIndexForStatus] so tapping one lands on the tab
+  /// that actually holds the appointment it is about.
+  final int initialTabIndex;
+
+  const AppointmentsScreen({super.key, this.initialTabIndex = 0});
+
+  /// The tab that lists an appointment in [status]. Pending and confirmed
+  /// bookings both live under Upcoming.
+  static int tabIndexForStatus(AppointmentStatus status) {
+    switch (status) {
+      case AppointmentStatus.completed:
+        return 1;
+      case AppointmentStatus.cancelled:
+        return 2;
+      case AppointmentStatus.pending:
+      case AppointmentStatus.confirmed:
+        return 0;
+    }
+  }
 
   @override
   State<AppointmentsScreen> createState() => _AppointmentsScreenState();
@@ -22,7 +41,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 3, vsync: this, initialIndex: widget.initialTabIndex);
   }
 
   @override

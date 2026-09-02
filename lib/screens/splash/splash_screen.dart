@@ -16,7 +16,7 @@ class SplashScreen extends StatefulWidget {
 }
 
 class _SplashScreenState extends State<SplashScreen> {
-  static const _assetPath = 'assets/animations/splash_logo.json';
+  static const _assetPath = 'assets/animations/logo_splash.json';
 
   /// The teal the animation paints its own background rect with. Used behind
   /// the animation so there is never a visible seam at the screen edges.

@@ -7,16 +7,11 @@ import 'package:mb_dental_app/app/theme.dart';
 import 'package:mb_dental_app/app/theme_controller.dart';
 import 'package:mb_dental_app/app/routes.dart';
 import 'package:mb_dental_app/repositories/patient_repository.dart';
+import 'package:mb_dental_app/widgets/app_dialog.dart';
 import 'package:mb_dental_app/widgets/app_toast.dart';
 import 'change_password_screen.dart';
 import 'edit_profile_screen.dart';
-
-String _formatBirthdate(DateTime date) {
-  const months = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-  ];
-  return '${months[date.month - 1]} ${date.day}, ${date.year}';
-}
+import 'notification_settings_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -29,40 +24,76 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final PatientRepository _repository = PatientRepository();
 
   void _showLogoutDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          title: const Text('Log Out'),
-          content: const Text(
-            'Are you sure you want to log out of your account?',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.error,
-                minimumSize: const Size(80, 36),
+    showAppDialog(
+      context,
+      maxWidth: 360,
+      builder: (dialogContext) => Padding(
+        padding: const EdgeInsets.fromLTRB(24, 28, 24, 22),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppColors.error.withOpacity(0.16),
+                shape: BoxShape.circle,
               ),
-              onPressed: () {
-                Navigator.pop(context);
-                Navigator.pushNamedAndRemoveUntil(
-                  context,
-                  AppRoutes.login,
-                      (route) => false,
-                );
-              },
-              child: const Text('Log Out'),
+              child: Icon(CupertinoIcons.square_arrow_right, size: 26, color: AppColors.error),
+            ),
+            const SizedBox(height: 18),
+            Text(
+              'Log out?',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'You will be signed out on this device and returned to the sign-in page.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 13, color: AppColors.textSecondary, height: 1.4),
+            ),
+            const SizedBox(height: 24),
+            Row(
+              children: [
+                Expanded(
+                  child: TextButton(
+                    style: TextButton.styleFrom(
+                      backgroundColor: AppColors.background,
+                      foregroundColor: AppColors.textPrimary,
+                      minimumSize: const Size(0, 46),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        side: BorderSide(color: AppColors.border),
+                      ),
+                    ),
+                    onPressed: () => Navigator.pop(dialogContext),
+                    child: const Text(
+                      'Stay signed in',
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.error,
+                      foregroundColor: Colors.white,
+                      minimumSize: const Size(0, 46),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                    ),
+                    onPressed: () {
+                      Navigator.pop(dialogContext);
+                      Navigator.pushNamedAndRemoveUntil(context, AppRoutes.login, (route) => false);
+                    },
+                    child: const Text('Log out'),
+                  ),
+                ),
+              ],
             ),
           ],
-        );
-      },
+        ),
+      ),
     );
   }
 
@@ -110,152 +141,94 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('My Profile'),
-      ),
-      body: ListenableBuilder(
-        listenable: Listenable.merge([_repository, ThemeController()]),
+  /// Theme picker: System (follows the device setting), Light or Dark.
+  /// Presented as a floating window rather than a sheet so it reads as a
+  /// small settings dialog over the profile page.
+  void _showThemePicker() {
+    showAppDialog(
+      context,
+      maxWidth: 360,
+      builder: (dialogContext) => ListenableBuilder(
+        listenable: ThemeController(),
         builder: (context, _) {
-          final patient = _repository.patient;
-          return SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(20, 20, 20, 104),
-            child: Column(
-              children: [
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(20),
+          final current = ThemeController().mode;
+
+          Widget option(ThemeMode mode, IconData icon, String label, String description) {
+            final selected = current == mode;
+            return Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: () {
+                  ThemeController().setMode(mode);
+                  Navigator.pop(dialogContext);
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                   decoration: BoxDecoration(
-                    color: AppColors.primary.withOpacity(0.06),
-                    borderRadius: BorderRadius.circular(24),
-                    border: Border.all(color: AppColors.primary.withOpacity(0.12)),
+                    color: selected ? AppColors.primary.withOpacity(0.10) : Colors.transparent,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: selected ? AppColors.primary.withOpacity(0.45) : AppColors.border,
+                    ),
                   ),
                   child: Row(
                     children: [
-                      InkWell(
-                        onTap: _pickAvatar,
-                        borderRadius: BorderRadius.circular(42),
-                        child: Stack(
-                          clipBehavior: Clip.none,
-                          children: [
-                            CircleAvatar(
-                              radius: 36,
-                              backgroundColor: AppColors.primary.withOpacity(0.12),
-                              backgroundImage: patient.avatarPath != null ? FileImage(File(patient.avatarPath!)) : null,
-                              child: patient.avatarPath == null
-                                  ? Icon(CupertinoIcons.person_fill, size: 40, color: AppColors.primary)
-                                  : null,
-                            ),
-                            Positioned(
-                              right: -2,
-                              bottom: -2,
-                              child: Container(
-                                padding: const EdgeInsets.all(5),
-                                decoration: BoxDecoration(
-                                  color: AppColors.primary,
-                                  shape: BoxShape.circle,
-                                  border: Border.all(color: AppColors.surface, width: 2),
-                                ),
-                                child: const Icon(CupertinoIcons.add, size: 13, color: Colors.white),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 16),
+                      Icon(icon, size: 22, color: selected ? AppColors.primary : AppColors.textSecondary),
+                      const SizedBox(width: 14),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              patient.fullName,
-                              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                              label,
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                                color: AppColors.textPrimary,
+                              ),
                             ),
-                            const SizedBox(height: 3),
+                            const SizedBox(height: 2),
                             Text(
-                              patient.email,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                              description,
+                              style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
                             ),
                           ],
                         ),
                       ),
+                      if (selected)
+                        Icon(CupertinoIcons.checkmark_alt_circle_fill, size: 20, color: AppColors.primary),
                     ],
                   ),
                 ),
-                const SizedBox(height: 20),
-                Card(
-                  color: AppColors.surface,
-                  elevation: 0,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                    side: BorderSide(color: AppColors.primary.withOpacity(0.15)),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Column(
-                      children: [
-                        _buildInfoRow(CupertinoIcons.mail, 'Email', patient.email),
-                        Divider(height: 24, color: AppColors.primary.withOpacity(0.1)),
-                        _buildInfoRow(CupertinoIcons.phone, 'Phone', patient.phone),
-                        Divider(height: 24, color: AppColors.primary.withOpacity(0.1)),
-                        _buildInfoRow(CupertinoIcons.person_2, 'Gender', patient.gender),
-                        Divider(height: 24, color: AppColors.primary.withOpacity(0.1)),
-                        _buildInfoRow(CupertinoIcons.gift, 'Birthdate', _formatBirthdate(patient.dateOfBirth)),
-                      ],
+              ),
+            );
+          }
+
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Theme',
+                        style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                      ),
                     ),
-                  ),
+                    const AppDialogCloseButton(),
+                  ],
                 ),
-                const SizedBox(height: 20),
-                Card(
-                  color: AppColors.surface,
-                  elevation: 0,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                    side: BorderSide(color: AppColors.primary.withOpacity(0.15)),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Additional Info',
-                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.textSecondary),
-                        ),
-                        const SizedBox(height: 12),
-                        _buildInfoRow(CupertinoIcons.drop, 'Blood Type', patient.bloodType ?? 'Not set'),
-                        Divider(height: 24, color: AppColors.primary.withOpacity(0.1)),
-                        _buildInfoRow(CupertinoIcons.map_pin_ellipse, 'Address', patient.address ?? 'Not set'),
-                        Divider(height: 24, color: AppColors.primary.withOpacity(0.1)),
-                        _buildInfoRow(Icons.diversity_1, 'Marital Status', patient.maritalStatus ?? 'Not set'),
-                        Divider(height: 24, color: AppColors.primary.withOpacity(0.1)),
-                        _buildInfoRow(CupertinoIcons.doc_text_search, 'Medical History', patient.medicalHistory ?? 'Not set'),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 20),
-                _buildThemeToggleTile(),
-                _buildSettingTile(
-                  icon: CupertinoIcons.pencil,
-                  title: 'Edit Profile Information',
-                  onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const EditProfileScreen())),
-                ),
-                _buildSettingTile(
-                  icon: CupertinoIcons.lock,
-                  title: 'Change Password',
-                  onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ChangePasswordScreen())),
-                ),
-                _buildSettingTile(
-                  icon: CupertinoIcons.square_arrow_right,
-                  title: 'Log Out',
-                  textColor: AppColors.error,
-                  iconColor: AppColors.error,
-                  onTap: () => _showLogoutDialog(context),
-                ),
+                const SizedBox(height: 14),
+                option(ThemeMode.system, CupertinoIcons.circle_lefthalf_fill, 'System',
+                    'Match the device light / dark setting.'),
+                const SizedBox(height: 10),
+                option(ThemeMode.light, CupertinoIcons.sun_max_fill, 'Light', 'Always use the light theme.'),
+                const SizedBox(height: 10),
+                option(ThemeMode.dark, CupertinoIcons.moon_fill, 'Dark', 'Always use the dark theme.'),
               ],
             ),
           );
@@ -264,100 +237,223 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _buildInfoRow(IconData icon, String label, String value) {
-    return Row(
-      children: [
-        Icon(icon, size: 20, color: AppColors.primary),
-        const SizedBox(width: 12),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 11,
-                color: AppColors.textSecondary,
-              ),
-            ),
-            Text(
-              value,
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.bold,
-                color: AppColors.textPrimary,
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildThemeToggleTile() {
+  @override
+  Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: ThemeController(),
+      listenable: Listenable.merge([_repository, ThemeController()]),
       builder: (context, _) {
-        final isDark = ThemeController().isDark;
-        return Card(
-          color: AppColors.surface,
-          margin: const EdgeInsets.only(bottom: 8),
-          elevation: 0,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-            side: BorderSide(color: AppColors.primary.withOpacity(0.15)),
+        final patient = _repository.patient;
+        return Scaffold(
+          backgroundColor: AppColors.background,
+          appBar: AppBar(
+            title: const Text('Profile'),
           ),
-          child: ListTile(
-            leading: Icon(isDark ? CupertinoIcons.moon_fill : CupertinoIcons.sun_max_fill, color: AppColors.primary),
-            title: Text(
-              'Dark Mode',
-              style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+          body: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 104),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildIdentityCard(patient.fullName, patient.email, patient.avatarPath),
+                const SizedBox(height: 22),
+                _buildSectionLabel('Account'),
+                _buildGroup([
+                  _SettingRow(
+                    icon: CupertinoIcons.person_crop_circle,
+                    title: 'Manage Profile',
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const EditProfileScreen()),
+                    ),
+                  ),
+                  _SettingRow(
+                    icon: CupertinoIcons.lock,
+                    title: 'Password & Security',
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const ChangePasswordScreen()),
+                    ),
+                  ),
+                  _SettingRow(
+                    icon: CupertinoIcons.bell,
+                    title: 'Notifications',
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const NotificationSettingsScreen()),
+                    ),
+                  ),
+                ]),
+                const SizedBox(height: 22),
+                _buildSectionLabel('Preferences'),
+                _buildGroup([
+                  _SettingRow(
+                    icon: CupertinoIcons.circle_lefthalf_fill,
+                    title: 'Theme',
+                    value: ThemeController().modeLabel,
+                    onTap: _showThemePicker,
+                  ),
+                ]),
+                const SizedBox(height: 22),
+                _buildGroup([
+                  _SettingRow(
+                    icon: CupertinoIcons.square_arrow_right,
+                    title: 'Log Out',
+                    color: AppColors.error,
+                    showChevron: false,
+                    onTap: () => _showLogoutDialog(context),
+                  ),
+                ]),
+              ],
             ),
-            subtitle: Text(
-              isDark ? 'On' : 'Off',
-              style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
-            ),
-            trailing: Switch(
-              value: isDark,
-              activeColor: AppColors.primary,
-              onChanged: (value) => ThemeController().setDark(value),
-            ),
-            onTap: () => ThemeController().toggle(),
           ),
         );
       },
     );
   }
 
-  Widget _buildSettingTile({
-    required IconData icon,
-    required String title,
-    required VoidCallback onTap,
-    Color? textColor,
-    Color? iconColor,
-  }) {
-    return Card(
-      color: AppColors.surface,
-      margin: const EdgeInsets.only(bottom: 8),
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: AppColors.primary.withOpacity(0.15)),
+  Widget _buildIdentityCard(String fullName, String email, String? avatarPath) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AppColors.border),
       ),
-      child: ListTile(
-        leading: Icon(icon, color: iconColor ?? AppColors.primary),
-        title: Text(
-          title,
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.bold,
-            color: textColor ?? AppColors.textPrimary,
+      child: Row(
+        children: [
+          InkWell(
+            onTap: _pickAvatar,
+            borderRadius: BorderRadius.circular(42),
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                CircleAvatar(
+                  radius: 32,
+                  backgroundColor: AppColors.primary.withOpacity(0.12),
+                  backgroundImage: avatarPath != null ? FileImage(File(avatarPath)) : null,
+                  child: avatarPath == null
+                      ? Icon(CupertinoIcons.person_fill, size: 34, color: AppColors.primary)
+                      : null,
+                ),
+                Positioned(
+                  right: -2,
+                  bottom: -2,
+                  child: Container(
+                    padding: const EdgeInsets.all(5),
+                    decoration: BoxDecoration(
+                      color: AppColors.primary,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: AppColors.surface, width: 2),
+                    ),
+                    child: const Icon(CupertinoIcons.add, size: 12, color: Colors.white),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  fullName,
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  email,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSectionLabel(String label) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 4, bottom: 8),
+      child: Text(
+        label,
+        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textSecondary),
+      ),
+    );
+  }
+
+  /// Rows share one rounded card with hairline dividers between them, matching
+  /// the grouped-settings look of the reference design.
+  Widget _buildGroup(List<Widget> rows) {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        children: [
+          for (int i = 0; i < rows.length; i++) ...[
+            if (i > 0) Divider(height: 1, indent: 52, color: AppColors.border),
+            rows[i],
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _SettingRow extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String? value;
+  final Color? color;
+  final bool showChevron;
+  final VoidCallback onTap;
+
+  const _SettingRow({
+    required this.icon,
+    required this.title,
+    required this.onTap,
+    this.value,
+    this.color,
+    this.showChevron = true,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final foreground = color ?? AppColors.textPrimary;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          child: Row(
+            children: [
+              Icon(icon, size: 22, color: color ?? AppColors.textPrimary),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: foreground),
+                ),
+              ),
+              if (value != null) ...[
+                Text(
+                  value!,
+                  style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                ),
+                const SizedBox(width: 8),
+              ],
+              if (showChevron)
+                Icon(CupertinoIcons.chevron_right, size: 16, color: AppColors.textSecondary),
+            ],
           ),
         ),
-        trailing: Icon(
-          CupertinoIcons.chevron_right,
-          color: AppColors.textSecondary,
-        ),
-        onTap: onTap,
       ),
     );
   }

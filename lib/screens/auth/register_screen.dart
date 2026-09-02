@@ -92,22 +92,28 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   ),
                   const SizedBox(width: 10),
                   // Brand logo — swaps with the theme, and matches the
-                  // branding text's height exactly (both boxed at 32).
-                  SizedBox(
-                    height: 32,
-                    width: 32,
-                    child: Image.asset(
-                      ThemeController().isDark
-                          ? 'assets/images/dark_mode_icon.png'
-                          : 'assets/images/light_mode_icon.png',
-                      fit: BoxFit.contain,
-                      errorBuilder: (context, error, stackTrace) {
-                        return const Icon(
-                          CupertinoIcons.heart_fill,
-                          size: 32,
-                          color: _tealColor,
-                        );
-                      },
+                  // branding text's height exactly (both boxed at 32). Nudged
+                  // up so it sits on the wordmark's optical centre: the text
+                  // box reserves room for descenders that "Mariano & Bolasoc"
+                  // never uses, which otherwise leaves the logo riding low.
+                  Transform.translate(
+                    offset: const Offset(0, -4),
+                    child: SizedBox(
+                      height: 32,
+                      width: 32,
+                      child: Image.asset(
+                        ThemeController().isDark
+                            ? 'assets/images/dark_mode_icon.png'
+                            : 'assets/images/light_mode_icon.png',
+                        fit: BoxFit.contain,
+                        errorBuilder: (context, error, stackTrace) {
+                          return const Icon(
+                            CupertinoIcons.heart_fill,
+                            size: 32,
+                            color: _tealColor,
+                          );
+                        },
+                      ),
                     ),
                   ),
                 ],
@@ -148,7 +154,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 controller: _fullNameController,
                 decoration: InputDecoration(
                   labelText: 'Full Name',
-                  prefixIcon: const Icon(CupertinoIcons.person, color: _tealColor, size: 20),
+                  prefixIcon: Icon(CupertinoIcons.person, color: AppColors.primary, size: 24),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(14),
                     borderSide: BorderSide(color: Colors.grey.shade300),
@@ -173,7 +179,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 keyboardType: TextInputType.emailAddress,
                 decoration: InputDecoration(
                   labelText: 'Email Address',
-                  prefixIcon: const Icon(CupertinoIcons.mail, color: _tealColor, size: 20),
+                  prefixIcon: Icon(CupertinoIcons.mail, color: AppColors.primary, size: 24),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(14),
                     borderSide: BorderSide(color: Colors.grey.shade300),
@@ -201,7 +207,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 keyboardType: TextInputType.phone,
                 decoration: InputDecoration(
                   labelText: 'Phone Number',
-                  prefixIcon: const Icon(CupertinoIcons.phone, color: _tealColor, size: 20),
+                  prefixIcon: Icon(CupertinoIcons.phone, color: AppColors.primary, size: 24),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(14),
                     borderSide: BorderSide(color: Colors.grey.shade300),
@@ -226,12 +232,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 obscureText: !_isPasswordVisible,
                 decoration: InputDecoration(
                   labelText: 'Password',
-                  prefixIcon: const Icon(CupertinoIcons.lock, color: _tealColor, size: 20),
+                  prefixIcon: Icon(CupertinoIcons.lock, color: AppColors.primary, size: 24),
                   suffixIcon: IconButton(
                     icon: Icon(
                       _isPasswordVisible ? CupertinoIcons.eye_slash : CupertinoIcons.eye,
                       color: AppColors.textSecondary,
-                      size: 20,
+                      size: 24,
                     ),
                     onPressed: () {
                       setState(() => _isPasswordVisible = !_isPasswordVisible);
@@ -261,12 +267,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 obscureText: !_isConfirmPasswordVisible,
                 decoration: InputDecoration(
                   labelText: 'Confirm Password',
-                  prefixIcon: const Icon(CupertinoIcons.lock_shield, color: _tealColor, size: 20),
+                  prefixIcon: Icon(CupertinoIcons.lock_shield, color: AppColors.primary, size: 24),
                   suffixIcon: IconButton(
                     icon: Icon(
                       _isConfirmPasswordVisible ? CupertinoIcons.eye_slash : CupertinoIcons.eye,
                       color: AppColors.textSecondary,
-                      size: 20,
+                      size: 24,
                     ),
                     onPressed: () {
                       setState(() => _isConfirmPasswordVisible = !_isConfirmPasswordVisible);

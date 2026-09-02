@@ -1,9 +1,15 @@
+import 'dart:math' as math;
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:mb_dental_app/app/theme.dart';
 import 'package:mb_dental_app/app/theme_controller.dart';
+import 'package:mb_dental_app/models/payment.dart';
 import 'package:mb_dental_app/repositories/patient_repository.dart';
 import 'package:mb_dental_app/widgets/app_dialog.dart';
+import 'tooth_shapes.dart';
+import 'treatment_notes_data.dart';
+import 'treatment_notes_screen.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
@@ -46,22 +52,25 @@ const List<String> _toothNames = [
 
 String toothName(int toothNumber) => _toothNames[toothNumber - 1];
 
-ToothType toothTypeOf(int toothNum) {
-  if ([1, 2, 3, 14, 15, 16, 17, 18, 19, 30, 31, 32].contains(toothNum)) return ToothType.molar;
-  if ([4, 5, 12, 13, 20, 21, 28, 29].contains(toothNum)) return ToothType.premolar;
-  if ([6, 11, 22, 27].contains(toothNum)) return ToothType.canine;
-  return ToothType.incisor;
-}
+/// Chart legend, in the order the reference lists them. Also the source of
+/// truth for the colour each recorded condition paints its tooth with.
+const Map<String, Color> kToothConditionColors = {
+  'Not Recorded': Color(0xFFFFFFFF),
+  'Healthy': Color(0xFF2DD4BF),
+  'Caries/Cavity': Color(0xFFFFB74D),
+  'Filled': Color(0xFF64B5F6),
+  'Crown': Color(0xFFE040FB),
+  'Missing': Color(0xFFE57373),
+  'Root Canal': Color(0xFFFB923C),
+  'Impacted': Color(0xFFF472B6),
+  'Other': Color(0xFFA78BFA),
+};
 
-/// Upper molars carry three roots and lower molars two; every other tooth has
-/// a single root. Drives how many prongs the odontogram silhouette draws.
-int toothRootCount(int toothNum) {
-  if (toothTypeOf(toothNum) != ToothType.molar) return 1;
-  return toothNum <= 16 ? 3 : 2;
-}
+const List<String> _billMonths = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+];
 
-/// Teeth #1-16 are the upper arch, so their roots point up on the chart.
-bool isUpperTooth(int toothNum) => toothNum <= 16;
+String _formatBillDate(DateTime date) => '${_billMonths[date.month - 1]} ${date.day}, ${date.year}';
 
 /// Reads the leading "#12" out of a treatment note's tooth field. Returns null
 /// for whole-mouth entries such as "Full Mouth".
@@ -78,7 +87,7 @@ class DentalRecordsScreen extends StatefulWidget {
 }
 
 class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
-  int _selectedTabIndex = 0; // 0 = Teeth Details, 1 = Treatment Notes, 2 = X-Rays & Files
+  int _selectedTabIndex = 0; // 0 = Dental Chart, 1 = Billing, 2 = X-Rays & Files
   int _selectedToothNumber = 6;
 
   final Map<int, Map<String, dynamic>> _toothConditions = {
@@ -87,33 +96,6 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
     19: {'condition': 'Crown', 'color': const Color(0xFFE040FB), 'notes': 'Porcelain crown fitted.'},
     30: {'condition': 'Missing', 'color': const Color(0xFFE57373), 'notes': 'Tooth extracted.'},
   };
-
-  final List<Map<String, String>> _allTreatmentNotes = [
-    {
-      'date': 'Jan 15, 2026',
-      'tooth': '#6 Upper Right Canine',
-      'condition': 'Filled',
-      'procedure': 'Composite Tooth Filling',
-      'notes': 'Restoration complete. Patient advised regarding oral hygiene.',
-      'doctor': 'Dr. Rey Vincent Bolasoc',
-    },
-    {
-      'date': 'Dec 10, 2025',
-      'tooth': 'Full Mouth',
-      'condition': 'Cleaned',
-      'procedure': 'Full Oral Prophylaxis',
-      'notes': 'Routine scaling and polishing completed without complications.',
-      'doctor': 'Dr. Jenneline Mariano',
-    },
-    {
-      'date': 'Nov 05, 2025',
-      'tooth': '#14 Upper Left Molar',
-      'condition': 'Caries/Cavity',
-      'notes': 'Slight cavity detected. Scheduled restoration procedure.',
-      'procedure': 'Diagnostic Examination',
-      'doctor': 'Dr. Rey Vincent Bolasoc',
-    },
-  ];
 
   Future<void> _exportOdontogramPdf() async {
     final patient = PatientRepository().patient;
@@ -154,40 +136,9 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
       ),
     );
 
-    await Printing.layoutPdf(onLayout: (format) async => doc.save());
-  }
-
-  void _showExportSheet() {
-    showAppDialog(
-      context,
-      maxHeightFactor: 0.4,
-      builder: (dialogContext) => Padding(
-        padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text('Export Records', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColors.textPrimary)),
-                const AppDialogCloseButton(),
-              ],
-            ),
-            const SizedBox(height: 4),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: Icon(CupertinoIcons.doc_text, color: AppColors.primary),
-              title: Text('Save as PDF', style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w600)),
-              subtitle: Text('Generates a summary you can save or share', style: TextStyle(color: AppColors.textSecondary)),
-              onTap: () {
-                Navigator.pop(dialogContext);
-                _exportOdontogramPdf();
-              },
-            ),
-          ],
-        ),
-      ),
+    await Printing.sharePdf(
+      bytes: await doc.save(),
+      filename: 'dental-record-${patient.patientCode}.pdf',
     );
   }
 
@@ -289,7 +240,7 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: ThemeController(),
+      listenable: Listenable.merge([PatientRepository(), ThemeController()]),
       builder: (context, _) => Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
@@ -309,16 +260,16 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
               ),
               child: Row(
                 children: [
-                  _buildTabButton('Teeth Details', 0),
-                  _buildTabButton('Treatment Notes', 1),
+                  _buildTabButton('Dental Chart', 0),
+                  _buildTabButton('Billing', 1),
                   _buildTabButton('X-Rays & Files', 2),
                 ],
               ),
             ),
             const SizedBox(height: 16),
 
-            if (_selectedTabIndex == 0) _buildTeethDetailsTab(),
-            if (_selectedTabIndex == 1) _buildTreatmentNotesTab(),
+            if (_selectedTabIndex == 0) _buildDentalChartTab(),
+            if (_selectedTabIndex == 1) _buildBillingTab(),
             if (_selectedTabIndex == 2) _buildXRaysAndFilesTab(),
           ],
         ),
@@ -341,13 +292,17 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
               color: isSelected ? AppColors.primary : AppColors.surface,
               borderRadius: BorderRadius.circular(10),
             ),
-            child: Text(
-              label,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 11,
-                color: isSelected ? Colors.white : AppColors.textPrimary,
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                label,
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 11,
+                  color: isSelected ? Colors.white : AppColors.textPrimary,
+                ),
               ),
             ),
           ),
@@ -357,104 +312,198 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
   }
 
   // --- TAB 1: INTERACTIVE ODONTOGRAM ---
-  Widget _buildTeethDetailsTab() {
+  Widget _buildDentalChartTab() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // Outer card holds the title and actions; the chart itself sits in a
+        // second, inset box, as in the reference layout.
         Container(
           width: double.infinity,
+          padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
-            color: AppColors.primary,
+            color: AppColors.surface,
             borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: AppColors.border),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Interactive Odontogram',
+                    style: TextStyle(
+                        color: AppColors.textPrimary, fontSize: 15, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 2),
+                  Row(
+                    children: [
+                      Text(
+                        'Universal Numbering',
+                        style: TextStyle(color: AppColors.textSecondary, fontSize: 11),
+                      ),
+                      const SizedBox(width: 4),
+                      InkWell(
+                        onTap: _showToothTypesInfoSheet,
+                        borderRadius: BorderRadius.circular(12),
+                        child: Padding(
+                          padding: const EdgeInsets.all(2),
+                          child: Icon(CupertinoIcons.info_circle, color: AppColors.textSecondary, size: 14),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+                minimumSize: const Size(0, 32),
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              onPressed: _exportOdontogramPdf,
+              icon: const Icon(CupertinoIcons.doc_text, size: 14),
+              label: const Text('Export as PDF', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 16),
+          decoration: BoxDecoration(
+            color: AppColors.background,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: AppColors.border),
           ),
           child: Column(
             children: [
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Row(
-                      children: [
-                        const Text(
-                          'Interactive Odontogram',
-                          style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
-                        ),
-                        const SizedBox(width: 6),
-                        InkWell(
-                          onTap: _showToothTypesInfoSheet,
-                          borderRadius: BorderRadius.circular(12),
-                          child: const Padding(
-                            padding: EdgeInsets.all(2),
-                            child: Icon(CupertinoIcons.info_circle, color: Colors.white70, size: 17),
-                          ),
-                        ),
-                      ],
+              _permanentTeethPill(),
+              const SizedBox(height: 16),
+              _archLabel('Upper Permanent Teeth (Maxillary)'),
+              const SizedBox(height: 10),
+              // Both arches share one stack so a single dashed midline runs
+              // straight down the chart, as in the reference.
+              Stack(
+                children: [
+                  Positioned.fill(
+                    child: CustomPaint(
+                      painter: _DashedRulePainter(color: AppColors.border, vertical: true),
                     ),
-                    ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.white,
-                        foregroundColor: AppColors.primary,
-                        minimumSize: const Size(90, 32),
-                        padding: const EdgeInsets.symmetric(horizontal: 10),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                      ),
-                      onPressed: _showExportSheet,
-                      icon: const Icon(CupertinoIcons.square_arrow_up, size: 14),
-                      label: const Text('Export', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
-                    ),
-                  ],
-                ),
+                  ),
+                  Column(
+                    children: [
+                      _toothRow(List.generate(16, (i) => i + 1)),
+                      const SizedBox(height: 8),
+                      _sideMarkersRow(),
+                      const SizedBox(height: 12),
+                      _toothRow(List.generate(16, (i) => 32 - i)),
+                    ],
+                  ),
+                ],
               ),
-
-              // Canvas Container
-              Container(
-                margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 16),
-                decoration: BoxDecoration(
-                  color: AppColors.surface,
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Column(
-                  children: [
-                    _permanentTeethPill(),
-                    const SizedBox(height: 14),
-                    _archLabel('Upper Permanent Teeth (Maxillary)'),
-                    const SizedBox(height: 6),
-                    _rightLeftRow(),
-                    const SizedBox(height: 2),
-                    _toothRow(List.generate(16, (i) => i + 1)),
-                    const SizedBox(height: 14),
-                    _midlineDivider(),
-                    const SizedBox(height: 14),
-                    _toothRow(List.generate(16, (i) => 32 - i)),
-                    const SizedBox(height: 2),
-                    _rightLeftRow(),
-                    const SizedBox(height: 6),
-                    _archLabel('Lower Permanent Teeth (Mandibular)'),
-                    const Divider(height: 28),
-
-                    // Condition Legend
-                    Wrap(
-                      spacing: 12,
-                      runSpacing: 8,
-                      alignment: WrapAlignment.center,
-                      children: [
-                        _buildLegendDot('Healthy', AppColors.surface),
-                        _buildLegendDot('Caries/Cavity', const Color(0xFFFFB74D)),
-                        _buildLegendDot('Filled', const Color(0xFF64B5F6)),
-                        _buildLegendDot('Crown', const Color(0xFFE040FB)),
-                        _buildLegendDot('Missing', const Color(0xFFE57373)),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
+              const SizedBox(height: 10),
+              _archLabel('Lower Permanent Teeth (Mandibular)'),
+              const SizedBox(height: 12),
+              _orientationFooter(),
+              Divider(height: 26, color: AppColors.border),
+              _conditionLegend(),
+            ],
+          ),
+        ),
             ],
           ),
         ),
         const SizedBox(height: 16),
         _buildMergedToothCard(),
+      ],
+    );
+  }
+
+  /// "RIGHT ------------- LEFT" rule sitting between the two arches.
+  Widget _sideMarkersRow() {
+    Widget marker(String text) => Text(
+          text,
+          style: TextStyle(
+            fontSize: 9,
+            fontWeight: FontWeight.w700,
+            color: AppColors.textSecondary,
+            letterSpacing: 1,
+          ),
+        );
+
+    return Row(
+      children: [
+        marker('RIGHT'),
+        const SizedBox(width: 8),
+        Expanded(
+          child: SizedBox(
+            height: 1,
+            child: CustomPaint(
+              painter: _DashedRulePainter(color: AppColors.border),
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        marker('LEFT'),
+      ],
+    );
+  }
+
+  /// Bottom orientation strip: which side of the mouth each half of the
+  /// chart belongs to, with the midline called out in the centre.
+  Widget _orientationFooter() {
+    final style = TextStyle(
+      fontSize: 9,
+      fontWeight: FontWeight.w700,
+      color: AppColors.textSecondary,
+      letterSpacing: 1,
+    );
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Row(
+            children: [
+              Transform.rotate(
+                angle: math.pi,
+                child: Icon(CupertinoIcons.play_arrow_solid, size: 9, color: AppColors.textSecondary),
+              ),
+              const SizedBox(width: 5),
+              Text('RIGHT', style: style),
+            ],
+          ),
+          Text('— MIDLINE —', style: style),
+          Row(
+            children: [
+              Text('LEFT', style: style),
+              const SizedBox(width: 5),
+              Icon(CupertinoIcons.play_arrow_solid, size: 9, color: AppColors.textSecondary),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _conditionLegend() {
+    return Wrap(
+      spacing: 12,
+      runSpacing: 8,
+      alignment: WrapAlignment.center,
+      children: [
+        for (final entry in kToothConditionColors.entries) _buildLegendSwatch(entry.key, entry.value),
       ],
     );
   }
@@ -481,36 +530,7 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
     );
   }
 
-  Widget _rightLeftRow() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 4),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          _pillLabel('RIGHT', dark: true),
-          _pillLabel('LEFT', dark: true),
-        ],
-      ),
-    );
-  }
-
-  Widget _midlineDivider() {
-    return Row(
-      children: [
-        Expanded(child: Divider(color: AppColors.border)),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          child: Text(
-            'MIDLINE',
-            style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: AppColors.textSecondary, letterSpacing: 1),
-          ),
-        ),
-        Expanded(child: Divider(color: AppColors.border)),
-      ],
-    );
-  }
-
-  /// One straight row of 16 teeth, numbered underneath, matching the
+  /// One straight row of 16 teeth, numbered underneath.
   Widget _toothRow(List<int> numbers) {
     return Row(
       children: [
@@ -524,23 +544,20 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
     final info = _toothConditions[toothNum];
     final conditionColor = info?['color'] as Color?;
 
-    // Unrecorded teeth stay "empty" with a teal outline; recorded ones take
-    // their condition color, matching the reference odontogram chart.
-    final fillColor = conditionColor?.withOpacity(0.85) ?? AppColors.surface;
+    // Unrecorded teeth are drawn as white silhouettes with a teal outline;
+    // recorded ones take their condition color, matching the reference chart.
+    final fillColor = conditionColor?.withOpacity(0.85) ?? Colors.white;
     final strokeColor = isSelected
         ? AppColors.primary
         : (conditionColor ?? AppColors.primary.withOpacity(0.55));
 
     final tooth = CustomPaint(
-      size: const Size(16, 34),
+      size: const Size(20, 42),
       painter: _ToothPainter(
-        type: toothTypeOf(toothNum),
-        rootCount: toothRootCount(toothNum),
-        // Upper teeth hang down from the gum line, so their roots point up.
-        rootsUp: isUpperTooth(toothNum),
+        toothNumber: toothNum,
         fillColor: fillColor,
         strokeColor: strokeColor,
-        strokeWidth: isSelected ? 1.6 : 1.0,
+        strokeWidth: isSelected ? 1.7 : 1.15,
       ),
     );
 
@@ -581,7 +598,7 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
 
   /// Treatment notes for whichever tooth is selected in the odontogram above.
   Widget _buildMergedToothCard() {
-    final matching = _allTreatmentNotes
+    final matching = kTreatmentNotes
         .where((n) => toothNumberOf(n['tooth'] ?? '') == _selectedToothNumber)
         .toList();
 
@@ -600,21 +617,31 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
             children: [
               Icon(CupertinoIcons.doc_text, size: 16, color: AppColors.primary),
               const SizedBox(width: 8),
-              Text(
-                'Treatment Notes',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.textPrimary),
-              ),
-              const SizedBox(width: 6),
-              Flexible(
+              Expanded(
                 child: Text(
-                  'Tooth #$_selectedToothNumber',
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.textSecondary),
+                  'Treatment Notes',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.textPrimary),
+                ),
+              ),
+              // Opens the full history on its own page; this card stays scoped
+              // to whichever tooth is selected on the chart.
+              Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const TreatmentNotesScreen()),
+                  ),
+                  borderRadius: BorderRadius.circular(20),
+                  child: Padding(
+                    padding: const EdgeInsets.all(4),
+                    child: Icon(CupertinoIcons.clock, size: 18, color: AppColors.primary),
+                  ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 10),
+          Divider(height: 18, thickness: 0.6, color: AppColors.border),
           if (matching.isEmpty)
             Text(
               'No treatment notes recorded for Tooth #$_selectedToothNumber yet.',
@@ -622,7 +649,7 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
             )
           else
             for (int i = 0; i < matching.length; i++) ...[
-              if (i > 0) const SizedBox(height: 10),
+              if (i > 0) Divider(height: 22, color: AppColors.border),
               _ToothTreatmentNoteTile(
                 note: matching[i],
                 onTap: () => _showTreatmentNoteDetail(matching[i]),
@@ -630,88 +657,6 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
             ],
         ],
       ),
-    );
-  }
-
-  // --- TAB 2: CARDS-BASED TREATMENT NOTES ---
-  Widget _buildTreatmentNotesTab() {
-    return Column(
-      children: _allTreatmentNotes.map((note) {
-        return Container(
-          width: double.infinity,
-          margin: const EdgeInsets.only(bottom: 12),
-          decoration: BoxDecoration(
-            color: AppColors.surface,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: AppColors.border),
-          ),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(16),
-            onTap: () => _showTreatmentNoteDetail(note),
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Expanded(
-                        child: Text(
-                          note['procedure'] ?? '',
-                          style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
-                        ),
-                      ),
-                      Text(note['date'] ?? '', style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: AppColors.primary.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Text(
-                          note['tooth'] ?? '',
-                          style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.primary),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: AppColors.background,
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Text(
-                          'Condition: ${note['condition']}',
-                          style: TextStyle(fontSize: 11, color: AppColors.textPrimary),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  Text(note['notes'] ?? '', style: TextStyle(fontSize: 13, color: AppColors.textPrimary)),
-                  const Divider(height: 20),
-                  Row(
-                    children: [
-                      Icon(CupertinoIcons.person, size: 16, color: AppColors.textSecondary),
-                      const SizedBox(width: 6),
-                      Text('Performed by ${note['doctor']}',
-                          style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
-                      const Spacer(),
-                      Icon(CupertinoIcons.chevron_right, size: 16, color: AppColors.textSecondary),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      }).toList(),
     );
   }
 
@@ -766,26 +711,167 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
     );
   }
 
-  Widget _pillLabel(String text, {bool dark = false}) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-      decoration: BoxDecoration(
-        border: Border.all(color: dark ? AppColors.border : Colors.white54),
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Text(
-        text,
-        style: TextStyle(
-          color: dark ? AppColors.textSecondary : Colors.white70,
-          fontSize: 10,
-          letterSpacing: 1,
-          fontWeight: FontWeight.w600,
+  // --- TAB 4: BILLING ---
+  /// Rows stay compact on purpose: only the date, procedure, amount and
+  /// status are listed, and tapping a row opens the full statement (doctor,
+  /// invoice and receipt numbers included).
+  Widget _buildBillingTab() {
+    final bills = List<Payment>.from(PatientRepository().billing)
+      ..sort((a, b) => b.billedOn.compareTo(a.billedOn));
+
+    if (bills.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 40),
+        child: Center(
+          child: Text('No billing statements yet.',
+              style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 4, right: 4, bottom: 8),
+          child: Row(
+            children: [
+              Expanded(
+                flex: 3,
+                child: Text('DATE / PROCEDURE',
+                    style: TextStyle(
+                        fontSize: 9,
+                        letterSpacing: 0.8,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textSecondary)),
+              ),
+              Expanded(
+                flex: 2,
+                child: Text('AMOUNT / STATUS',
+                    textAlign: TextAlign.right,
+                    style: TextStyle(
+                        fontSize: 9,
+                        letterSpacing: 0.8,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textSecondary)),
+              ),
+              const SizedBox(width: 20),
+            ],
+          ),
+        ),
+        for (int i = 0; i < bills.length; i++) ...[
+          if (i > 0) const SizedBox(height: 10),
+          _buildBillingRow(bills[i]),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildBillingRow(Payment bill) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => _showBillingDetail(bill),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.border),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                flex: 3,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(_formatBillDate(bill.billedOn),
+                        style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+                    const SizedBox(height: 2),
+                    Text(
+                      bill.procedureName,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                flex: 2,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      '₱${bill.amount.toStringAsFixed(2)}',
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                    ),
+                    const SizedBox(height: 4),
+                    _buildBillStatusChip(bill.status, bill.isPaid),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 4),
+              Icon(CupertinoIcons.chevron_right, size: 16, color: AppColors.textSecondary),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildLegendDot(String label, Color color) {
+  Widget _buildBillStatusChip(String status, bool paid) {
+    final color = paid ? AppColors.success : AppColors.warning;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.14),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withOpacity(0.4)),
+      ),
+      child: Text(
+        status,
+        style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: color),
+      ),
+    );
+  }
+
+  void _showBillingDetail(Payment bill) {
+    showAppDialog(
+      context,
+      builder: (dialogContext) => SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Align(
+              alignment: Alignment.centerRight,
+              child: AppDialogCloseButton(),
+            ),
+            Text(
+              bill.procedureName,
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+            ),
+            const SizedBox(height: 8),
+            _buildBillStatusChip(bill.status, bill.isPaid),
+            const SizedBox(height: 16),
+            _kv('Date', _formatBillDate(bill.billedOn)),
+            _kv('Procedure', bill.procedureName),
+            _kv('Doctor', bill.doctorName),
+            _kv('Amount', '₱${bill.amount.toStringAsFixed(2)}'),
+            _kv('Status', bill.status),
+            _kv('Invoice', bill.invoiceNo),
+            _kv('Receipt', bill.receiptNo ?? 'Issued once paid'),
+            if (bill.paymentMethod != null) _kv('Paid via', bill.paymentMethod!),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLegendSwatch(String label, Color color) {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -794,11 +880,11 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
           height: 10,
           decoration: BoxDecoration(
             color: color,
-            shape: BoxShape.circle,
+            borderRadius: BorderRadius.circular(2),
             border: Border.all(color: AppColors.border),
           ),
         ),
-        const SizedBox(width: 4),
+        const SizedBox(width: 5),
         Text(label, style: TextStyle(fontSize: 10, color: AppColors.textSecondary)),
       ],
     );
@@ -849,18 +935,15 @@ class _ToothTreatmentNoteTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // No box of its own: the note sits directly on the tooth card, keeping
+    // every line of text but dropping the nested frame around it.
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(10),
         onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: AppColors.background,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: AppColors.border),
-          ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 2),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -930,24 +1013,21 @@ class _ToothTreatmentNoteTile extends StatelessWidget {
   }
 }
 
-enum ToothType { molar, premolar, canine, incisor }
-
 /// Draws an anatomical tooth silhouette — a rounded crown with a cervical
 /// waist plus one to three tapering roots — modelled on a printed odontogram
 /// chart. [rootsUp] flips the drawing for the maxillary arch, whose roots
 /// point up towards the gum line.
+/// Draws one tooth from the outline traced off the reference chart
+/// (see tooth_shapes.dart), filled and stroked in whatever colours its
+/// current condition and selection state call for.
 class _ToothPainter extends CustomPainter {
-  final ToothType type;
-  final int rootCount;
-  final bool rootsUp;
+  final int toothNumber;
   final Color fillColor;
   final Color strokeColor;
   final double strokeWidth;
 
   const _ToothPainter({
-    required this.type,
-    required this.rootCount,
-    required this.rootsUp,
+    required this.toothNumber,
     required this.fillColor,
     required this.strokeColor,
     required this.strokeWidth,
@@ -955,14 +1035,41 @@ class _ToothPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    canvas.save();
-    if (rootsUp) {
-      // Mirror vertically so the crown sits at the bottom and roots reach up.
-      canvas.translate(0, size.height);
-      canvas.scale(1, -1);
-    }
+    final outline = kToothOutlines[toothNumber];
+    if (outline == null || outline.length < 6) return;
 
-    final path = _buildPath(size);
+    // The traced points sit in a unit box that stands for the reference
+    // chart's 45x87 tooth cell. Fit that box into the slot without distorting
+    // it, so the teeth keep the proportions they have on the reference.
+    const sourceAspect = 45 / 87;
+    final inset = strokeWidth / 2 + 0.5;
+    final availableW = size.width - inset * 2;
+    final availableH = size.height - inset * 2;
+    final boxW = availableH * sourceAspect <= availableW ? availableH * sourceAspect : availableW;
+    final boxH = boxW / sourceAspect;
+    final dx = inset + (availableW - boxW) / 2;
+    final dy = inset + (availableH - boxH);
+    Offset at(int i) => Offset(dx + outline[i * 2] * boxW, dy + outline[i * 2 + 1] * boxH);
+
+    final count = outline.length ~/ 2;
+    final path = Path();
+    // Quadratics through the midpoints of the traced polygon: keeps the
+    // silhouette exact while smoothing away the pixel steps.
+    var previous = at(count - 1);
+    var current = at(0);
+    path.moveTo((previous.dx + current.dx) / 2, (previous.dy + current.dy) / 2);
+    for (var i = 1; i <= count; i++) {
+      final next = at(i % count);
+      path.quadraticBezierTo(
+        current.dx,
+        current.dy,
+        (current.dx + next.dx) / 2,
+        (current.dy + next.dy) / 2,
+      );
+      current = next;
+    }
+    path.close();
+
     canvas.drawPath(path, Paint()..color = fillColor..style = PaintingStyle.fill);
     canvas.drawPath(
       path,
@@ -974,139 +1081,20 @@ class _ToothPainter extends CustomPainter {
         ..strokeCap = StrokeCap.round,
     );
 
-    // Faint cervical line where the crown meets the roots, the detail that
-    // makes the silhouette read as a tooth rather than a blob.
-    final neckY = size.height * _crownHeight;
-    canvas.drawLine(
-      Offset(size.width * 0.24, neckY),
-      Offset(size.width * 0.76, neckY),
-      Paint()
-        ..color = strokeColor.withOpacity(0.35)
-        ..strokeWidth = strokeWidth * 0.7
-        ..strokeCap = StrokeCap.round,
-    );
-
-    canvas.restore();
-  }
-
-  /// Fraction of the height taken by the crown; molars have stubbier crowns
-  /// and longer roots than the narrow front teeth.
-  double get _crownHeight {
-    switch (type) {
-      case ToothType.molar:
-        return 0.44;
-      case ToothType.premolar:
-        return 0.40;
-      case ToothType.canine:
-        return 0.36;
-      case ToothType.incisor:
-        return 0.40;
-    }
-  }
-
-  /// Half-width of the crown as a fraction of the box, measured from center.
-  double get _crownHalfWidth {
-    switch (type) {
-      case ToothType.molar:
-        return 0.48;
-      case ToothType.premolar:
-        return 0.38;
-      case ToothType.canine:
-        return 0.34;
-      case ToothType.incisor:
-        return 0.36;
-    }
-  }
-
-  Path _buildPath(Size size) {
-    final w = size.width;
-    final h = size.height;
-    final cx = w * 0.5;
-    final hw = w * _crownHalfWidth;
-    final neck = h * _crownHeight;
-    final roots = _roots(hw, h);
-    final tipHalf = w * 0.055;
-
-    final path = Path()..moveTo(cx - hw * 0.74, h * 0.03);
-
-    // --- Crown: the biting edge across the top. ---
-    switch (type) {
-      case ToothType.molar:
-        // Two shallow cusps with a groove between them.
-        path.quadraticBezierTo(cx - hw * 0.34, h * 0.10, cx, h * 0.05);
-        path.quadraticBezierTo(cx + hw * 0.34, h * 0.10, cx + hw * 0.74, h * 0.03);
-        break;
-      case ToothType.premolar:
-        // A single dip between two small cusps.
-        path.quadraticBezierTo(cx, h * 0.11, cx + hw * 0.74, h * 0.03);
-        break;
-      case ToothType.canine:
-        // Pointed cusp tip.
-        path.quadraticBezierTo(cx - hw * 0.30, h * 0.01, cx, 0);
-        path.quadraticBezierTo(cx + hw * 0.30, h * 0.01, cx + hw * 0.74, h * 0.03);
-        break;
-      case ToothType.incisor:
-        // Flat chisel edge.
-        path.lineTo(cx + hw * 0.74, h * 0.03);
-        break;
-    }
-
-    // --- Right shoulder down to the neck. ---
-    path.quadraticBezierTo(cx + hw, h * 0.09, cx + hw, neck * 0.60);
-    path.quadraticBezierTo(cx + hw, neck * 0.93, cx + roots.last.neckRight, neck);
-
-    // --- Roots, right to left, with a furcation notch between each pair. ---
-    for (var i = roots.length - 1; i >= 0; i--) {
-      final root = roots[i];
-      final tipX = cx + root.tipX;
-      path.quadraticBezierTo(
-        cx + root.neckRight,
-        (neck + root.tipY) * 0.55,
-        tipX + tipHalf,
-        root.tipY - h * 0.015,
-      );
-      path.quadraticBezierTo(tipX, root.tipY + h * 0.015, tipX - tipHalf, root.tipY - h * 0.015);
-      path.quadraticBezierTo(
-        cx + root.neckLeft,
-        (neck + root.tipY) * 0.55,
-        cx + root.neckLeft,
-        neck,
-      );
-      if (i > 0) {
-        // Notch rises into the crown so the roots read as separate prongs.
-        final previous = roots[i - 1];
-        path.quadraticBezierTo(
-          cx + (root.neckLeft + previous.neckRight) * 0.5,
-          neck - h * 0.06,
-          cx + previous.neckRight,
-          neck,
+    // Crown grooves, traced from the same drawing.
+    final grooves = kToothGrooves[toothNumber];
+    if (grooves != null && grooves.isNotEmpty) {
+      final groovePaint = Paint()
+        ..color = strokeColor.withOpacity(0.55)
+        ..strokeWidth = strokeWidth * 0.65
+        ..strokeCap = StrokeCap.round;
+      for (var i = 0; i + 3 < grooves.length; i += 4) {
+        canvas.drawLine(
+          Offset(dx + grooves[i] * boxW, dy + grooves[i + 1] * boxH),
+          Offset(dx + grooves[i + 2] * boxW, dy + grooves[i + 3] * boxH),
+          groovePaint,
         );
       }
-    }
-
-    // --- Left shoulder back up to the biting edge. ---
-    path.quadraticBezierTo(cx - hw, neck * 0.93, cx - hw, neck * 0.60);
-    path.quadraticBezierTo(cx - hw, h * 0.09, cx - hw * 0.74, h * 0.03);
-    path.close();
-    return path;
-  }
-
-  /// Root geometry (offsets from the tooth's center) laid out left to right.
-  List<_Root> _roots(double hw, double h) {
-    switch (rootCount) {
-      case 3:
-        return [
-          _Root(neckLeft: -hw * 0.88, neckRight: -hw * 0.34, tipX: -hw * 0.66, tipY: h * 0.93),
-          _Root(neckLeft: -hw * 0.22, neckRight: hw * 0.22, tipX: 0, tipY: h),
-          _Root(neckLeft: hw * 0.34, neckRight: hw * 0.88, tipX: hw * 0.66, tipY: h * 0.93),
-        ];
-      case 2:
-        return [
-          _Root(neckLeft: -hw * 0.88, neckRight: -hw * 0.12, tipX: -hw * 0.48, tipY: h * 0.98),
-          _Root(neckLeft: hw * 0.12, neckRight: hw * 0.88, tipX: hw * 0.48, tipY: h * 0.98),
-        ];
-      default:
-        return [_Root(neckLeft: -hw * 0.84, neckRight: hw * 0.84, tipX: 0, tipY: h)];
     }
   }
 
@@ -1115,23 +1103,38 @@ class _ToothPainter extends CustomPainter {
     return oldDelegate.fillColor != fillColor ||
         oldDelegate.strokeColor != strokeColor ||
         oldDelegate.strokeWidth != strokeWidth ||
-        oldDelegate.rootCount != rootCount ||
-        oldDelegate.rootsUp != rootsUp ||
-        oldDelegate.type != type;
+        oldDelegate.toothNumber != toothNumber;
   }
 }
 
-/// One root prong of a tooth silhouette, in offsets from the tooth's center.
-class _Root {
-  final double neckLeft;
-  final double neckRight;
-  final double tipX;
-  final double tipY;
+class _DashedRulePainter extends CustomPainter {
+  final Color color;
+  final bool vertical;
 
-  const _Root({
-    required this.neckLeft,
-    required this.neckRight,
-    required this.tipX,
-    required this.tipY,
-  });
+  const _DashedRulePainter({required this.color, this.vertical = false});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const dash = 4.0;
+    const gap = 4.0;
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 1;
+
+    if (vertical) {
+      final x = size.width / 2;
+      for (double y = 0; y < size.height; y += dash + gap) {
+        canvas.drawLine(Offset(x, y), Offset(x, (y + dash).clamp(0, size.height)), paint);
+      }
+    } else {
+      final y = size.height / 2;
+      for (double x = 0; x < size.width; x += dash + gap) {
+        canvas.drawLine(Offset(x, y), Offset((x + dash).clamp(0, size.width), y), paint);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_DashedRulePainter oldDelegate) =>
+      oldDelegate.color != color || oldDelegate.vertical != vertical;
 }

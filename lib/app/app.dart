@@ -17,7 +17,7 @@ class DentalApp extends StatelessWidget {
           debugShowCheckedModeBanner: false,
           theme: AppTheme.lightTheme,
           darkTheme: AppTheme.darkTheme,
-          themeMode: ThemeController().isDark ? ThemeMode.dark : ThemeMode.light,
+          themeMode: ThemeController().mode,
           home: const SplashScreen(),
           routes: AppRoutes.routes,
         );

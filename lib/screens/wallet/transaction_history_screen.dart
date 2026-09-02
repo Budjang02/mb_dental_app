@@ -16,12 +16,17 @@ String formatBillDate(DateTime date) => '${_monthNames[date.month - 1]} ${date.d
 Color _billingStatusColor(String status) => status == 'Paid' ? AppColors.success : AppColors.warning;
 
 class TransactionHistoryScreen extends StatelessWidget {
-  const TransactionHistoryScreen({super.key});
+  /// Which tab opens first: 0 = Transactions, 1 = Billing. The dashboard's
+  /// Billing quick action jumps straight to the billing statements.
+  final int initialTabIndex;
+
+  const TransactionHistoryScreen({super.key, this.initialTabIndex = 0});
 
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
       length: 2,
+      initialIndex: initialTabIndex,
       child: Scaffold(
         backgroundColor: AppColors.background,
         appBar: AppBar(

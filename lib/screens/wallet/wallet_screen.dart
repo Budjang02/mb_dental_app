@@ -6,7 +6,7 @@ import 'package:mb_dental_app/models/wallet_transaction.dart';
 import 'package:mb_dental_app/repositories/patient_repository.dart';
 import 'package:mb_dental_app/widgets/app_toast.dart';
 import 'package:mb_dental_app/widgets/transaction_detail_sheet.dart';
-import 'camera_scan_screen.dart';
+import 'scan_pay_screen.dart';
 import 'transaction_history_screen.dart';
 
 enum _TxnFilter { all, moneyIn, moneyOut }
@@ -104,99 +104,122 @@ class _WalletScreenState extends State<WalletScreen> {
   }
 
   Widget _buildBalanceCard() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [AppColors.primary, AppColors.primaryDark],
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(24),
+      child: Container(
+        width: double.infinity,
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.centerLeft,
+            end: Alignment.centerRight,
+            // Lighter teal wash in light mode so the card reads as a bright
+            // panel on the pale page rather than a dark slab.
+            colors: ThemeController().isDark
+                ? const [Color(0xFF0C4A43), Color(0xFF1B8C7C), Color(0xFF0D5B52)]
+                : const [Color(0xFF12796D), Color(0xFF23A793), Color(0xFF158A7B)],
+            stops: const [0.0, 0.58, 1.0],
+          ),
         ),
-        borderRadius: BorderRadius.circular(24),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Text('Available Balance', style: TextStyle(color: Colors.white70, fontSize: 13)),
-              const SizedBox(width: 6),
-              InkWell(
-                onTap: () => setState(() => _balanceHidden = !_balanceHidden),
-                borderRadius: BorderRadius.circular(12),
-                child: Padding(
-                  padding: const EdgeInsets.all(2),
-                  child: Icon(
-                    _balanceHidden ? CupertinoIcons.eye_slash : CupertinoIcons.eye,
-                    color: Colors.white70,
-                    size: 16,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                _balanceHidden ? '₱ ••••••' : '₱ ${_repository.walletBalance.toStringAsFixed(2)}',
-                style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold),
-              ),
-              Container(
-                padding: const EdgeInsets.all(12),
+        child: Stack(
+          children: [
+            // Oversized soft circle bleeding off the right edge, as in the
+            // reference artwork.
+            Positioned(
+              right: -70,
+              top: -60,
+              child: Container(
+                width: 260,
+                height: 260,
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(16),
+                  shape: BoxShape.circle,
+                  color: Colors.white.withOpacity(0.07),
                 ),
-                child: const Icon(CupertinoIcons.creditcard, color: Colors.white, size: 32),
               ),
-            ],
-          ),
-          const SizedBox(height: 20),
-          Row(
-            children: [
-              Expanded(
-                child: ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.white,
-                    foregroundColor: AppColors.primary,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    minimumSize: const Size(0, 44),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Text(
+                        'AVAILABLE BALANCE',
+                        style: TextStyle(
+                          color: Colors.white70,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 1.2,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      InkWell(
+                        onTap: () => setState(() => _balanceHidden = !_balanceHidden),
+                        borderRadius: BorderRadius.circular(12),
+                        child: Padding(
+                          padding: const EdgeInsets.all(2),
+                          child: Icon(
+                            _balanceHidden ? CupertinoIcons.eye_slash : CupertinoIcons.eye,
+                            color: Colors.white70,
+                            size: 16,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                  onPressed: () {
-                    _repository.addWalletTransaction(
-                      title: 'Wallet Top-up',
-                      subtitle: 'GCash',
-                      amount: 500,
-                      type: TransactionType.credit,
-                      icon: CupertinoIcons.creditcard,
-                      method: 'GCash',
-                    );
-                    showAppToast(context, '₱500.00 added to your wallet.');
-                  },
-                  icon: const Icon(CupertinoIcons.add, size: 18),
-                  label: const Text('Add Money', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.white,
-                    foregroundColor: AppColors.primary,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    minimumSize: const Size(0, 44),
+                  const SizedBox(height: 10),
+                  Text(
+                    _balanceHidden ? '₱ ••••••' : '₱${_repository.walletBalance.toStringAsFixed(2)}',
+                    style: const TextStyle(color: Colors.white, fontSize: 30, fontWeight: FontWeight.bold),
                   ),
-                  onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CameraScanScreen())),
-                  icon: const Icon(CupertinoIcons.qrcode_viewfinder, size: 18),
-                  label: const Text('Pay / Scan', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                ),
+                  const SizedBox(height: 22),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.white,
+                            foregroundColor: const Color(0xFF0C4A43),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            minimumSize: const Size(0, 44),
+                          ),
+                          onPressed: () {
+                            _repository.addWalletTransaction(
+                              title: 'Wallet Top-up',
+                              subtitle: 'GCash',
+                              amount: 500,
+                              type: TransactionType.credit,
+                              icon: CupertinoIcons.creditcard,
+                              method: 'GCash',
+                            );
+                            showAppToast(context, '₱500.00 added to your wallet.');
+                          },
+                          icon: const Icon(CupertinoIcons.add, size: 18),
+                          label: const Text('Add Money', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.white,
+                            side: const BorderSide(color: Colors.white70),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            minimumSize: const Size(0, 44),
+                          ),
+                          onPressed: () =>
+                              Navigator.push(context, MaterialPageRoute(builder: (_) => const ScanPayScreen())),
+                          icon: const Icon(CupertinoIcons.qrcode_viewfinder, size: 18),
+                          label: const Text('Pay / Scan', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ),
-            ],
-          ),
-        ],
+            ),
+          ],
+        ),
       ),
     );
   }

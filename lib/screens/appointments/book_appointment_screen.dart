@@ -50,7 +50,9 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
   final _formKey = GlobalKey<FormState>();
   final _notesController = TextEditingController();
 
-  final Set<String> _selectedServices = {dentalServices.first};
+  // Starts empty on purpose: nothing is pre-ticked, the patient picks every
+  // service for the visit themselves.
+  final Set<String> _selectedServices = {};
   DateTime? _selectedDate;
   DateTime _focusedDay = DateTime.now();
   String? _selectedTimeSlot;
@@ -288,32 +290,16 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
               ),
               const SizedBox(height: 20),
 
-              // Time Slot Chips
+              // Time slots sit under the calendar on an even three-column
+              // grid, so the block lines up with the calendar's edges.
               _RequiredLabel('Available Time Slots'),
               const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: _timeSlots.map((slot) {
-                  final isSelected = _selectedTimeSlot == slot;
-                  return ChoiceChip(
-                    label: Text(slot),
-                    selected: isSelected,
-                    showCheckmark: false,
-                    selectedColor: const Color(0xFF14B8A6),
-                    backgroundColor: AppColors.surface,
-                    side: BorderSide(color: isSelected ? const Color(0xFF14B8A6) : AppColors.border),
-                    labelStyle: TextStyle(
-                      color: isSelected ? Colors.white : AppColors.textPrimary,
-                      fontWeight: FontWeight.w600,
-                    ),
-                    onSelected: (selected) {
-                      setState(() {
-                        _selectedTimeSlot = selected ? slot : null;
-                      });
-                    },
-                  );
-                }).toList(),
+              _TimeSlotGrid(
+                slots: _timeSlots,
+                selected: _selectedTimeSlot,
+                onSelected: (slot) => setState(
+                  () => _selectedTimeSlot = _selectedTimeSlot == slot ? null : slot,
+                ),
               ),
               const SizedBox(height: 20),
 
@@ -345,6 +331,64 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
           ),
         ),
       ),
+      ),
+    );
+  }
+}
+
+/// The time slots laid out under the calendar: three equal columns of
+/// equal-height buttons, so every slot is the same size and the grid squares
+/// up with the calendar above it instead of trailing off in a ragged wrap.
+class _TimeSlotGrid extends StatelessWidget {
+  final List<String> slots;
+  final String? selected;
+  final ValueChanged<String> onSelected;
+
+  const _TimeSlotGrid({required this.slots, required this.selected, required this.onSelected});
+
+  static const int _columns = 3;
+  static const double _gap = 10;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final itemWidth = (constraints.maxWidth - _gap * (_columns - 1)) / _columns;
+        return Wrap(
+          spacing: _gap,
+          runSpacing: _gap,
+          children: [
+            for (final slot in slots) SizedBox(width: itemWidth, child: _slotButton(slot)),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _slotButton(String slot) {
+    final isSelected = selected == slot;
+    return Material(
+      color: isSelected ? AppColors.primary : AppColors.surface,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => onSelected(slot),
+        child: Container(
+          height: 44,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: isSelected ? AppColors.primary : AppColors.border),
+          ),
+          child: Text(
+            slot,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: isSelected ? Colors.white : AppColors.textPrimary,
+            ),
+          ),
+        ),
       ),
     );
   }

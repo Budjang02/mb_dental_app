@@ -102,7 +102,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     return ListenableBuilder(
       listenable: ThemeController(),
       builder: (context, _) => Scaffold(
-      appBar: AppBar(title: const Text('Edit Profile')),
+      appBar: AppBar(title: const Text('Manage Profile')),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(20),
         child: Form(

@@ -35,7 +35,7 @@ flutter:
     - assets/images/light_mode_icon.png
     - assets/images/dark_mode_icon.png
     - assets/images/transparent_icon.png
-    - assets/animations/splash_logo.json
+    - assets/animations/logo_splash.json
 
 # 1. App Icon Configuration
 flutter_launcher_icons:
