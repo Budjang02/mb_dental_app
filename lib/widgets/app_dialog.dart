@@ -19,7 +19,7 @@ Future<T?> showAppDialog<T>(
       return Dialog(
         backgroundColor: AppColors.surface,
         insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         child: ConstrainedBox(
           constraints: BoxConstraints(
             maxHeight: MediaQuery.of(dialogContext).size.height * maxHeightFactor,

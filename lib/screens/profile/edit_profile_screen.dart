@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:mb_dental_app/app/theme.dart';
 import 'package:mb_dental_app/app/theme_controller.dart';
 import 'package:mb_dental_app/repositories/patient_repository.dart';
+import 'package:mb_dental_app/widgets/app_dropdown_field.dart';
 import 'package:mb_dental_app/widgets/app_toast.dart';
 
 class EditProfileScreen extends StatefulWidget {
@@ -21,8 +22,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   late final TextEditingController _phoneController;
   late final TextEditingController _addressController;
   late final TextEditingController _medicalHistoryController;
-  late String _gender;
-  late DateTime _dateOfBirth;
+  // Both start null for accounts registered through the streamlined sign-up,
+  // which collects neither. This screen is where they get filled in.
+  String? _gender;
+  DateTime? _dateOfBirth;
   String? _bloodType;
   String? _maritalStatus;
   bool _isSaving = false;
@@ -59,7 +62,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     final now = DateTime.now();
     final picked = await showDatePicker(
       context: context,
-      initialDate: _dateOfBirth,
+      // With no birthdate on file the picker opens on a plausible adult year
+      // rather than today, so the patient is not scrolling back decades.
+      initialDate: _dateOfBirth ?? DateTime(now.year - 25, now.month, now.day),
       firstDate: DateTime(now.year - 100),
       lastDate: now,
       builder: (context, child) => Theme(
@@ -129,23 +134,16 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
               ),
               const SizedBox(height: 16),
-              DropdownButtonFormField<String>(
-                initialValue: _gender,
-                isExpanded: true,
-                icon: Icon(CupertinoIcons.chevron_down, color: AppColors.primary, size: 18),
-                decoration: InputDecoration(
-                  labelText: 'Gender',
-                  prefixIcon: Icon(CupertinoIcons.person_2, color: AppColors.primary, size: 20),
-                ),
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
-                dropdownColor: AppColors.surface,
-                borderRadius: BorderRadius.circular(14),
-                items: const [
-                  DropdownMenuItem(value: 'Male', child: Text('Male')),
-                  DropdownMenuItem(value: 'Female', child: Text('Female')),
-                  DropdownMenuItem(value: 'Other', child: Text('Other')),
+              AppDropdownField<String>(
+                value: _gender,
+                labelText: 'Gender',
+                prefixIcon: Icon(CupertinoIcons.person_2, color: AppColors.primary, size: 20),
+                options: const [
+                  AppDropdownOption(value: 'Male', label: 'Male'),
+                  AppDropdownOption(value: 'Female', label: 'Female'),
+                  AppDropdownOption(value: 'Other', label: 'Other'),
                 ],
-                onChanged: (v) => setState(() => _gender = v!),
+                onChanged: (v) => setState(() => _gender = v),
               ),
               const SizedBox(height: 16),
               InkWell(
@@ -157,8 +155,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Text(
-                        '${_dateOfBirth.month}/${_dateOfBirth.day}/${_dateOfBirth.year}',
-                        style: TextStyle(color: AppColors.textPrimary),
+                        _dateOfBirth == null
+                            ? 'Not set'
+                            : '${_dateOfBirth!.month}/${_dateOfBirth!.day}/${_dateOfBirth!.year}',
+                        style: TextStyle(
+                          color: _dateOfBirth == null
+                              ? AppColors.textSecondary
+                              : AppColors.textPrimary,
+                        ),
                       ),
                       Icon(CupertinoIcons.calendar, color: AppColors.primary, size: 18),
                     ],
@@ -171,33 +175,19 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.textSecondary),
               ),
               const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                initialValue: _bloodType,
-                isExpanded: true,
-                icon: Icon(CupertinoIcons.chevron_down, color: AppColors.primary, size: 18),
-                decoration: InputDecoration(
-                  labelText: 'Blood Type',
-                  prefixIcon: Icon(CupertinoIcons.drop, color: AppColors.primary, size: 20),
-                ),
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
-                dropdownColor: AppColors.surface,
-                borderRadius: BorderRadius.circular(14),
-                items: _bloodTypes.map((b) => DropdownMenuItem(value: b, child: Text(b))).toList(),
+              AppDropdownField<String>(
+                value: _bloodType,
+                labelText: 'Blood Type',
+                prefixIcon: Icon(CupertinoIcons.drop, color: AppColors.primary, size: 20),
+                options: _bloodTypes.map((b) => AppDropdownOption(value: b, label: b)).toList(),
                 onChanged: (v) => setState(() => _bloodType = v),
               ),
               const SizedBox(height: 16),
-              DropdownButtonFormField<String>(
-                initialValue: _maritalStatus,
-                isExpanded: true,
-                icon: Icon(CupertinoIcons.chevron_down, color: AppColors.primary, size: 18),
-                decoration: InputDecoration(
-                  labelText: 'Marital Status',
-                  prefixIcon: Icon(Icons.diversity_1, color: AppColors.primary, size: 20),
-                ),
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
-                dropdownColor: AppColors.surface,
-                borderRadius: BorderRadius.circular(14),
-                items: _maritalStatuses.map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
+              AppDropdownField<String>(
+                value: _maritalStatus,
+                labelText: 'Marital Status',
+                prefixIcon: Icon(Icons.diversity_1, color: AppColors.primary, size: 20),
+                options: _maritalStatuses.map((m) => AppDropdownOption(value: m, label: m)).toList(),
                 onChanged: (v) => setState(() => _maritalStatus = v),
               ),
               const SizedBox(height: 16),

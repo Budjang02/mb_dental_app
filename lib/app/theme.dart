@@ -19,6 +19,13 @@ class AppColors {
   static const Color warning = Color(0xFFF59E0B);
   static const Color error = Color(0xFFEF4444);
   static Color get border => _dark ? const Color(0xFF334155) : const Color(0xFFE2E8F0);
+
+  /// Outline and grooves on the odontogram's teeth. The teeth are always
+  /// drawn light — their fill is the condition colour, white when nothing is
+  /// recorded — so this stays dark in both themes; that is what keeps the
+  /// silhouettes crisp against the pale card in light mode and against the
+  /// deep one in dark mode.
+  static Color get toothOutline => _dark ? const Color(0xFF4A5C70) : const Color(0xFF2F3D4C);
 }
 
 class AppTheme {

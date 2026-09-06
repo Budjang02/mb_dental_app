@@ -6,7 +6,9 @@ import 'package:image_picker/image_picker.dart';
 import 'package:mb_dental_app/app/theme.dart';
 import 'package:mb_dental_app/app/theme_controller.dart';
 import 'package:mb_dental_app/app/routes.dart';
+import 'package:mb_dental_app/data/clinic_catalog.dart';
 import 'package:mb_dental_app/repositories/patient_repository.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:mb_dental_app/widgets/app_dialog.dart';
 import 'package:mb_dental_app/widgets/app_toast.dart';
 import 'change_password_screen.dart';
@@ -144,6 +146,108 @@ class _ProfileScreenState extends State<ProfileScreen> {
   /// Theme picker: System (follows the device setting), Light or Dark.
   /// Presented as a floating window rather than a sheet so it reads as a
   /// small settings dialog over the profile page.
+  /// Opens the device's own dialer / mail client / maps app. A device without
+  /// a handler for the scheme (an emulator, usually) gets a toast rather than
+  /// a silent no-op.
+  Future<void> _launchSupport(Uri uri, String failureMessage) async {
+    final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!launched && mounted) {
+      showAppToast(context, failureMessage, isError: true);
+    }
+  }
+
+  void _showSupportSheet() {
+    showAppDialog(
+      context,
+      maxWidth: 380,
+      builder: (dialogContext) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Clinic Support',
+                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                  ),
+                ),
+                const AppDialogCloseButton(),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              kClinicName,
+              style: TextStyle(fontSize: 12.5, color: AppColors.textSecondary),
+            ),
+            const SizedBox(height: 16),
+            _SupportRow(
+              icon: CupertinoIcons.phone,
+              label: 'Call the clinic',
+              value: kClinicPhone,
+              onTap: () {
+                Navigator.pop(dialogContext);
+                _launchSupport(
+                  Uri(scheme: 'tel', path: kClinicPhone.replaceAll(' ', '')),
+                  'No dialer is available on this device.',
+                );
+              },
+            ),
+            const SizedBox(height: 10),
+            _SupportRow(
+              icon: CupertinoIcons.mail,
+              label: 'Email us',
+              value: kClinicEmail,
+              onTap: () {
+                Navigator.pop(dialogContext);
+                _launchSupport(
+                  Uri(scheme: 'mailto', path: kClinicEmail),
+                  'No mail app is available on this device.',
+                );
+              },
+            ),
+            const SizedBox(height: 10),
+            _SupportRow(
+              icon: CupertinoIcons.map_pin_ellipse,
+              label: 'Visit us',
+              value: kClinicAddress,
+              onTap: () {
+                Navigator.pop(dialogContext);
+                _launchSupport(
+                  Uri.https('www.google.com', '/maps/search/', {'api': '1', 'query': kClinicAddress}),
+                  'No maps app is available on this device.',
+                );
+              },
+            ),
+            const SizedBox(height: 14),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.primary.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  Icon(CupertinoIcons.clock, size: 15, color: AppColors.primary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Open $clinicOperatingDaysLabel · $clinicHoursLabel',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _showThemePicker() {
     showAppDialog(
       context,
@@ -254,6 +358,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 _buildIdentityCard(patient.fullName, patient.email, patient.avatarPath),
+                if (!patient.isProfileComplete) ...[
+                  const SizedBox(height: 12),
+                  _buildCompletionNudge(patient.missingProfileFields),
+                ],
                 const SizedBox(height: 22),
                 _buildSectionLabel('Account'),
                 _buildGroup([
@@ -290,6 +398,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     title: 'Theme',
                     value: ThemeController().modeLabel,
                     onTap: _showThemePicker,
+                  ),
+                ]),
+                const SizedBox(height: 22),
+                _buildSectionLabel('Support'),
+                _buildGroup([
+                  _SettingRow(
+                    icon: CupertinoIcons.chat_bubble_2,
+                    title: 'Contact the Clinic',
+                    value: kClinicPhone,
+                    onTap: _showSupportSheet,
                   ),
                 ]),
                 const SizedBox(height: 22),
@@ -374,6 +492,53 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  /// Streamlined sign-up leaves date of birth, gender and address blank. This
+  /// says which are still outstanding rather than blocking the patient at
+  /// registration for details the clinic can also take at check-in.
+  Widget _buildCompletionNudge(List<String> missing) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const EditProfileScreen()),
+        ),
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: AppColors.primary.withOpacity(0.08),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.primary.withOpacity(0.3)),
+          ),
+          child: Row(
+            children: [
+              Icon(CupertinoIcons.person_badge_plus, size: 18, color: AppColors.primary),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Complete your profile',
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Still needed: ${missing.join(', ')}',
+                      style: TextStyle(fontSize: 11.5, color: AppColors.textSecondary),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(CupertinoIcons.chevron_right, size: 15, color: AppColors.primary),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildSectionLabel(String label) {
     return Padding(
       padding: const EdgeInsets.only(left: 4, bottom: 8),
@@ -451,6 +616,67 @@ class _SettingRow extends StatelessWidget {
               ],
               if (showChevron)
                 Icon(CupertinoIcons.chevron_right, size: 16, color: AppColors.textSecondary),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// One tappable contact line in the clinic support sheet.
+class _SupportRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  final VoidCallback onTap;
+
+  const _SupportRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: AppColors.background,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.border),
+          ),
+          child: Row(
+            children: [
+              Icon(icon, size: 18, color: AppColors.primary),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      style: TextStyle(fontSize: 11.5, color: AppColors.textSecondary),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      value,
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(CupertinoIcons.chevron_right, size: 14, color: AppColors.textSecondary),
             ],
           ),
         ),

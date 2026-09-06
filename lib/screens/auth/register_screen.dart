@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:mb_dental_app/app/routes.dart';
 import 'package:mb_dental_app/app/theme.dart';
 import 'package:mb_dental_app/app/theme_controller.dart';
+import 'package:mb_dental_app/repositories/patient_repository.dart';
 import 'package:mb_dental_app/widgets/app_toast.dart';
 
 class RegisterScreen extends StatefulWidget {
@@ -39,16 +40,24 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   void _handleRegister() async {
-    if (_formKey.currentState!.validate()) {
-      setState(() => _isLoading = true);
-      await Future.delayed(const Duration(milliseconds: 800));
-      if (!mounted) return;
-      setState(() => _isLoading = false);
+    if (!_formKey.currentState!.validate()) return;
 
-      showAppToast(context, 'Account created successfully!', color: _tealColor);
+    setState(() => _isLoading = true);
 
-      Navigator.pushReplacementNamed(context, AppRoutes.dashboard);
-    }
+    // Sign-up captures name, email and phone only. Date of birth, gender and
+    // address are filled in later under Profile, or at clinic check-in.
+    await PatientRepository().registerPatient(
+      fullName: _fullNameController.text.trim(),
+      email: _emailController.text.trim(),
+      phone: _phoneController.text.trim(),
+    );
+
+    if (!mounted) return;
+    setState(() => _isLoading = false);
+
+    showAppToast(context, 'Account created successfully!', color: _tealColor);
+
+    Navigator.pushReplacementNamed(context, AppRoutes.dashboard);
   }
 
   @override
@@ -156,11 +165,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   labelText: 'Full Name',
                   prefixIcon: Icon(CupertinoIcons.person, color: AppColors.primary, size: 24),
                   border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(12),
                     borderSide: BorderSide(color: Colors.grey.shade300),
                   ),
                   enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(12),
                     borderSide: BorderSide(color: Colors.grey.shade300),
                   ),
                 ),
@@ -181,11 +190,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   labelText: 'Email Address',
                   prefixIcon: Icon(CupertinoIcons.mail, color: AppColors.primary, size: 24),
                   border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(12),
                     borderSide: BorderSide(color: Colors.grey.shade300),
                   ),
                   enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(12),
                     borderSide: BorderSide(color: Colors.grey.shade300),
                   ),
                 ),
@@ -209,11 +218,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   labelText: 'Phone Number',
                   prefixIcon: Icon(CupertinoIcons.phone, color: AppColors.primary, size: 24),
                   border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(12),
                     borderSide: BorderSide(color: Colors.grey.shade300),
                   ),
                   enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(12),
                     borderSide: BorderSide(color: Colors.grey.shade300),
                   ),
                 ),
@@ -244,11 +253,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     },
                   ),
                   border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(12),
                     borderSide: BorderSide(color: Colors.grey.shade300),
                   ),
                   enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(12),
                     borderSide: BorderSide(color: Colors.grey.shade300),
                   ),
                 ),
@@ -279,11 +288,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     },
                   ),
                   border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(12),
                     borderSide: BorderSide(color: Colors.grey.shade300),
                   ),
                   enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(12),
                     borderSide: BorderSide(color: Colors.grey.shade300),
                   ),
                 ),
@@ -305,7 +314,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     backgroundColor: _tealColor,
                     elevation: 0,
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
+                      borderRadius: BorderRadius.circular(12),
                     ),
                   ),
                   onPressed: _isLoading ? null : _handleRegister,

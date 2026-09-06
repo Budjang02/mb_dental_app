@@ -5,16 +5,9 @@ import 'package:mb_dental_app/repositories/patient_repository.dart';
 import 'package:mb_dental_app/widgets/app_calendar.dart';
 import 'package:mb_dental_app/widgets/app_toast.dart';
 import 'package:mb_dental_app/widgets/appointment_detail_sheet.dart';
-
-const List<String> _timeSlots = [
-  '10:00 AM',
-  '11:00 AM',
-  '12:00 PM',
-  '01:00 PM',
-  '02:00 PM',
-  '03:00 PM',
-  '04:00 PM',
-];
+import 'package:mb_dental_app/app/messages.dart';
+import 'package:mb_dental_app/data/clinic_catalog.dart';
+import 'package:mb_dental_app/models/dental_service.dart';
 
 /// Moves an existing appointment to a new date/time via
 /// [PatientRepository.rescheduleAppointment] instead of booking a new one.
@@ -28,10 +21,18 @@ class RescheduleAppointmentScreen extends StatefulWidget {
 }
 
 class _RescheduleAppointmentScreenState extends State<RescheduleAppointmentScreen> {
+  final PatientRepository _repository = PatientRepository();
+
   DateTime? _selectedDate;
   DateTime _focusedDay = DateTime.now();
-  String? _selectedTimeSlot;
+
+  /// Start of the new block, as minutes from midnight.
+  int? _selectedStartMinute;
   bool _isSubmitting = false;
+
+  /// The moved appointment keeps its original chair time, so the grid only
+  /// offers starts that still fit the same block.
+  int get _duration => widget.appointment.durationMinutes;
   late final TextEditingController _notesController =
       TextEditingController(text: widget.appointment.notes ?? '');
 
@@ -46,8 +47,20 @@ class _RescheduleAppointmentScreenState extends State<RescheduleAppointmentScree
       showAppToast(context, 'Please select a new date.', isError: true);
       return;
     }
-    if (_selectedTimeSlot == null) {
+    if (_selectedStartMinute == null) {
       showAppToast(context, 'Please select a new time slot.', isError: true);
+      return;
+    }
+
+    // The slot may have been taken while this screen was open.
+    if (!_repository.isSlotAvailable(
+      day: _selectedDate!,
+      startMinute: _selectedStartMinute!,
+      durationMinutes: _duration,
+      excludeAppointmentId: widget.appointment.id,
+    )) {
+      showAppToast(context, AppMessages.slotUnavailable, isError: true);
+      setState(() => _selectedStartMinute = null);
       return;
     }
 
@@ -55,16 +68,97 @@ class _RescheduleAppointmentScreenState extends State<RescheduleAppointmentScree
     await Future.delayed(const Duration(milliseconds: 300));
     if (!mounted) return;
 
-    PatientRepository().rescheduleAppointment(
+    _repository.rescheduleAppointment(
       widget.appointment.id,
       date: _selectedDate!,
-      timeSlot: _selectedTimeSlot!,
+      timeSlot: formatMinuteOfDay(_selectedStartMinute!),
       notes: _notesController.text.trim().isEmpty ? null : _notesController.text.trim(),
     );
 
     setState(() => _isSubmitting = false);
     showAppToast(context, 'Appointment rescheduled.');
     Navigator.pop(context);
+  }
+
+  Widget _buildSlotGrid() {
+    final slots = _repository.slotOptionsFor(
+      day: _selectedDate!,
+      durationMinutes: _duration,
+      excludeAppointmentId: widget.appointment.id,
+    );
+
+    if (slots.every((slot) => !slot.isAvailable)) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppColors.border),
+        ),
+        child: Text(
+          'No ${formatDuration(_duration)} block is free on this day. Please choose another date.',
+          style: TextStyle(fontSize: 12, height: 1.4, color: AppColors.textSecondary),
+        ),
+      );
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const columns = 3;
+        const gap = 10.0;
+        final itemWidth = (constraints.maxWidth - gap * (columns - 1)) / columns;
+        return Wrap(
+          spacing: gap,
+          runSpacing: gap,
+          children: [
+            for (final slot in slots)
+              SizedBox(
+                width: itemWidth,
+                child: Opacity(
+                  opacity: slot.isAvailable ? 1 : 0.45,
+                  child: Material(
+                    color: _selectedStartMinute == slot.startMinute
+                        ? AppColors.primary
+                        : AppColors.surface,
+                    borderRadius: BorderRadius.circular(12),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: slot.isAvailable
+                          ? () => setState(() => _selectedStartMinute =
+                              _selectedStartMinute == slot.startMinute ? null : slot.startMinute)
+                          : null,
+                      child: Container(
+                        height: 44,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: _selectedStartMinute == slot.startMinute
+                                ? AppColors.primary
+                                : AppColors.border,
+                          ),
+                        ),
+                        child: Text(
+                          slot.label,
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                            decoration: slot.isAvailable ? null : TextDecoration.lineThrough,
+                            color: _selectedStartMinute == slot.startMinute
+                                ? Colors.white
+                                : AppColors.textPrimary,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
   }
 
   @override
@@ -97,7 +191,7 @@ class _RescheduleAppointmentScreenState extends State<RescheduleAppointmentScree
                             style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
                         const SizedBox(height: 8),
                         Text(
-                          'Currently: ${formatAppointmentDate(widget.appointment.date)} at ${widget.appointment.timeSlot}',
+                          'Currently: ${formatAppointmentDate(widget.appointment.date)} at ${widget.appointment.timeRangeLabel}',
                           style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
                         ),
                       ],
@@ -111,41 +205,27 @@ class _RescheduleAppointmentScreenState extends State<RescheduleAppointmentScree
                     selectedDay: _selectedDate,
                     firstDay: DateTime.now(),
                     lastDay: DateTime.now().add(const Duration(days: 730)),
+                    enabledDayPredicate: isClinicOpenOn,
                     onDaySelected: (selected, focused) {
                       setState(() {
                         _selectedDate = selected;
                         _focusedDay = focused;
+                        _selectedStartMinute = null;
                       });
                     },
                     onPageChanged: (focused) => _focusedDay = focused,
                   ),
                   const SizedBox(height: 20),
                   _requiredLabel('New Time Slot'),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: _timeSlots.map((slot) {
-                      final isSelected = _selectedTimeSlot == slot;
-                      return ChoiceChip(
-                        label: Text(slot),
-                        selected: isSelected,
-                        showCheckmark: false,
-                        selectedColor: const Color(0xFF14B8A6),
-                        backgroundColor: AppColors.surface,
-                        side: BorderSide(color: isSelected ? const Color(0xFF14B8A6) : AppColors.border),
-                        labelStyle: TextStyle(
-                          color: isSelected ? Colors.white : AppColors.textPrimary,
-                          fontWeight: FontWeight.w600,
-                        ),
-                        onSelected: (selected) {
-                          setState(() {
-                            _selectedTimeSlot = selected ? slot : null;
-                          });
-                        },
-                      );
-                    }).toList(),
+                  const SizedBox(height: 4),
+                  Text(
+                    _selectedDate == null
+                        ? 'Select an open day first. The clinic is open $clinicOperatingDaysLabel, $clinicHoursLabel.'
+                        : 'Start times are 15 minutes apart and reserve a ${formatDuration(_duration)} block.',
+                    style: TextStyle(fontSize: 11.5, color: AppColors.textSecondary),
                   ),
+                  const SizedBox(height: 8),
+                  if (_selectedDate != null) _buildSlotGrid(),
                   const SizedBox(height: 20),
                   Text('Notes (Optional)', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
                   const SizedBox(height: 8),

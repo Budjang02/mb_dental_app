@@ -7,11 +7,13 @@ class Patient {
   final String username;
   final String email;
   final String phone;
-  final String gender;
-  final DateTime dateOfBirth;
   final String? avatarPath;
 
-  // Optional profile-completion fields — not required at registration.
+  // Profile-completion fields. Registration only collects name, email, phone
+  // and password, so everything below starts empty and is filled in later
+  // under Profile → Manage Profile or at clinic check-in.
+  final String? gender;
+  final DateTime? dateOfBirth;
   final String? bloodType;
   final String? address;
   final String? maritalStatus;
@@ -25,8 +27,8 @@ class Patient {
     required this.username,
     required this.email,
     required this.phone,
-    required this.gender,
-    required this.dateOfBirth,
+    this.gender,
+    this.dateOfBirth,
     this.avatarPath,
     this.bloodType,
     this.address,
@@ -34,7 +36,17 @@ class Patient {
     this.medicalHistory,
   });
 
-  String get fullName => '$firstName $lastName';
+  String get fullName => '$firstName $lastName'.trim();
+
+  /// Which of the optional details are still blank, so Profile can nudge the
+  /// patient to finish setting up their record.
+  List<String> get missingProfileFields => [
+        if (gender == null || gender!.isEmpty) 'Gender',
+        if (dateOfBirth == null) 'Date of Birth',
+        if (address == null || address!.isEmpty) 'Address',
+      ];
+
+  bool get isProfileComplete => missingProfileFields.isEmpty;
 
   Patient copyWith({
     String? firstName,

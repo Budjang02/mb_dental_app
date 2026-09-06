@@ -16,6 +16,10 @@ class AppCalendar extends StatelessWidget {
   final void Function(DateTime selected, DateTime focused) onDaySelected;
   final void Function(DateTime focused)? onPageChanged;
 
+  /// Days this predicate rejects are greyed out and untappable — used by the
+  /// booking wizard to close Mondays and Tuesdays, when the clinic is shut.
+  final bool Function(DateTime day)? enabledDayPredicate;
+
   const AppCalendar({
     super.key,
     required this.focusedDay,
@@ -25,6 +29,7 @@ class AppCalendar extends StatelessWidget {
     required this.onDaySelected,
     this.eventLoader,
     this.onPageChanged,
+    this.enabledDayPredicate,
   });
 
   @override
@@ -44,6 +49,7 @@ class AppCalendar extends StatelessWidget {
         onDaySelected: onDaySelected,
         onPageChanged: onPageChanged,
         eventLoader: eventLoader,
+        enabledDayPredicate: enabledDayPredicate,
         calendarFormat: CalendarFormat.month,
         availableGestures: AvailableGestures.horizontalSwipe,
         headerStyle: HeaderStyle(
@@ -73,6 +79,7 @@ class AppCalendar extends StatelessWidget {
           markerSize: 5,
           markerMargin: const EdgeInsets.only(top: 2),
           cellMargin: const EdgeInsets.all(4),
+          disabledTextStyle: TextStyle(color: AppColors.textSecondary.withOpacity(0.35)),
         ),
       ),
     );

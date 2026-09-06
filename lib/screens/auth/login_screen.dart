@@ -102,11 +102,11 @@ class _LoginScreenState extends State<LoginScreen> {
                   labelText: 'Email Address',
                   prefixIcon: Icon(CupertinoIcons.mail, color: AppColors.primary, size: 20),
                   border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(12),
                     borderSide: BorderSide(color: AppColors.border),
                   ),
                   enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(12),
                     borderSide: BorderSide(color: AppColors.border),
                   ),
                 ),
@@ -120,7 +120,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     backgroundColor: AppColors.primary,
                     elevation: 0,
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
+                      borderRadius: BorderRadius.circular(12),
                     ),
                   ),
                   onPressed: () {
@@ -209,11 +209,11 @@ class _LoginScreenState extends State<LoginScreen> {
                       labelText: 'Email Address',
                       prefixIcon: Icon(CupertinoIcons.mail, color: AppColors.primary, size: 20),
                       border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
+                        borderRadius: BorderRadius.circular(12),
                         borderSide: BorderSide(color: Colors.grey.shade300),
                       ),
                       enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
+                        borderRadius: BorderRadius.circular(12),
                         borderSide: BorderSide(color: Colors.grey.shade300),
                       ),
                     ),
@@ -242,11 +242,11 @@ class _LoginScreenState extends State<LoginScreen> {
                         },
                       ),
                       border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
+                        borderRadius: BorderRadius.circular(12),
                         borderSide: BorderSide(color: Colors.grey.shade300),
                       ),
                       enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
+                        borderRadius: BorderRadius.circular(12),
                         borderSide: BorderSide(color: Colors.grey.shade300),
                       ),
                     ),
@@ -279,7 +279,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         backgroundColor: AppColors.primary,
                         elevation: 0,
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
+                          borderRadius: BorderRadius.circular(12),
                         ),
                       ),
                       onPressed: _isLoading ? null : _handleLogin,
@@ -321,12 +321,12 @@ class _LoginScreenState extends State<LoginScreen> {
                       Expanded(
                         child: InkWell(
                           onTap: () => _launchSocialUrl('https://accounts.google.com/signin'),
-                          borderRadius: BorderRadius.circular(14),
+                          borderRadius: BorderRadius.circular(12),
                           child: Container(
                             height: 50,
                             decoration: BoxDecoration(
                               color: AppColors.surface,
-                              borderRadius: BorderRadius.circular(14),
+                              borderRadius: BorderRadius.circular(12),
                               border: Border.all(color: AppColors.border, width: 1.5),
                               boxShadow: [
                                 BoxShadow(
@@ -364,12 +364,12 @@ class _LoginScreenState extends State<LoginScreen> {
                       Expanded(
                         child: InkWell(
                           onTap: () => _launchSocialUrl('https://www.facebook.com/login'),
-                          borderRadius: BorderRadius.circular(14),
+                          borderRadius: BorderRadius.circular(12),
                           child: Container(
                             height: 50,
                             decoration: BoxDecoration(
                               color: AppColors.surface,
-                              borderRadius: BorderRadius.circular(14),
+                              borderRadius: BorderRadius.circular(12),
                               border: Border.all(color: AppColors.border, width: 1.5),
                               boxShadow: [
                                 BoxShadow(

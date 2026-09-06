@@ -2,6 +2,11 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:mb_dental_app/app/theme.dart';
 
+/// How many toasts are currently on screen. Both a toast and a push banner
+/// drop in from the same place, so the banner watches this and waits its turn
+/// instead of landing on top of a toast.
+final ValueNotifier<int> appToastCount = ValueNotifier<int>(0);
+
 /// Floating, theme-aware replacement for `ScaffoldMessenger.showSnackBar`.
 /// Drops in from the top as a small rounded card instead of a bar pinned to
 /// the bottom of the screen, and auto-dismisses on its own.
@@ -22,10 +27,14 @@ void showAppToast(
       message: message,
       accent: accent,
       icon: isError ? CupertinoIcons.exclamationmark_circle_fill : CupertinoIcons.checkmark_circle_fill,
-      onDismissed: () => entry.remove(),
+      onDismissed: () {
+        entry.remove();
+        appToastCount.value--;
+      },
     ),
   );
 
+  appToastCount.value++;
   overlay.insert(entry);
 }
 
@@ -90,7 +99,7 @@ class _AppToastState extends State<_AppToast> with SingleTickerProviderStateMixi
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
               decoration: BoxDecoration(
                 color: AppColors.surface,
-                borderRadius: BorderRadius.circular(18),
+                borderRadius: BorderRadius.circular(12),
                 boxShadow: [
                   BoxShadow(color: Colors.black.withOpacity(0.18), blurRadius: 24, offset: const Offset(0, 10)),
                 ],

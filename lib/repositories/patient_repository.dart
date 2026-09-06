@@ -5,6 +5,9 @@ import 'package:mb_dental_app/models/treatment.dart';
 import 'package:mb_dental_app/models/payment.dart';
 import 'package:mb_dental_app/models/notification.dart';
 import 'package:mb_dental_app/models/wallet_transaction.dart';
+import 'package:mb_dental_app/app/messages.dart';
+import 'package:mb_dental_app/data/clinic_catalog.dart';
+import 'package:mb_dental_app/services/push_notification_service.dart';
 
 /// In-memory mock data layer, shared across every screen for this session.
 ///
@@ -22,12 +25,16 @@ class PatientRepository extends ChangeNotifier {
   late Patient _patient;
   late List<Appointment> _appointments;
   late List<Treatment> _treatments;
+  late List<TreatmentPlanItem> _treatmentPlan;
   late List<Payment> _billing;
   late List<NotificationItem> _notifications;
   late List<WalletTransaction> _transactions;
+  final List<_ScheduledReminder> _reminders = [];
   double _walletBalance = 1500.0;
   int _appointmentSeq = 4;
   int _transactionSeq = 4;
+  int _notificationSeq = 4;
+  int _patientSeq = 101;
 
   void _seed() {
     _patient = Patient(
@@ -51,6 +58,10 @@ class PatientRepository extends ChangeNotifier {
         timeSlot: '10:00 AM',
         status: AppointmentStatus.confirmed,
         notes: 'Regular checkup and cleaning.',
+        serviceIds: const ['svc-prophylaxis'],
+        durationMinutes: 45,
+        totalPrice: 1000,
+        amountPaid: 200,
       ),
       Appointment(
         id: 'app-02',
@@ -59,6 +70,9 @@ class PatientRepository extends ChangeNotifier {
         date: DateTime(2026, 9, 12),
         timeSlot: '01:30 PM',
         status: AppointmentStatus.pending,
+        serviceIds: const ['svc-filling'],
+        durationMinutes: 45,
+        totalPrice: 2000,
       ),
       Appointment(
         id: 'app-03',
@@ -67,6 +81,10 @@ class PatientRepository extends ChangeNotifier {
         date: DateTime(2026, 5, 10),
         timeSlot: '11:00 AM',
         status: AppointmentStatus.completed,
+        serviceIds: const ['svc-checkup'],
+        durationMinutes: 30,
+        totalPrice: 500,
+        amountPaid: 500,
       ),
     ];
 
@@ -86,6 +104,8 @@ class PatientRepository extends ChangeNotifier {
         notes: 'Routine cleaning performed without complications.',
       ),
     ];
+
+    _treatmentPlan = [];
 
     _billing = [
       Payment(
@@ -208,11 +228,32 @@ class PatientRepository extends ChangeNotifier {
 
   List<Treatment> get treatments => List.unmodifiable(_treatments);
 
+  /// The procedures the clinic has planned but not yet carried out.
+  /// Drawn up chairside and pushed to the patient, so it is empty until
+  /// a dentist actually proposes something.
+  List<TreatmentPlanItem> get treatmentPlan => List.unmodifiable(_treatmentPlan);
+
   List<Payment> get billing => List.unmodifiable(_billing);
 
-  List<NotificationItem> get notifications => List.unmodifiable(_notifications);
+  List<NotificationItem> get notifications {
+    _materializeDueReminders();
+    // Newest first. `List.sort` is not stable, so insertion order breaks ties
+    // explicitly — two alerts raised in the same millisecond (a payment and
+    // the booking it paid for) must not swap places between reads.
+    final indexed = List<(int, NotificationItem)>.generate(
+      _notifications.length,
+      (i) => (i, _notifications[i]),
+    )..sort((a, b) {
+        final byTime = b.$2.createdAt.compareTo(a.$2.createdAt);
+        return byTime != 0 ? byTime : b.$1.compareTo(a.$1);
+      });
+    return List.unmodifiable(indexed.map((e) => e.$2));
+  }
 
-  int get unreadNotificationCount => _notifications.where((n) => !n.isRead).length;
+  int get unreadNotificationCount {
+    _materializeDueReminders();
+    return _notifications.where((n) => !n.isRead).length;
+  }
 
   double get walletBalance => _walletBalance;
 
@@ -241,8 +282,70 @@ class PatientRepository extends ChangeNotifier {
     if (changed) notifyListeners();
   }
 
+  // --- Slot availability ---
+
+  /// Whether a [durationMinutes] block starting at [startMinute] on [day] is
+  /// free. A slot is unavailable when the clinic is closed that day, when the
+  /// block would run past closing, or when it overlaps a booking that still
+  /// holds its slot. [excludeAppointmentId] lets a reschedule ignore the
+  /// booking it is moving.
+  bool isSlotAvailable({
+    required DateTime day,
+    required int startMinute,
+    required int durationMinutes,
+    String? excludeAppointmentId,
+  }) {
+    if (!isClinicOpenOn(day)) return false;
+    if (startMinute < kClinicOpenMinute) return false;
+    if (startMinute + durationMinutes > kClinicCloseMinute) return false;
+
+    final endMinute = startMinute + durationMinutes;
+    for (final booked in _appointments) {
+      if (!booked.holdsSlot) continue;
+      if (booked.id == excludeAppointmentId) continue;
+      if (!_isSameDay(booked.date, day)) continue;
+
+      final bookedStart = booked.startMinuteOfDay;
+      if (bookedStart == null) continue;
+      final bookedEnd = bookedStart + booked.durationMinutes;
+
+      // Half-open intervals: a block may start exactly when another ends.
+      if (startMinute < bookedEnd && bookedStart < endMinute) return false;
+    }
+    return true;
+  }
+
+  /// Every 15-minute start on [day] that can still fit a [durationMinutes]
+  /// block, with the taken ones flagged rather than dropped — the picker greys
+  /// them out so the patient can see the day is filling up.
+  List<SlotOption> slotOptionsFor({
+    required DateTime day,
+    required int durationMinutes,
+    String? excludeAppointmentId,
+  }) {
+    final now = DateTime.now();
+    return slotStartsFor(day, durationMinutes).map((startMinute) {
+      final isPast = _isSameDay(day, now) && startMinute <= now.hour * 60 + now.minute;
+      final available = !isPast &&
+          isSlotAvailable(
+            day: day,
+            startMinute: startMinute,
+            durationMinutes: durationMinutes,
+            excludeAppointmentId: excludeAppointmentId,
+          );
+      return SlotOption(
+        startMinute: startMinute,
+        durationMinutes: durationMinutes,
+        isAvailable: available,
+      );
+    }).toList();
+  }
+
+  static bool _isSameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
+
   /// [status] defaults to pending — the clinic confirms manually. Bookings
-  /// paid with a wallet down payment come in already confirmed.
+  /// paid with a 20% down payment come in already confirmed.
   Appointment addAppointment({
     required String serviceName,
     required String doctorName,
@@ -251,6 +354,10 @@ class PatientRepository extends ChangeNotifier {
     String? notes,
     String? paymentMethod,
     AppointmentStatus status = AppointmentStatus.pending,
+    List<String> serviceIds = const [],
+    int durationMinutes = 60,
+    double totalPrice = 0,
+    double amountPaid = 0,
   }) {
     final appointment = Appointment(
       id: 'app-${(_appointmentSeq++).toString().padLeft(2, '0')}',
@@ -261,29 +368,84 @@ class PatientRepository extends ChangeNotifier {
       status: status,
       notes: notes,
       paymentMethod: paymentMethod,
+      serviceIds: serviceIds,
+      durationMinutes: durationMinutes,
+      totalPrice: totalPrice,
+      amountPaid: amountPaid,
     );
     _appointments = [..._appointments, appointment];
+
+    if (status == AppointmentStatus.confirmed) {
+      _raise(
+        title: 'Appointment Confirmed',
+        body: 'Your $serviceName on ${_dateLabel(date)} at $timeSlot is confirmed. '
+            'The ${formatPeso(amountPaid)} down payment has been received.',
+        channel: PushChannel.statusUpdate,
+        appointmentId: appointment.id,
+      );
+    } else {
+      _raise(
+        title: 'Booking Request Received',
+        body: 'Your $serviceName on ${_dateLabel(date)} at $timeSlot is pending approval. '
+            'We will confirm it shortly.',
+        channel: PushChannel.statusUpdate,
+        appointmentId: appointment.id,
+      );
+    }
+
+    _scheduleRemindersFor(appointment);
     notifyListeners();
     return appointment;
   }
 
   void cancelAppointment(String id, {required String reason}) {
-    _appointments = _appointments
-        .map((a) => a.id == id
-            ? a.copyWith(status: AppointmentStatus.cancelled, cancellationReason: reason)
-            : a)
-        .toList();
+    Appointment? cancelled;
+    _appointments = _appointments.map((a) {
+      if (a.id != id) return a;
+      cancelled = a.copyWith(status: AppointmentStatus.cancelled, cancellationReason: reason);
+      return cancelled!;
+    }).toList();
+
+    _clearRemindersFor(id);
+    final item = cancelled;
+    if (item != null) {
+      _raise(
+        title: 'Appointment Cancelled',
+        body: 'Your ${item.serviceName} on ${_dateLabel(item.date)} has been cancelled.',
+        channel: PushChannel.statusUpdate,
+        appointmentId: id,
+      );
+    }
     notifyListeners();
   }
 
   /// Moves an existing appointment to a new date/time in place (does not
   /// create a new appointment) and resets it to pending re-confirmation.
   void rescheduleAppointment(String id, {required DateTime date, required String timeSlot, String? notes}) {
-    _appointments = _appointments
-        .map((a) => a.id == id
-            ? a.copyWith(date: date, timeSlot: timeSlot, status: AppointmentStatus.pending, notes: notes)
-            : a)
-        .toList();
+    Appointment? moved;
+    _appointments = _appointments.map((a) {
+      if (a.id != id) return a;
+      moved = a.copyWith(
+        date: date,
+        timeSlot: timeSlot,
+        status: AppointmentStatus.pending,
+        notes: notes,
+      );
+      return moved!;
+    }).toList();
+
+    _clearRemindersFor(id);
+    final item = moved;
+    if (item != null) {
+      _scheduleRemindersFor(item);
+      _raise(
+        title: 'Appointment Rescheduled',
+        body: 'Your ${item.serviceName} has moved to ${_dateLabel(date)} at $timeSlot, '
+            'pending clinic approval.',
+        channel: PushChannel.statusUpdate,
+        appointmentId: id,
+      );
+    }
     notifyListeners();
   }
 
@@ -312,6 +474,18 @@ class PatientRepository extends ChangeNotifier {
     } else {
       _walletBalance -= amount;
     }
+
+    _raise(
+      title: type == TransactionType.credit ? 'Wallet Top-up Successful' : 'Receipt Generated',
+      body: type == TransactionType.credit
+          ? '${formatPeso(amount)} was added to your wallet via $method. '
+              'New balance: ${formatPeso(_walletBalance)}.'
+          : '${AppMessages.paymentProcessed} ${formatPeso(amount)} paid for $title — '
+              'receipt ${txn.referenceNo} is in your transaction history.',
+      channel: PushChannel.payment,
+      transactionId: txn.id,
+    );
+
     notifyListeners();
     return txn;
   }
@@ -375,9 +549,174 @@ class PatientRepository extends ChangeNotifier {
     return true;
   }
 
+  // --- Notifications & reminders ---
+
+  /// Records an alert in the notification centre and hands it to the push
+  /// service for real-time delivery. Muted channels still land in the centre,
+  /// so nothing is silently lost — only the banner is suppressed.
+  NotificationItem _raise({
+    required String title,
+    required String body,
+    required PushChannel channel,
+    String? appointmentId,
+    String? transactionId,
+    DateTime? createdAt,
+  }) {
+    final item = NotificationItem(
+      id: 'notif-${(_notificationSeq++).toString().padLeft(2, '0')}',
+      title: title,
+      body: body,
+      createdAt: createdAt ?? DateTime.now(),
+      relatedAppointmentId: appointmentId,
+      relatedTransactionId: transactionId,
+    );
+    _notifications = [..._notifications, item];
+    PushNotificationService().deliver(item, channel: channel);
+    return item;
+  }
+
+  /// Countdown alerts for a booking: one five days out and one two hours out.
+  /// A lead time that has already passed is skipped rather than firing late.
+  void _scheduleRemindersFor(Appointment appointment) {
+    if (appointment.status == AppointmentStatus.cancelled) return;
+    final startsAt = appointment.startsAt;
+    final now = DateTime.now();
+
+    void schedule(Duration lead, String label) {
+      final fireAt = startsAt.subtract(lead);
+      if (!fireAt.isAfter(now)) return;
+      _reminders.add(_ScheduledReminder(
+        appointmentId: appointment.id,
+        fireAt: fireAt,
+        title: 'Appointment Reminder',
+        body: 'Your ${appointment.serviceName} with ${appointment.doctorName} is $label — '
+            '${_dateLabel(appointment.date)} at ${appointment.timeSlot}.',
+      ));
+    }
+
+    schedule(const Duration(days: 5), 'in 5 days');
+    schedule(const Duration(hours: 2), 'in 2 hours');
+  }
+
+  void _clearRemindersFor(String appointmentId) {
+    _reminders.removeWhere((r) => r.appointmentId == appointmentId);
+  }
+
+  /// Fires any scheduled reminder whose time has come. Called on every read of
+  /// the notification list, which is how this mock scheduler stands in for a
+  /// server-side job without a background isolate.
+  void _materializeDueReminders() {
+    if (_reminders.isEmpty) return;
+    final now = DateTime.now();
+    final due = _reminders.where((r) => !r.fireAt.isAfter(now)).toList();
+    if (due.isEmpty) return;
+    _reminders.removeWhere((r) => !r.fireAt.isAfter(now));
+
+    for (final reminder in due) {
+      _raise(
+        title: reminder.title,
+        body: reminder.body,
+        channel: PushChannel.reminder,
+        appointmentId: reminder.appointmentId,
+        createdAt: reminder.fireAt,
+      );
+    }
+  }
+
+  static const List<String> _monthNames = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+
+  static String _dateLabel(DateTime date) =>
+      '${_monthNames[date.month - 1]} ${date.day}, ${date.year}';
+
+  // --- Account ---
+
+  /// Streamlined sign-up: name, email and phone only. Everything else stays
+  /// null until the patient completes their profile or checks in at the
+  /// clinic. Mock only — a real backend call replaces the body, not the shape.
+  Future<Patient> registerPatient({
+    required String fullName,
+    required String email,
+    required String phone,
+  }) async {
+    await Future.delayed(const Duration(milliseconds: 600));
+
+    final parts = fullName.trim().split(RegExp(r'\s+'));
+    final firstName = parts.isEmpty ? fullName.trim() : parts.first;
+    final lastName = parts.length > 1 ? parts.sublist(1).join(' ') : '';
+    final year = DateTime.now().year;
+
+    _patientSeq++;
+    _patient = Patient(
+      id: 'p-$_patientSeq',
+      patientCode: 'PAT-$year-${_patientSeq.toString().padLeft(4, '0')}',
+      firstName: firstName,
+      lastName: lastName,
+      username: email.split('@').first,
+      email: email.trim(),
+      phone: phone.trim(),
+    );
+
+    // A brand-new account starts on a clean slate rather than inheriting the
+    // seeded demo history, so the app never shows another patient's records.
+    _appointments = [];
+    _treatments = [];
+    _treatmentPlan = [];
+    _billing = [];
+    _transactions = [];
+    _notifications = [];
+    _reminders.clear();
+    _walletBalance = 0;
+
+    _raise(
+      title: 'Welcome to $kClinicName',
+      body: 'Your account is ready. Complete your profile to speed up your first visit.',
+      channel: PushChannel.statusUpdate,
+    );
+
+    notifyListeners();
+    return _patient;
+  }
+
   // --- Legacy-named getters kept for call-site compatibility ---
   Patient getMockPatient() => patient;
   List<Appointment> getMockAppointments() => appointments;
   List<Treatment> getMockTreatments() => treatments;
   List<Payment> getMockBilling() => billing;
+}
+
+/// One pending countdown alert. Held in memory only: a real build hands these
+/// to the platform scheduler (or the clinic's push backend) instead.
+class _ScheduledReminder {
+  final String appointmentId;
+  final DateTime fireAt;
+  final String title;
+  final String body;
+
+  _ScheduledReminder({
+    required this.appointmentId,
+    required this.fireAt,
+    required this.title,
+    required this.body,
+  });
+}
+
+/// A 15-minute start time offered by the schedule step, and whether the block
+/// behind it is still free.
+class SlotOption {
+  final int startMinute;
+  final int durationMinutes;
+  final bool isAvailable;
+
+  const SlotOption({
+    required this.startMinute,
+    required this.durationMinutes,
+    required this.isAvailable,
+  });
+
+  String get label => formatMinuteOfDay(startMinute);
+
+  String get rangeLabel => '$label – ${formatMinuteOfDay(startMinute + durationMinutes)}';
 }

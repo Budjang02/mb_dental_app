@@ -7,27 +7,25 @@ import 'package:mb_dental_app/repositories/patient_repository.dart';
 import 'package:mb_dental_app/widgets/appointment_detail_sheet.dart';
 import 'book_appointment_screen.dart';
 
-class AppointmentsScreen extends StatefulWidget {
-  /// Which status tab opens first: 0 = Upcoming, 1 = Completed, 2 = Cancelled.
-  /// Notifications use [tabIndexForStatus] so tapping one lands on the tab
-  /// that actually holds the appointment it is about.
-  final int initialTabIndex;
+/// The four views of the list, in the order their tabs run across the top.
+/// [all] leads, so the page still opens on every booking at once.
+enum AppointmentView { all, upcoming, completed, cancelled }
 
-  const AppointmentsScreen({super.key, this.initialTabIndex = 0});
-
-  /// The tab that lists an appointment in [status]. Pending and confirmed
-  /// bookings both live under Upcoming.
-  static int tabIndexForStatus(AppointmentStatus status) {
-    switch (status) {
-      case AppointmentStatus.completed:
-        return 1;
-      case AppointmentStatus.cancelled:
-        return 2;
-      case AppointmentStatus.pending:
-      case AppointmentStatus.confirmed:
-        return 0;
-    }
+String _viewLabel(AppointmentView view) {
+  switch (view) {
+    case AppointmentView.all:
+      return 'All';
+    case AppointmentView.upcoming:
+      return 'Upcoming';
+    case AppointmentView.completed:
+      return 'Completed';
+    case AppointmentView.cancelled:
+      return 'Cancelled';
   }
+}
+
+class AppointmentsScreen extends StatefulWidget {
+  const AppointmentsScreen({super.key});
 
   @override
   State<AppointmentsScreen> createState() => _AppointmentsScreenState();
@@ -35,13 +33,13 @@ class AppointmentsScreen extends StatefulWidget {
 
 class _AppointmentsScreenState extends State<AppointmentsScreen>
     with SingleTickerProviderStateMixin {
-  late TabController _tabController;
   final PatientRepository _repository = PatientRepository();
+  late final TabController _tabController;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this, initialIndex: widget.initialTabIndex);
+    _tabController = TabController(length: AppointmentView.values.length, vsync: this);
   }
 
   @override
@@ -50,11 +48,18 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
     super.dispose();
   }
 
-  List<Appointment> _filter(List<Appointment> all, AppointmentStatus statusFilter) {
-    if (statusFilter == AppointmentStatus.pending) {
-      return all.where((a) => a.status == AppointmentStatus.pending || a.status == AppointmentStatus.confirmed).toList();
+  /// Pending and confirmed bookings both count as upcoming.
+  bool _matches(Appointment a, AppointmentView view) {
+    switch (view) {
+      case AppointmentView.all:
+        return true;
+      case AppointmentView.upcoming:
+        return a.status == AppointmentStatus.pending || a.status == AppointmentStatus.confirmed;
+      case AppointmentView.completed:
+        return a.status == AppointmentStatus.completed;
+      case AppointmentView.cancelled:
+        return a.status == AppointmentStatus.cancelled;
     }
-    return all.where((a) => a.status == statusFilter).toList();
   }
 
   @override
@@ -64,13 +69,15 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
         title: const Text('My Appointments'),
         bottom: TabBar(
           controller: _tabController,
+          isScrollable: false,
           labelColor: AppColors.primary,
           unselectedLabelColor: AppColors.textSecondary,
           indicatorColor: AppColors.primary,
-          tabs: const [
-            Tab(text: 'Upcoming'),
-            Tab(text: 'Completed'),
-            Tab(text: 'Cancelled'),
+          indicatorSize: TabBarIndicatorSize.tab,
+          labelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+          unselectedLabelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+          tabs: [
+            for (final view in AppointmentView.values) Tab(text: _viewLabel(view)),
           ],
         ),
       ),
@@ -81,9 +88,8 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
           return TabBarView(
             controller: _tabController,
             children: [
-              _buildAppointmentList(_filter(all, AppointmentStatus.pending)),
-              _buildAppointmentList(_filter(all, AppointmentStatus.completed)),
-              _buildAppointmentList(_filter(all, AppointmentStatus.cancelled)),
+              for (final view in AppointmentView.values)
+                _buildAppointmentList(all.where((a) => _matches(a, view)).toList()),
             ],
           );
         },

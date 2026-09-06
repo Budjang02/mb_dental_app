@@ -88,15 +88,11 @@ void _navigateForNotification(BuildContext context, NotificationItem n) {
     for (final a in repository.appointments) {
       if (a.id == n.relatedAppointmentId) appointment = a;
     }
-    // Open the Schedule tab that actually lists this appointment: a confirmed
-    // or pending booking lands on Upcoming, a finished one on Completed, a
-    // cancelled one on Cancelled — instead of always dropping on Upcoming.
-    final tabIndex = appointment == null
-        ? 0
-        : AppointmentsScreen.tabIndexForStatus(appointment.status);
+    // Appointments lists every booking on one page, so there is no tab to
+    // pick here — push the list and open this appointment's detail on top.
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => AppointmentsScreen(initialTabIndex: tabIndex)),
+      MaterialPageRoute(builder: (_) => const AppointmentsScreen()),
     );
     if (appointment != null) {
       final found = appointment;
@@ -299,7 +295,7 @@ class _HomeTabState extends State<HomeTab> {
                       // heading instead of overflowing the row.
                       Flexible(
                         child: Text(
-                          'Recent Activity',
+                          'Recent Transaction',
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
                         ),
@@ -327,7 +323,7 @@ class _HomeTabState extends State<HomeTab> {
                     ],
                   ),
                   const SizedBox(height: 12),
-                  _buildRecentActivityCard(recentTransactions),
+                  _buildRecentTransactionCard(recentTransactions),
                 ],
               ),
             );
@@ -697,7 +693,7 @@ class _HomeTabState extends State<HomeTab> {
     );
   }
 
-  Widget _buildRecentActivityCard(List<WalletTransaction> transactions) {
+  Widget _buildRecentTransactionCard(List<WalletTransaction> transactions) {
     if (transactions.isEmpty) {
       return Container(
         width: double.infinity,
@@ -708,7 +704,7 @@ class _HomeTabState extends State<HomeTab> {
           border: Border.all(color: AppColors.border),
         ),
         child: Center(
-          child: Text('No recent activity yet.', style: TextStyle(color: AppColors.textSecondary, fontSize: 13)),
+          child: Text('No recent transactions yet.', style: TextStyle(color: AppColors.textSecondary, fontSize: 13)),
         ),
       );
     }
@@ -755,14 +751,19 @@ class _NotificationDropdown extends StatelessWidget {
   Widget build(BuildContext context) {
     return Material(
       color: Colors.transparent,
+      // Deliberately compact: this is a peek at what is waiting, not the
+      // notification list. Each row carries the message and nothing else —
+      // the title, timestamp and everything around them live one tap away,
+      // in the detail dialog and on the "See All" page.
       child: Container(
-        width: 310,
-        constraints: const BoxConstraints(maxHeight: 420),
+        width: 232,
+        constraints: const BoxConstraints(maxHeight: 236),
         decoration: BoxDecoration(
           color: AppColors.surface,
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: AppColors.border),
           boxShadow: [
-            BoxShadow(color: Colors.black.withOpacity(0.18), blurRadius: 28, offset: const Offset(0, 12)),
+            BoxShadow(color: Colors.black.withOpacity(0.18), blurRadius: 24, offset: const Offset(0, 10)),
           ],
         ),
         child: ListenableBuilder(
@@ -773,36 +774,36 @@ class _NotificationDropdown extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(18, 16, 16, 10),
+                  padding: const EdgeInsets.fromLTRB(12, 10, 8, 7),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Text('Notifications',
-                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppColors.textPrimary)),
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5, color: AppColors.textPrimary)),
                       if (repository.unreadNotificationCount > 0)
                         Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                               decoration: BoxDecoration(
                                 color: AppColors.primary.withOpacity(0.12),
                                 borderRadius: BorderRadius.circular(10),
                               ),
                               child: Text(
                                 '${repository.unreadNotificationCount} new',
-                                style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.primary),
+                                style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: AppColors.primary),
                               ),
                             ),
-                            const SizedBox(width: 4),
+                            const SizedBox(width: 2),
                             Tooltip(
                               message: 'Mark all as read',
                               child: InkWell(
                                 customBorder: const CircleBorder(),
                                 onTap: repository.markAllNotificationsRead,
                                 child: Padding(
-                                  padding: const EdgeInsets.all(6),
-                                  child: Icon(Icons.done_all_rounded, size: 18, color: AppColors.primary),
+                                  padding: const EdgeInsets.all(5),
+                                  child: Icon(Icons.done_all_rounded, size: 16, color: AppColors.primary),
                                 ),
                               ),
                             ),
@@ -814,7 +815,7 @@ class _NotificationDropdown extends StatelessWidget {
                 Divider(height: 1, color: AppColors.border),
                 if (notifications.isEmpty)
                   Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 36),
+                    padding: const EdgeInsets.symmetric(vertical: 26),
                     child: Text('No notifications yet.',
                         style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
                   )
@@ -831,46 +832,42 @@ class _NotificationDropdown extends StatelessWidget {
                           onTap: () => onNotificationTap(n),
                           child: Container(
                             color: n.isRead ? Colors.transparent : AppColors.primary.withOpacity(0.05),
-                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                             child: Row(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
+                                // The icon says at a glance what kind of alert
+                                // this is; the message says what it is about.
+                                // Title and timestamp stay one tap away in the
+                                // detail dialog rather than turning this peek
+                                // into a second copy of the list.
                                 Container(
-                                  padding: const EdgeInsets.all(8),
+                                  padding: const EdgeInsets.all(6),
                                   decoration: BoxDecoration(
                                     color: notificationColor(n).withOpacity(0.14),
                                     shape: BoxShape.circle,
                                   ),
-                                  child: Icon(notificationIcon(n), color: notificationColor(n), size: 16),
+                                  child: Icon(notificationIcon(n), color: notificationColor(n), size: 14),
                                 ),
-                                const SizedBox(width: 10),
+                                const SizedBox(width: 9),
                                 Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        n.title,
-                                        style: TextStyle(
-                                          fontSize: 13,
-                                          fontWeight: n.isRead ? FontWeight.w600 : FontWeight.bold,
-                                          color: AppColors.textPrimary,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 2),
-                                      Text(n.body, style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        '${formatNotificationDate(n.createdAt)} • ${formatNotificationTime(n.createdAt)}',
-                                        style: TextStyle(fontSize: 10.5, color: AppColors.textSecondary),
-                                      ),
-                                    ],
+                                  child: Text(
+                                    n.body,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      height: 1.3,
+                                      fontWeight: n.isRead ? FontWeight.w400 : FontWeight.w600,
+                                      color: n.isRead ? AppColors.textSecondary : AppColors.textPrimary,
+                                    ),
                                   ),
                                 ),
                                 if (!n.isRead)
                                   Container(
-                                    margin: const EdgeInsets.only(top: 4, left: 4),
-                                    width: 7,
-                                    height: 7,
+                                    margin: const EdgeInsets.only(top: 9, left: 7),
+                                    width: 6,
+                                    height: 6,
                                     decoration: BoxDecoration(color: AppColors.primary, shape: BoxShape.circle),
                                   ),
                               ],
@@ -884,11 +881,11 @@ class _NotificationDropdown extends StatelessWidget {
                 InkWell(
                   onTap: onSeeAll,
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 13),
+                    padding: const EdgeInsets.symmetric(vertical: 10),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Text('See All', style: TextStyle(color: AppColors.primary, fontSize: 13, fontWeight: FontWeight.bold)),
+                        Text('See All', style: TextStyle(color: AppColors.primary, fontSize: 12, fontWeight: FontWeight.bold)),
                         const SizedBox(width: 4),
                         Icon(CupertinoIcons.chevron_right, color: AppColors.primary, size: 14),
                       ],
@@ -953,14 +950,11 @@ class _ActivityRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // No leading icon: every row on this card carried the same generic badge,
+    // so it added a column of visual noise without telling the rows apart.
+    // The title, subtitle and signed amount already do that.
     return Row(
       children: [
-        Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(color: AppColors.primary.withOpacity(0.12), shape: BoxShape.circle),
-          child: Icon(transaction.icon, color: AppColors.primary, size: 20),
-        ),
-        const SizedBox(width: 12),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,

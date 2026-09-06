@@ -1,7 +1,9 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:mb_dental_app/app/theme.dart';
+import 'package:mb_dental_app/app/messages.dart';
 import 'package:mb_dental_app/models/appointment.dart';
+import 'package:mb_dental_app/models/dental_service.dart';
 import 'package:mb_dental_app/repositories/patient_repository.dart';
 import 'package:mb_dental_app/screens/appointments/reschedule_appointment_screen.dart';
 import 'package:mb_dental_app/widgets/app_dialog.dart';
@@ -82,7 +84,24 @@ void showAppointmentDetailSheet(BuildContext context, Appointment appointment) {
             const SizedBox(height: 14),
             _detailRow(CupertinoIcons.calendar, 'Date', formatAppointmentDate(appointment.date)),
             const SizedBox(height: 14),
-            _detailRow(CupertinoIcons.clock, 'Time', appointment.timeSlot),
+            _detailRow(
+              CupertinoIcons.clock,
+              'Time',
+              '${appointment.timeRangeLabel}  (${formatDuration(appointment.durationMinutes)})',
+            ),
+            if (appointment.totalPrice > 0) ...[
+              const SizedBox(height: 14),
+              _detailRow(CupertinoIcons.money_dollar, 'Total', formatPeso(appointment.totalPrice)),
+              const SizedBox(height: 14),
+              _detailRow(
+                CupertinoIcons.checkmark_seal,
+                'Paid',
+                appointment.amountPaid > 0
+                    ? '${formatPeso(appointment.amountPaid)} downpayment · '
+                        '${formatPeso(appointment.balanceDue)} due at clinic'
+                    : 'Nothing yet — ${formatPeso(appointment.balanceDue)} due at clinic',
+              ),
+            ],
             if (appointment.notes != null && appointment.notes!.isNotEmpty) ...[
               const SizedBox(height: 14),
               _detailRow(CupertinoIcons.doc_text, 'Notes', appointment.notes!),
