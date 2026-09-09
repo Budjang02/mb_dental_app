@@ -4,6 +4,7 @@ import 'package:mb_dental_app/models/appointment.dart';
 import 'package:mb_dental_app/models/treatment.dart';
 import 'package:mb_dental_app/models/payment.dart';
 import 'package:mb_dental_app/models/notification.dart';
+import 'package:mb_dental_app/models/patient_document.dart';
 import 'package:mb_dental_app/models/wallet_transaction.dart';
 import 'package:mb_dental_app/app/messages.dart';
 import 'package:mb_dental_app/data/clinic_catalog.dart';
@@ -29,12 +30,14 @@ class PatientRepository extends ChangeNotifier {
   late List<Payment> _billing;
   late List<NotificationItem> _notifications;
   late List<WalletTransaction> _transactions;
+  late List<PatientDocument> _documents;
   final List<_ScheduledReminder> _reminders = [];
   double _walletBalance = 1500.0;
   int _appointmentSeq = 4;
   int _transactionSeq = 4;
   int _notificationSeq = 4;
   int _patientSeq = 101;
+  int _documentSeq = 3;
 
   void _seed() {
     _patient = Patient(
@@ -205,6 +208,24 @@ class PatientRepository extends ChangeNotifier {
       ),
     ];
 
+    // Files the patient uploaded from another device. Booking's "select from
+    // your uploaded files" flow reads this list; new uploads append to it.
+    final today = DateTime.now();
+    _documents = [
+      PatientDocument(
+        id: 'doc-01',
+        name: 'Amoxicillin prescription.pdf',
+        kind: DocumentKind.prescription,
+        uploadedOn: today.subtract(const Duration(days: 12)),
+      ),
+      PatientDocument(
+        id: 'doc-02',
+        name: 'Panoramic X-ray (outside clinic).jpg',
+        kind: DocumentKind.xray,
+        uploadedOn: today.subtract(const Duration(days: 40)),
+      ),
+    ];
+
     _autoCompletePastAppointments();
   }
 
@@ -260,6 +281,14 @@ class PatientRepository extends ChangeNotifier {
   List<WalletTransaction> get transactions {
     final sorted = List<WalletTransaction>.from(_transactions)
       ..sort((a, b) => b.dateTime.compareTo(a.dateTime));
+    return List.unmodifiable(sorted);
+  }
+
+  /// The patient's uploaded files, newest first — what the booking wizard
+  /// offers when a visit needs a prescription or referral attached.
+  List<PatientDocument> get documents {
+    final sorted = List<PatientDocument>.from(_documents)
+      ..sort((a, b) => b.uploadedOn.compareTo(a.uploadedOn));
     return List.unmodifiable(sorted);
   }
 
@@ -339,6 +368,28 @@ class PatientRepository extends ChangeNotifier {
         isAvailable: available,
       );
     }).toList();
+  }
+
+  /// Whether [day] has at least one bookable start left for a
+  /// [durationMinutes] visit. The schedule picker calls this per rendered
+  /// day to grey out dates that are closed or already full, so a patient
+  /// never taps into an empty slot list.
+  bool hasOpenSlotOn({
+    required DateTime day,
+    required int durationMinutes,
+    String? excludeAppointmentId,
+  }) {
+    for (final startMinute in slotStartsFor(day, durationMinutes)) {
+      if (isSlotAvailable(
+        day: day,
+        startMinute: startMinute,
+        durationMinutes: durationMinutes,
+        excludeAppointmentId: excludeAppointmentId,
+      )) {
+        return true;
+      }
+    }
+    return false;
   }
 
   static bool _isSameDay(DateTime a, DateTime b) =>
@@ -543,6 +594,25 @@ class PatientRepository extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Files a real backend to store the file; here it just records it against
+  /// the patient so the booking wizard can offer it straight away.
+  PatientDocument addDocument({
+    required String name,
+    required DocumentKind kind,
+    String? path,
+  }) {
+    final document = PatientDocument(
+      id: 'doc-${(_documentSeq++).toString().padLeft(2, '0')}',
+      name: name,
+      kind: kind,
+      uploadedOn: DateTime.now(),
+      path: path,
+    );
+    _documents = [..._documents, document];
+    notifyListeners();
+    return document;
+  }
+
   /// Mock only — swap for a real backend call when auth/account APIs exist.
   Future<bool> changePassword({required String currentPassword, required String newPassword}) async {
     await Future.delayed(const Duration(milliseconds: 600));
@@ -667,6 +737,7 @@ class PatientRepository extends ChangeNotifier {
     _billing = [];
     _transactions = [];
     _notifications = [];
+    _documents = [];
     _reminders.clear();
     _walletBalance = 0;
 

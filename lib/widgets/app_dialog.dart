@@ -45,7 +45,7 @@ class AppDialogCloseButton extends StatelessWidget {
       borderRadius: BorderRadius.circular(20),
       child: Padding(
         padding: const EdgeInsets.all(4),
-        child: Icon(CupertinoIcons.xmark_circle_fill, size: 22, color: AppColors.textSecondary),
+        child: Icon(CupertinoIcons.xmark_circle, size: 22, color: AppColors.textSecondary),
       ),
     );
   }

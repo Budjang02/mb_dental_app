@@ -423,6 +423,32 @@ class _HomeTabState extends State<HomeTab> {
     );
   }
 
+  /// The deep gradient panel (dark navy -> forest green) the next-appointment
+  /// card is drawn on. Shared with the empty state so an account with nothing
+  /// booked still gets the same block of colour in the same place, rather than
+  /// the page rearranging itself around a flat placeholder.
+  BoxDecoration get _nextAppointmentDecoration => BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+          // Light mode gets a brighter teal-to-emerald wash so the card
+          // lifts off the pale page instead of sitting on it as a dark slab.
+          colors: ThemeController().isDark
+              ? const [Color(0xFF0B1D2A), Color(0xFF0E4A46), Color(0xFF12604A)]
+              : const [Color(0xFF11796D), Color(0xFF19A38D), Color(0xFF33B384)],
+          stops: const [0.0, 0.55, 1.0],
+        ),
+        borderRadius: BorderRadius.circular(22),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primary.withOpacity(0.28),
+            blurRadius: 26,
+            offset: const Offset(0, 12),
+            spreadRadius: -8,
+          ),
+        ],
+      );
+
   Widget _buildNextAppointmentCard(Appointment? appointment) {
     if (appointment == null) {
       return InkWell(
@@ -431,63 +457,73 @@ class _HomeTabState extends State<HomeTab> {
         child: Container(
           width: double.infinity,
           padding: const EdgeInsets.all(18),
-          decoration: _flatCardDecoration,
-          child: Row(
+          decoration: _nextAppointmentDecoration,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(color: AppColors.primary.withOpacity(0.12), shape: BoxShape.circle),
-                child: Icon(CupertinoIcons.calendar_badge_plus, color: AppColors.primary, size: 24),
+              const Row(
+                children: [
+                  Icon(CupertinoIcons.calendar, size: 13, color: Colors.white70),
+                  SizedBox(width: 6),
+                  Text(
+                    'NEXT APPOINTMENT',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 11,
+                      color: Colors.white70,
+                      letterSpacing: 1.0,
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('No upcoming appointments',
-                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.textPrimary)),
-                    const SizedBox(height: 2),
-                    Text('Tap to book your next visit.',
-                        style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
-                  ],
-                ),
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.12),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white.withOpacity(0.18)),
+                    ),
+                    child: const Icon(CupertinoIcons.calendar_badge_plus,
+                        color: Colors.white, size: 24),
+                  ),
+                  const SizedBox(width: 16),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'You have no upcoming visits',
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold, fontSize: 15, color: Colors.white),
+                        ),
+                        SizedBox(height: 4),
+                        Text(
+                          'Tap here to book your next appointment.',
+                          style: TextStyle(fontSize: 12.5, height: 1.35, color: Colors.white70),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Icon(CupertinoIcons.chevron_right, color: Colors.white70, size: 18),
+                ],
               ),
-              Icon(CupertinoIcons.chevron_right, color: AppColors.primary, size: 18),
             ],
           ),
         ),
       );
     }
 
-    // Deep gradient panel (dark navy -> forest green) with a date badge on the
-    // left and the visit details stacked beside it.
+    // The booked card: a date badge on the left, the visit details beside it.
     return InkWell(
       borderRadius: BorderRadius.circular(22),
       onTap: () => showAppointmentDetailSheet(context, appointment),
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.all(18),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.centerLeft,
-            end: Alignment.centerRight,
-            // Light mode gets a brighter teal-to-emerald wash so the card
-            // lifts off the pale page instead of sitting on it as a dark slab.
-            colors: ThemeController().isDark
-                ? const [Color(0xFF0B1D2A), Color(0xFF0E4A46), Color(0xFF12604A)]
-                : const [Color(0xFF11796D), Color(0xFF19A38D), Color(0xFF33B384)],
-            stops: const [0.0, 0.55, 1.0],
-          ),
-          borderRadius: BorderRadius.circular(22),
-          boxShadow: [
-            BoxShadow(
-              color: AppColors.primary.withOpacity(0.28),
-              blurRadius: 26,
-              offset: const Offset(0, 12),
-              spreadRadius: -8,
-            ),
-          ],
-        ),
+        decoration: _nextAppointmentDecoration,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [

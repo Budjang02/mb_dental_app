@@ -246,6 +246,22 @@ List<Dentist> eligibleDentists(Iterable<DentalService> services) {
 Set<String> requiredSpecializations(Iterable<DentalService> services) =>
     services.map((s) => s.requiredSpecialization).toSet();
 
+/// The dentist the clinic would staff a visit with: credentialed for every
+/// selected procedure *and* holding clinic on that weekday. This is what the
+/// booking summary names, standing in for the assignment a real backend would
+/// make when the request lands.
+///
+/// Returns null when nobody on the roster covers the selection that day — the
+/// summary then says the dentist is still to be assigned rather than naming
+/// someone who is not actually in.
+Dentist? assignedDentistFor(Iterable<DentalService> services, DateTime day) {
+  if (services.isEmpty) return null;
+  for (final dentist in eligibleDentists(services)) {
+    if (dentist.clinicDays.contains(day.weekday)) return dentist;
+  }
+  return null;
+}
+
 Dentist? dentistByName(String name) {
   for (final dentist in kDentists) {
     if (dentist.name == name) return dentist;
@@ -264,13 +280,76 @@ const Set<int> kClinicOperatingDays = {
   DateTime.sunday,
 };
 
-/// Minutes from midnight. Chairs open at 9:00 AM and the last procedure must
-/// finish by 5:00 PM.
-const int kClinicOpenMinute = 9 * 60;
-const int kClinicCloseMinute = 17 * 60;
+/// Minutes from midnight. Chairs open at 10:00 AM and the last procedure must
+/// finish by 4:00 PM.
+const int kClinicOpenMinute = 10 * 60;
+const int kClinicCloseMinute = 16 * 60;
 
 /// Bookings start on a 15-minute grid.
 const int kSlotStepMinutes = 15;
+
+/// The three stretches of the clinic day the slot picker files start times
+/// under. They tile the whole 10:00 AM - 4:00 PM window with no gaps, so every
+/// bookable start belongs to exactly one band.
+enum TimeOfDayBand { morning, afternoon, lateAfternoon }
+
+extension TimeOfDayBandX on TimeOfDayBand {
+  String get label {
+    switch (this) {
+      case TimeOfDayBand.morning:
+        return 'Morning';
+      case TimeOfDayBand.afternoon:
+        return 'Afternoon';
+      case TimeOfDayBand.lateAfternoon:
+        return 'Late Afternoon';
+    }
+  }
+
+  /// First start time this band accepts, in minutes from midnight.
+  int get startMinute {
+    switch (this) {
+      case TimeOfDayBand.morning:
+        return 10 * 60;
+      case TimeOfDayBand.afternoon:
+        return 12 * 60;
+      case TimeOfDayBand.lateAfternoon:
+        return 14 * 60;
+    }
+  }
+
+  /// Last start time this band accepts, inclusive.
+  ///
+  /// The bands read as 10-12, 12-2 and 2-4, so each one ends a quarter-hour
+  /// before the next begins — 11:45 is the last morning start because 12:00
+  /// is the first afternoon one. Late Afternoon is bounded at the 4:00 PM
+  /// close: nothing can actually start then, but stopping short would leave a
+  /// dead quarter-hour belonging to no band.
+  int get endMinute {
+    switch (this) {
+      case TimeOfDayBand.morning:
+        return 11 * 60 + 45;
+      case TimeOfDayBand.afternoon:
+        return 13 * 60 + 45;
+      case TimeOfDayBand.lateAfternoon:
+        return 16 * 60;
+    }
+  }
+
+  bool contains(int minuteOfDay) =>
+      minuteOfDay >= startMinute && minuteOfDay <= endMinute;
+
+  /// "10:00 AM - 11:45 AM", for the tooltip under the filter toolbar.
+  String get windowLabel =>
+      '${formatMinuteOfDay(startMinute)} \u2013 ${formatMinuteOfDay(endMinute)}';
+}
+
+/// The band a start time falls in, or null if it is outside clinic hours.
+TimeOfDayBand? bandFor(int minuteOfDay) {
+  for (final band in TimeOfDayBand.values) {
+    if (band.contains(minuteOfDay)) return band;
+  }
+  return null;
+}
 
 bool isClinicOpenOn(DateTime day) => kClinicOperatingDays.contains(day.weekday);
 

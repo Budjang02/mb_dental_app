@@ -9,9 +9,9 @@ class Patient {
   final String phone;
   final String? avatarPath;
 
-  // Profile-completion fields. Registration only collects name, email, phone
-  // and password, so everything below starts empty and is filled in later
-  // under Profile → Manage Profile or at clinic check-in.
+  // Profile-completion fields. Registration only collects name, email and
+  // password, so everything below starts empty and is filled in later under
+  // Profile → Manage Profile or at clinic check-in.
   final String? gender;
   final DateTime? dateOfBirth;
   final String? bloodType;
@@ -41,6 +41,8 @@ class Patient {
   /// Which of the optional details are still blank, so Profile can nudge the
   /// patient to finish setting up their record.
   List<String> get missingProfileFields => [
+        // Sign-up stopped asking for a number, so it is one of these now.
+        if (phone.isEmpty) 'Phone Number',
         if (gender == null || gender!.isEmpty) 'Gender',
         if (dateOfBirth == null) 'Date of Birth',
         if (address == null || address!.isEmpty) 'Address',

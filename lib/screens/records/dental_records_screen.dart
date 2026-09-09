@@ -196,39 +196,6 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
     );
   }
 
-  void _showTreatmentNoteDetail(Map<String, String> note) {
-    showAppDialog(
-      context,
-      builder: (dialogContext) => SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Align(
-              alignment: Alignment.centerRight,
-              child: AppDialogCloseButton(),
-            ),
-            Text(
-              note['procedure'] ?? '',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
-            ),
-            const SizedBox(height: 4),
-            Text(note['date'] ?? '', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
-            const SizedBox(height: 16),
-            _kv('Tooth', note['tooth'] ?? ''),
-            _kv('Condition', note['condition'] ?? ''),
-            _kv('Performed by', note['doctor'] ?? ''),
-            const SizedBox(height: 8),
-            Text('Notes', style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
-            const SizedBox(height: 4),
-            Text(note['notes'] ?? '', style: TextStyle(fontSize: 14, color: AppColors.textPrimary)),
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _kv(String label, String value) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
@@ -253,6 +220,16 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
       appBar: AppBar(
         title: const Text('Records'),
         centerTitle: true,
+        actions: [
+          IconButton(
+            tooltip: 'Treatment history',
+            icon: Icon(CupertinoIcons.clock, color: AppColors.primary),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const TreatmentNotesScreen()),
+            ),
+          ),
+        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 104),
@@ -354,9 +331,16 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
                         const SizedBox(height: 3),
                         Row(
                           children: [
-                            Text(
-                              'Universal Numbering',
-                              style: TextStyle(color: AppColors.textSecondary, fontSize: 11.5),
+                            // The Print Chart button beside this column takes
+                            // its width first, so the subtitle has to be able
+                            // to give — a large text scale overflowed it.
+                            Flexible(
+                              child: Text(
+                                'Universal Numbering',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(color: AppColors.textSecondary, fontSize: 11.5),
+                              ),
                             ),
                             const SizedBox(width: 4),
                             InkWell(
@@ -427,8 +411,6 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
             ],
           ),
         ),
-        const SizedBox(height: 16),
-        _buildMergedToothCard(),
       ],
     );
   }
@@ -445,75 +427,6 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
             text: 'TEETH',
             style: TextStyle(fontWeight: FontWeight.w400, color: AppColors.textSecondary),
           ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMergedToothCard() {
-    final selected = _selectedToothNumber;
-    final matching = selected == null
-        ? const <Map<String, String>>[]
-        : kTreatmentNotes.where((n) => toothNumberOf(n['tooth'] ?? '') == selected).toList();
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(CupertinoIcons.doc_text, size: 16, color: AppColors.primary),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  'Treatment Notes',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.textPrimary),
-                ),
-              ),
-              // Opens the full history on its own page; this card stays scoped
-              // to whichever tooth is selected on the chart.
-              Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const TreatmentNotesScreen()),
-                  ),
-                  borderRadius: BorderRadius.circular(20),
-                  child: Padding(
-                    padding: const EdgeInsets.all(4),
-                    child: Icon(CupertinoIcons.clock, size: 18, color: AppColors.primary),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          Divider(height: 18, thickness: 0.6, color: AppColors.border),
-          if (selected == null)
-            Text(
-              'Tap a tooth on the chart above to see its treatment notes.',
-              style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
-            )
-          else if (matching.isEmpty)
-            Text(
-              'No treatment notes recorded for Tooth #$selected yet.',
-              style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
-            )
-          else
-            for (int i = 0; i < matching.length; i++) ...[
-              if (i > 0) Divider(height: 22, color: AppColors.border),
-              _ToothTreatmentNoteTile(
-                note: matching[i],
-                onTap: () => _showTreatmentNoteDetail(matching[i]),
-              ),
-            ],
         ],
       ),
     );
@@ -883,95 +796,6 @@ class _ToothTypeInfoRow extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-/// One treatment note for the currently selected tooth: the date, the tooth it
-/// belongs to, the condition, the notes and the dentist who performed it. The
-/// whole tile is tappable and opens the note's full detail.
-class _ToothTreatmentNoteTile extends StatelessWidget {
-  final Map<String, String> note;
-  final VoidCallback onTap;
-
-  const _ToothTreatmentNoteTile({required this.note, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    // No box of its own: the note sits directly on the tooth card, keeping
-    // every line of text but dropping the nested frame around it.
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(10),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 2),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Icon(CupertinoIcons.calendar, size: 13, color: AppColors.primary),
-                  const SizedBox(width: 5),
-                  Text(
-                    note['date'] ?? '',
-                    style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: AppColors.primary),
-                  ),
-                  const Spacer(),
-                  Icon(CupertinoIcons.chevron_right, size: 15, color: AppColors.textSecondary),
-                ],
-              ),
-              const SizedBox(height: 6),
-              Text(
-                note['procedure'] ?? '',
-                style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
-              ),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                children: [
-                  _tag(note['tooth'] ?? '', AppColors.primary),
-                  _tag('Condition: ${note['condition'] ?? '—'}', AppColors.textSecondary),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Text(
-                note['notes'] ?? '',
-                style: TextStyle(fontSize: 12.5, color: AppColors.textSecondary, height: 1.35),
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Icon(CupertinoIcons.person, size: 13, color: AppColors.textSecondary),
-                  const SizedBox(width: 5),
-                  Expanded(
-                    child: Text(
-                      'Performed by ${note['doctor'] ?? 'the clinic'}',
-                      style: TextStyle(fontSize: 11.5, color: AppColors.textSecondary),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _tag(String label, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.12),
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: color),
-      ),
     );
   }
 }

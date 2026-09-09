@@ -118,7 +118,7 @@ void showAppointmentDetailSheet(BuildContext context, Appointment appointment) {
                 children: [
                   Expanded(
                     child: SizedBox(
-                      height: 48,
+                      height: 46,
                       child: OutlinedButton(
                         style: OutlinedButton.styleFrom(
                           foregroundColor: AppColors.primary,
@@ -147,7 +147,7 @@ void showAppointmentDetailSheet(BuildContext context, Appointment appointment) {
                   const SizedBox(width: 12),
                   Expanded(
                     child: SizedBox(
-                      height: 48,
+                      height: 46,
                       child: OutlinedButton(
                         style: OutlinedButton.styleFrom(
                           foregroundColor: AppColors.error,
@@ -196,7 +196,6 @@ const List<String> _cancellationReasons = [
   'Schedule conflict',
   'Feeling unwell',
   'Financial reasons',
-  'Travelling / out of town',
   'Booked by mistake',
   'Other',
 ];
@@ -247,7 +246,6 @@ void _confirmCancel(BuildContext sheetContext, Appointment appointment) {
                 width: double.infinity,
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: AppColors.background,
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(color: AppColors.border),
                 ),
@@ -290,7 +288,6 @@ void _confirmCancel(BuildContext sheetContext, Appointment appointment) {
               // The reason list box: tap one, no typing needed.
               Container(
                 decoration: BoxDecoration(
-                  color: AppColors.background,
                   borderRadius: BorderRadius.circular(14),
                   border: Border.all(
                     color: showError && selectedReason == null ? AppColors.error : AppColors.border,
@@ -325,7 +322,7 @@ void _confirmCancel(BuildContext sheetContext, Appointment appointment) {
                   decoration: InputDecoration(
                     hintText: 'Tell us briefly why',
                     hintStyle: TextStyle(fontSize: 13, color: AppColors.textSecondary),
-                    fillColor: AppColors.background,
+                    fillColor: AppColors.surface,
                   ),
                 ),
               ],

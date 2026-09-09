@@ -2,12 +2,11 @@ import 'package:flutter/material.dart';
 import '../../app/theme.dart';
 import '../../models/appointment.dart';
 import 'package:mb_dental_app/repositories/patient_repository.dart';
-import 'package:mb_dental_app/widgets/app_calendar.dart';
 import 'package:mb_dental_app/widgets/app_toast.dart';
+import 'package:mb_dental_app/widgets/schedule_picker.dart';
 import 'package:mb_dental_app/widgets/appointment_detail_sheet.dart';
 import 'package:mb_dental_app/app/messages.dart';
 import 'package:mb_dental_app/data/clinic_catalog.dart';
-import 'package:mb_dental_app/models/dental_service.dart';
 
 /// Moves an existing appointment to a new date/time via
 /// [PatientRepository.rescheduleAppointment] instead of booking a new one.
@@ -24,7 +23,6 @@ class _RescheduleAppointmentScreenState extends State<RescheduleAppointmentScree
   final PatientRepository _repository = PatientRepository();
 
   DateTime? _selectedDate;
-  DateTime _focusedDay = DateTime.now();
 
   /// Start of the new block, as minutes from midnight.
   int? _selectedStartMinute;
@@ -80,89 +78,11 @@ class _RescheduleAppointmentScreenState extends State<RescheduleAppointmentScree
     Navigator.pop(context);
   }
 
-  Widget _buildSlotGrid() {
-    final slots = _repository.slotOptionsFor(
-      day: _selectedDate!,
-      durationMinutes: _duration,
-      excludeAppointmentId: widget.appointment.id,
-    );
-
-    if (slots.every((slot) => !slot.isAvailable)) {
-      return Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: AppColors.border),
-        ),
-        child: Text(
-          'No ${formatDuration(_duration)} block is free on this day. Please choose another date.',
-          style: TextStyle(fontSize: 12, height: 1.4, color: AppColors.textSecondary),
-        ),
-      );
-    }
-
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        const columns = 3;
-        const gap = 10.0;
-        final itemWidth = (constraints.maxWidth - gap * (columns - 1)) / columns;
-        return Wrap(
-          spacing: gap,
-          runSpacing: gap,
-          children: [
-            for (final slot in slots)
-              SizedBox(
-                width: itemWidth,
-                child: Opacity(
-                  opacity: slot.isAvailable ? 1 : 0.45,
-                  child: Material(
-                    color: _selectedStartMinute == slot.startMinute
-                        ? AppColors.primary
-                        : AppColors.surface,
-                    borderRadius: BorderRadius.circular(12),
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(12),
-                      onTap: slot.isAvailable
-                          ? () => setState(() => _selectedStartMinute =
-                              _selectedStartMinute == slot.startMinute ? null : slot.startMinute)
-                          : null,
-                      child: Container(
-                        height: 44,
-                        alignment: Alignment.center,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: _selectedStartMinute == slot.startMinute
-                                ? AppColors.primary
-                                : AppColors.border,
-                          ),
-                        ),
-                        child: Text(
-                          slot.label,
-                          style: TextStyle(
-                            fontSize: 12.5,
-                            fontWeight: FontWeight.w600,
-                            decoration: slot.isAvailable ? null : TextDecoration.lineThrough,
-                            color: _selectedStartMinute == slot.startMinute
-                                ? Colors.white
-                                : AppColors.textPrimary,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-          ],
-        );
-      },
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+
     return Scaffold(
       appBar: AppBar(title: const Text('Reschedule Appointment')),
       body: Column(
@@ -198,34 +118,31 @@ class _RescheduleAppointmentScreenState extends State<RescheduleAppointmentScree
                     ),
                   ),
                   const SizedBox(height: 24),
-                  _requiredLabel('New Date'),
+                  _requiredLabel('New Date & Time'),
                   const SizedBox(height: 8),
-                  AppCalendar(
-                    focusedDay: _focusedDay,
-                    selectedDay: _selectedDate,
-                    firstDay: DateTime.now(),
-                    lastDay: DateTime.now().add(const Duration(days: 730)),
-                    enabledDayPredicate: isClinicOpenOn,
-                    onDaySelected: (selected, focused) {
-                      setState(() {
-                        _selectedDate = selected;
-                        _focusedDay = focused;
-                        _selectedStartMinute = null;
-                      });
-                    },
-                    onPageChanged: (focused) => _focusedDay = focused,
+                  SchedulePicker(
+                    durationMinutes: _duration,
+                    selectedDate: _selectedDate,
+                    selectedStartMinute: _selectedStartMinute,
+                    firstDay: today,
+                    lastDay: today.add(const Duration(days: 730)),
+                    // The appointment being moved must not block itself.
+                    hasOpenSlot: (day) => _repository.hasOpenSlotOn(
+                      day: day,
+                      durationMinutes: _duration,
+                      excludeAppointmentId: widget.appointment.id,
+                    ),
+                    slotsFor: (day) => _repository.slotOptionsFor(
+                      day: day,
+                      durationMinutes: _duration,
+                      excludeAppointmentId: widget.appointment.id,
+                    ),
+                    onDateSelected: (day) => setState(() {
+                      _selectedDate = day;
+                      _selectedStartMinute = null;
+                    }),
+                    onSlotSelected: (minute) => setState(() => _selectedStartMinute = minute),
                   ),
-                  const SizedBox(height: 20),
-                  _requiredLabel('New Time Slot'),
-                  const SizedBox(height: 4),
-                  Text(
-                    _selectedDate == null
-                        ? 'Select an open day first. The clinic is open $clinicOperatingDaysLabel, $clinicHoursLabel.'
-                        : 'Start times are 15 minutes apart and reserve a ${formatDuration(_duration)} block.',
-                    style: TextStyle(fontSize: 11.5, color: AppColors.textSecondary),
-                  ),
-                  const SizedBox(height: 8),
-                  if (_selectedDate != null) _buildSlotGrid(),
                   const SizedBox(height: 20),
                   Text('Notes (Optional)', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
                   const SizedBox(height: 8),
@@ -245,12 +162,18 @@ class _RescheduleAppointmentScreenState extends State<RescheduleAppointmentScree
             top: false,
             child: Padding(
               padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
-              child: ElevatedButton(
-                onPressed: _isSubmitting ? null : _confirm,
-                child: _isSubmitting
-                    ? const SizedBox(
-                        height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                    : const Text('Confirm New Schedule'),
+              child: SizedBox(
+                height: 46,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(minimumSize: const Size(0, 46)),
+                  onPressed: _isSubmitting ? null : _confirm,
+                  child: _isSubmitting
+                      ? const SizedBox(
+                          height: 20,
+                          width: 20,
+                          child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                      : const Text('Confirm New Schedule'),
+                ),
               ),
             ),
           ),
@@ -266,7 +189,7 @@ Widget _requiredLabel(String label) {
       style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.textPrimary, fontSize: 14),
       children: [
         TextSpan(text: label),
-        TextSpan(text: ' *', style: TextStyle(color: AppColors.error)),
+        const TextSpan(text: ' *', style: TextStyle(color: AppColors.error)),
       ],
     ),
   );
