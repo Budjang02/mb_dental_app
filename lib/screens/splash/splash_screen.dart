@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_native_splash/flutter_native_splash.dart';
 import 'package:lottie/lottie.dart';
+import '../../app/routes.dart';
+import '../../services/supabase_service.dart';
 import '../auth/login_screen.dart';
 
 /// Full-bleed animated splash. The Lottie composition is decoded before this
 /// widget paints anything (see [initState]), and the native OS splash is
 /// kept pinned until that decode finishes — so the very first thing drawn is
 /// an animation frame, never a bare plain-color screen. It then plays once
-/// through before handing off to Login.
+/// through before handing off to Login, or straight to the dashboard when a
+/// stored session is still valid.
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
 
@@ -45,6 +48,12 @@ class _SplashScreenState extends State<SplashScreen> {
       setState(() => _opacity = 0);
       Future.delayed(const Duration(milliseconds: 350), () {
         if (!mounted) return;
+        // A patient who signed in before skips Login entirely: supabase_flutter
+        // restores and refreshes the stored session while this animation plays.
+        if (SupabaseService.isSignedIn) {
+          Navigator.of(context).pushReplacementNamed(AppRoutes.dashboard);
+          return;
+        }
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(builder: (_) => const LoginScreen()),
         );

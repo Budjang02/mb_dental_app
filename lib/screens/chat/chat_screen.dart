@@ -2,22 +2,16 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:mb_dental_app/app/theme.dart';
 import 'package:mb_dental_app/app/theme_controller.dart';
+import 'package:mb_dental_app/models/patient_message.dart';
 import 'package:mb_dental_app/repositories/patient_repository.dart';
-
-/// One line of the support conversation.
-class _ChatMessage {
-  final String text;
-  final bool fromPatient;
-  final DateTime sentAt;
-
-  const _ChatMessage({required this.text, required this.fromPatient, required this.sentAt});
-}
+import 'package:mb_dental_app/widgets/app_toast.dart';
 
 /// In-app support chat with the clinic front desk, opened from the floating
 /// chat bubble that sits above the dashboard's navigation bar.
 ///
-/// TODO: the canned replies below stand in for a real messaging backend —
-/// swap [_replyTo] for the clinic's chat API when one exists.
+/// The thread is the `patient_messages` table: what the patient sends is a row
+/// the clinic reads at its own desk, and replies come back the same way. There
+/// is no automatic answer — a reply appears when a person writes one.
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
 
@@ -28,8 +22,8 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _controller = TextEditingController();
   final ScrollController _scrollController = ScrollController();
-  final List<_ChatMessage> _messages = [];
-  bool _isReplying = false;
+  final PatientRepository _repository = PatientRepository();
+  bool _isSending = false;
 
   static const List<String> _suggestions = [
     'What are your clinic hours?',
@@ -40,14 +34,13 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
-    _messages.add(
-      _ChatMessage(
-        text: 'Hi ${PatientRepository().patient.firstName}! This is Mariano & Bolasoc Dental Center. '
-            'How can we help you today?',
-        fromPatient: false,
-        sentAt: DateTime.now(),
-      ),
-    );
+    // Opening the thread is what marks the clinic's messages as seen, so both
+    // happen here rather than on the dashboard.
+    _repository.refreshMessages().then((_) {
+      if (!mounted) return;
+      _scrollToBottom();
+      _repository.markMessagesRead();
+    });
   }
 
   @override
@@ -57,45 +50,26 @@ class _ChatScreenState extends State<ChatScreen> {
     super.dispose();
   }
 
-  /// Keyword-matched canned answers — a placeholder for the real support desk.
-  String _replyTo(String message) {
-    final text = message.toLowerCase();
-    if (text.contains('hour') || text.contains('open') || text.contains('close')) {
-      return 'We are open Monday to Saturday, 9:00 AM to 6:00 PM. We are closed on Sundays and holidays.';
-    }
-    if (text.contains('reschedule') || text.contains('move') || text.contains('cancel')) {
-      return 'You can reschedule or cancel from the Schedule tab — open the appointment and tap Reschedule. '
-          'Please do it at least 24 hours before your slot.';
-    }
-    if (text.contains('walk') || text.contains('book') || text.contains('appointment')) {
-      return 'We accept walk-ins when a slot is free, but booking ahead in the Schedule tab guarantees your time.';
-    }
-    if (text.contains('pay') || text.contains('price') || text.contains('bill') || text.contains('cost')) {
-      return 'You can pay in cash at the clinic or from your in-app wallet. '
-          'Your statements are under Wallet, Transaction History, Billing.';
-    }
-    return 'Thanks for your message! Our front desk will get back to you shortly during clinic hours.';
-  }
-
-  void _send([String? preset]) {
+  Future<void> _send([String? preset]) async {
     final text = (preset ?? _controller.text).trim();
-    if (text.isEmpty) return;
+    if (text.isEmpty || _isSending) return;
 
-    setState(() {
-      _messages.add(_ChatMessage(text: text, fromPatient: true, sentAt: DateTime.now()));
-      _controller.clear();
-      _isReplying = true;
-    });
-    _scrollToBottom();
+    setState(() => _isSending = true);
+    // Cleared up front so the patient can keep typing while it sends; restored
+    // below if the send fails, rather than losing what they wrote.
+    if (preset == null) _controller.clear();
 
-    Future.delayed(const Duration(milliseconds: 900), () {
+    try {
+      await _repository.sendMessage(text);
       if (!mounted) return;
-      setState(() {
-        _isReplying = false;
-        _messages.add(_ChatMessage(text: _replyTo(text), fromPatient: false, sentAt: DateTime.now()));
-      });
       _scrollToBottom();
-    });
+    } catch (e) {
+      if (!mounted) return;
+      if (preset == null) _controller.text = text;
+      showAppToast(context, 'Your message did not send. Please try again.', isError: true);
+    } finally {
+      if (mounted) setState(() => _isSending = false);
+    }
   }
 
   /// Runs after the frame so the list has already grown to its new extent.
@@ -113,7 +87,9 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: ThemeController(),
+      // Watches the repository too: a reply the clinic sends lands in the
+      // thread on the next refresh without this screen tracking it itself.
+      listenable: Listenable.merge([ThemeController(), _repository]),
       builder: (context, _) => Scaffold(
         backgroundColor: AppColors.background,
         appBar: AppBar(
@@ -144,7 +120,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         ),
                         const SizedBox(width: 5),
                         Text(
-                          'Usually replies within minutes',
+                          'Replies during clinic hours',
                           style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
                         ),
                       ],
@@ -158,18 +134,29 @@ class _ChatScreenState extends State<ChatScreen> {
         body: Column(
           children: [
             Expanded(
-              child: ListView.builder(
-                controller: _scrollController,
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                itemCount: _messages.length + (_isReplying ? 1 : 0),
-                itemBuilder: (context, index) {
-                  if (index == _messages.length) return const _TypingBubble();
-                  return _MessageBubble(message: _messages[index]);
-                },
-              ),
+              child: _repository.messages.isEmpty
+                  ? Center(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 40),
+                        child: Text(
+                          'Send us a message and the front desk will reply during '
+                          'clinic hours.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                              fontSize: 13, height: 1.4, color: AppColors.textSecondary),
+                        ),
+                      ),
+                    )
+                  : ListView.builder(
+                      controller: _scrollController,
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                      itemCount: _repository.messages.length,
+                      itemBuilder: (context, index) =>
+                          _MessageBubble(message: _repository.messages[index]),
+                    ),
             ),
             // Starter prompts only while the conversation has not begun.
-            if (_messages.length == 1)
+            if (_repository.messages.isEmpty)
               SizedBox(
                 height: 44,
                 child: ListView(
@@ -183,7 +170,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           label: Text(suggestion, style: TextStyle(fontSize: 12, color: AppColors.primary)),
                           backgroundColor: AppColors.primary.withOpacity(0.08),
                           side: BorderSide(color: AppColors.primary.withOpacity(0.35)),
-                          onPressed: () => _send(suggestion),
+                          onPressed: _isSending ? null : () => _send(suggestion),
                         ),
                       ),
                   ],
@@ -216,6 +203,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 textInputAction: TextInputAction.send,
                 style: TextStyle(fontSize: 14, color: AppColors.textPrimary),
                 onSubmitted: (_) => _send(),
+                enabled: !_isSending,
                 decoration: InputDecoration(
                   isDense: true,
                   hintText: 'Type a message...',
@@ -231,10 +219,20 @@ class _ChatScreenState extends State<ChatScreen> {
               shape: const CircleBorder(),
               child: InkWell(
                 customBorder: const CircleBorder(),
-                onTap: _send,
-                child: const Padding(
-                  padding: EdgeInsets.all(12),
-                  child: Icon(CupertinoIcons.paperplane_fill, color: Colors.white, size: 20),
+                onTap: _isSending ? null : _send,
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: _isSending
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                          ),
+                        )
+                      : const Icon(CupertinoIcons.paperplane_fill,
+                          color: Colors.white, size: 20),
                 ),
               ),
             ),
@@ -246,7 +244,7 @@ class _ChatScreenState extends State<ChatScreen> {
 }
 
 class _MessageBubble extends StatelessWidget {
-  final _ChatMessage message;
+  final PatientMessage message;
 
   const _MessageBubble({required this.message});
 
@@ -279,7 +277,7 @@ class _MessageBubble extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              message.text,
+              message.body,
               style: TextStyle(
                 fontSize: 13.5,
                 height: 1.35,
@@ -294,48 +292,6 @@ class _MessageBubble extends StatelessWidget {
                 color: isPatient ? Colors.white70 : AppColors.textSecondary,
               ),
             ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Three-dot placeholder shown while the clinic's reply is pending.
-class _TypingBubble extends StatelessWidget {
-  const _TypingBubble();
-
-  @override
-  Widget build(BuildContext context) {
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: const BorderRadius.only(
-            topLeft: Radius.circular(16),
-            topRight: Radius.circular(16),
-            bottomLeft: Radius.circular(4),
-            bottomRight: Radius.circular(16),
-          ),
-          border: Border.all(color: AppColors.border),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            for (int i = 0; i < 3; i++) ...[
-              if (i > 0) const SizedBox(width: 5),
-              Container(
-                width: 6,
-                height: 6,
-                decoration: BoxDecoration(
-                  color: AppColors.textSecondary.withOpacity(0.5),
-                  shape: BoxShape.circle,
-                ),
-              ),
-            ],
           ],
         ),
       ),

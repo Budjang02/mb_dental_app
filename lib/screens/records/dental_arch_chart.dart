@@ -32,6 +32,20 @@ const double _padUnits = 0.08;
 /// separation the reference has.
 const double _archGapFraction = 0.065;
 
+/// Number height relative to a cell. Small enough to sit between neighbouring
+/// numbers at the crowded front of the arch, large enough to read.
+const double _numberFontUnits = 0.32;
+
+/// Room reserved outside each arch for a tooth's number, in cells: the gap
+/// between the crown and its number, then the number itself. The arch is
+/// pulled in by this much so the outermost numbers are never clipped.
+///
+/// The box is the *whole* width of a two-digit number, not half of it: the
+/// number is centred one half-extent out from the gap, so its far edge lands a
+/// full extent beyond the crown.
+const double _numberGapUnits = 0.16;
+const double _numberBoxUnits = _numberFontUnits * 2.0;
+
 /// The horseshoe odontogram: both dental arches laid out as they are in
 /// `assets/reference_ui/teeth_ui.png`, every tooth drawn and hit-tested on its
 /// own.
@@ -61,7 +75,7 @@ class DentalArchChart extends StatefulWidget {
   final Color selectedFill;
   final Color selectedOutline;
 
-  /// "Up Teeth" / "Down Teeth", centred inside each arch.
+  /// The tooth numbers printed outside the arch.
   final Color labelColor;
 
   const DentalArchChart({
@@ -188,6 +202,19 @@ class _EllipseArc {
     return Offset(cx + a * math.cos(phi), upper ? cy - dy : cy + dy);
   }
 
+  /// Unit vector pointing straight out of the arch at `u` — away from the
+  /// tongue, past the cheek. Where a tooth's number goes.
+  Offset outwardAt(double u) {
+    final phi = _phi(u);
+    // Same normal [angleAt] works from, negated: that one wants the inward
+    // direction, this one the outward.
+    final nx = -b * math.cos(phi);
+    final ny = (upper ? 1 : -1) * a * math.sin(phi);
+    final length = math.sqrt(nx * nx + ny * ny);
+    if (length == 0) return Offset(0, upper ? -1 : 1);
+    return Offset(-nx / length, -ny / length);
+  }
+
   /// Turns a crown so the outer, cheek-facing edge of its cell points straight
   /// out of the arch — the orientation every tooth has in the reference.
   double angleAt(double u) {
@@ -226,7 +253,11 @@ class ToothPlacement {
   final double width;
   final double height;
 
-  const ToothPlacement(this.center, this.angle, this.width, this.height);
+  /// Unit vector away from the arch, used to sit this tooth's number outside
+  /// it the way the reference chart does.
+  final Offset outward;
+
+  const ToothPlacement(this.center, this.angle, this.width, this.height, this.outward);
 }
 
 /// The measured arch: where every crown sits, how big it is and which way it
@@ -235,15 +266,11 @@ class DentalArchLayout {
   final Size size;
   final double cell;
   final Map<int, ToothPlacement> placements;
-  final Offset upperLabel;
-  final Offset lowerLabel;
 
   const DentalArchLayout({
     required this.size,
     required this.cell,
     required this.placements,
-    required this.upperLabel,
-    required this.lowerLabel,
   });
 
   static DentalArchLayout build(Size size) {
@@ -267,7 +294,8 @@ class DentalArchLayout {
     var a = 0.0;
     var b = 0.0;
     for (var pass = 0; pass < 16; pass++) {
-      final inset = cell * maxToothExtent / 2;
+      // Half a crown, plus the strip its number sits in outside that.
+      final inset = cell * (maxToothExtent / 2 + _numberGapUnits + _numberBoxUnits);
       a = centerX - inset;
       b = archH - inset;
       if (a <= 2 || b <= 2) break;
@@ -291,6 +319,7 @@ class DentalArchLayout {
           arc.angleAt(u),
           width,
           toothHeightFactor(n) * cell,
+          arc.outwardAt(u),
         );
         cursor += width / 2 + _gapUnits * cell;
       }
@@ -299,15 +328,7 @@ class DentalArchLayout {
     layOut(kUpperArchTeeth, upperArc);
     layOut(kLowerArchTeeth, lowerArc);
 
-    return DentalArchLayout(
-      size: size,
-      cell: cell,
-      placements: placements,
-      // Seated low inside the upper horseshoe and high inside the lower one,
-      // where the reference puts its two labels.
-      upperLabel: Offset(centerX, archH - b * 0.30),
-      lowerLabel: Offset(centerX, size.height - archH + b * 0.32),
-    );
+    return DentalArchLayout(size: size, cell: cell, placements: placements);
   }
 
   /// Ramanujan's approximation, halved. Accurate to a fraction of a pixel at
@@ -315,6 +336,21 @@ class DentalArchLayout {
   static double _halfEllipsePerimeter(double a, double b) {
     final h = math.pow((a - b) / (a + b), 2).toDouble();
     return math.pi * (a + b) * (1 + 3 * h / (10 + math.sqrt(4 - 3 * h))) / 2;
+  }
+
+  /// Font size for the tooth numbers at this canvas size.
+  double get numberFontSize => math.max(9.0, cell * _numberFontUnits);
+
+  /// Where a tooth's number is centred: straight out of the arch from the
+  /// crown, clear of it by [_numberGapUnits] plus half the text's own extent.
+  ///
+  /// Measured from the crown's half-height, so a long molar pushes its number
+  /// further out than a short incisor and the ring of numbers stays clear of
+  /// the teeth all the way round.
+  Offset numberCenterFor(int tooth, double textExtent) {
+    final placement = placements[tooth]!;
+    final distance = placement.height / 2 + cell * _numberGapUnits + textExtent / 2;
+    return placement.center + placement.outward * distance;
   }
 
   Matrix4 transformFor(int tooth, {double scale = 1}) {
@@ -379,9 +415,6 @@ class _ArchPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    _paintLabel(canvas, 'Up Teeth', layout.upperLabel);
-    _paintLabel(canvas, 'Down Teeth', layout.lowerLabel);
-
     // The picked tooth goes last so its ring is never clipped by a neighbour
     // that happens to be drawn after it.
     for (final tooth in [...kUpperArchTeeth, ...kLowerArchTeeth]) {
@@ -391,6 +424,37 @@ class _ArchPainter extends CustomPainter {
     if (selected != null && layout.placements.containsKey(selected)) {
       _paintTooth(canvas, selected);
     }
+
+    // Numbers last, so a crown scaled up by selection never rides over one.
+    for (final tooth in [...kUpperArchTeeth, ...kLowerArchTeeth]) {
+      _paintToothNumber(canvas, tooth);
+    }
+  }
+
+  /// The Universal number, sitting just outside its crown along the arch's
+  /// outward normal — the placement the reference chart uses.
+  void _paintToothNumber(Canvas canvas, int tooth) {
+    if (!layout.placements.containsKey(tooth)) return;
+
+    final selected = tooth == selectedTooth;
+    final painter = TextPainter(
+      text: TextSpan(
+        text: '$tooth',
+        style: TextStyle(
+          color: selected ? selectedOutline : labelColor,
+          fontSize: layout.numberFontSize,
+          // The picked tooth's number is bolder, so the number and the ring
+          // agree about which tooth is being talked about.
+          fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+          height: 1,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+
+    final center =
+        layout.numberCenterFor(tooth, math.max(painter.width, painter.height));
+    painter.paint(canvas, center - Offset(painter.width / 2, painter.height / 2));
   }
 
   void _paintTooth(Canvas canvas, int tooth) {
@@ -446,22 +510,6 @@ class _ArchPainter extends CustomPainter {
     }
 
     canvas.restore();
-  }
-
-  void _paintLabel(Canvas canvas, String text, Offset center) {
-    final painter = TextPainter(
-      text: TextSpan(
-        text: text,
-        style: TextStyle(
-          color: labelColor,
-          fontSize: math.max(12.0, layout.cell * 0.44),
-          fontWeight: FontWeight.w600,
-          letterSpacing: 0.1,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    painter.paint(canvas, center - Offset(painter.width / 2, painter.height / 2));
   }
 
   @override

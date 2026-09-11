@@ -6,8 +6,8 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:mb_dental_app/app/routes.dart';
 import 'package:mb_dental_app/app/theme.dart';
 import 'package:mb_dental_app/app/theme_controller.dart';
-import 'package:mb_dental_app/repositories/patient_repository.dart';
 import 'package:mb_dental_app/screens/auth/otp_verification_screen.dart';
+import 'package:mb_dental_app/services/auth_service.dart';
 import 'package:mb_dental_app/widgets/app_overlays.dart';
 import 'package:mb_dental_app/widgets/app_toast.dart';
 import 'package:mb_dental_app/widgets/auth_widgets.dart';
@@ -66,15 +66,21 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     // Sign-up captures name and email only. Phone, date of birth, gender and
     // address are filled in later under Profile, or at clinic check-in — the
-    // completion nudge there lists whatever is still blank.
-    await PatientRepository().registerPatient(
+    // completion nudge there lists whatever is still blank. The name rides
+    // along in user metadata so the backend can stamp it on the patient row.
+    final result = await AuthService.signUp(
       fullName: _fullNameController.text.trim(),
       email: email,
-      phone: '',
+      password: _passwordController.text,
     );
 
     if (!mounted) return;
     setState(() => _isLoading = false);
+
+    if (!result.success) {
+      showAppToast(context, result.message ?? 'Sign up failed.', isError: true);
+      return;
+    }
 
     await showSuccessOverlay(
       context,

@@ -1,5 +1,6 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:mb_dental_app/app/messages.dart';
 import 'package:mb_dental_app/app/theme.dart';
 import 'package:mb_dental_app/app/theme_controller.dart';
 import 'package:mb_dental_app/models/appointment.dart';
@@ -366,14 +367,35 @@ class _HomeTabState extends State<HomeTab> {
           child: InkWell(
             onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ChatScreen())),
             customBorder: const CircleBorder(),
-            child: Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: AppColors.surface,
-                shape: BoxShape.circle,
-                border: Border.all(color: AppColors.border),
-              ),
-              child: Icon(CupertinoIcons.ellipses_bubble, color: AppColors.primary, size: 22),
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: AppColors.surface,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: AppColors.border),
+                  ),
+                  child: Icon(CupertinoIcons.ellipses_bubble, color: AppColors.primary, size: 22),
+                ),
+                // Counts only what the clinic sent and the patient has not
+                // opened — the patient's own messages are never unread.
+                if (_repository.unreadMessageCount > 0)
+                  Positioned(
+                    right: -2,
+                    top: -2,
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: BoxDecoration(color: AppColors.primary, shape: BoxShape.circle),
+                      child: Text(
+                        '${_repository.unreadMessageCount}',
+                        style: const TextStyle(
+                            color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
         ),
@@ -461,20 +483,14 @@ class _HomeTabState extends State<HomeTab> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Row(
-                children: [
-                  Icon(CupertinoIcons.calendar, size: 13, color: Colors.white70),
-                  SizedBox(width: 6),
-                  Text(
-                    'NEXT APPOINTMENT',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 11,
-                      color: Colors.white70,
-                      letterSpacing: 1.0,
-                    ),
-                  ),
-                ],
+              const Text(
+                'NEXT APPOINTMENT',
+                style: TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 11,
+                  color: Colors.white70,
+                  letterSpacing: 1.0,
+                ),
               ),
               const SizedBox(height: 14),
               Row(
@@ -529,8 +545,6 @@ class _HomeTabState extends State<HomeTab> {
           children: [
             Row(
               children: [
-                const Icon(CupertinoIcons.calendar, size: 13, color: Colors.white70),
-                const SizedBox(width: 6),
                 const Text(
                   'NEXT APPOINTMENT',
                   style: TextStyle(
@@ -559,20 +573,18 @@ class _HomeTabState extends State<HomeTab> {
                         style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: Colors.white),
                       ),
                       const SizedBox(height: 6),
-                      Row(
-                        children: [
-                          const Icon(CupertinoIcons.clock, size: 18, color: Colors.white),
-                          const SizedBox(width: 8),
-                          Text(
-                            appointment.timeSlot,
-                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 22, color: Colors.white),
-                          ),
-                        ],
+                      Text(
+                        appointment.timeSlot,
+                        style: const TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 22, color: Colors.white),
                       ),
                       const SizedBox(height: 12),
-                      _buildDetailLine(CupertinoIcons.person_alt, appointment.doctorName),
+                      // No glyph on this card, so the doctor's name is prefixed
+                      // instead — otherwise it is just a name with nothing
+                      // saying whose it is.
+                      _buildDetailLine('Doctor: ${doctorLabel(appointment.doctorName)}'),
                       const SizedBox(height: 6),
-                      _buildDetailLine(CupertinoIcons.bandage, appointment.serviceName),
+                      _buildDetailLine(appointment.serviceName),
                     ],
                   ),
                 ),
@@ -629,19 +641,11 @@ class _HomeTabState extends State<HomeTab> {
     );
   }
 
-  Widget _buildDetailLine(IconData icon, String text) {
-    return Row(
-      children: [
-        Icon(icon, size: 14, color: Colors.white70),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            text,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 13, color: Colors.white),
-          ),
-        ),
-      ],
+  Widget _buildDetailLine(String text) {
+    return Text(
+      text,
+      overflow: TextOverflow.ellipsis,
+      style: const TextStyle(fontSize: 13, color: Colors.white),
     );
   }
 
@@ -657,14 +661,9 @@ class _HomeTabState extends State<HomeTab> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Row(
-                  children: [
-                    Icon(CupertinoIcons.creditcard, color: AppColors.primary, size: 18),
-                    const SizedBox(width: 8),
-                    Text('Wallet Balance',
-                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textPrimary)),
-                  ],
-                ),
+                Text('Wallet Balance',
+                    style: TextStyle(
+                        fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textPrimary)),
                 Icon(CupertinoIcons.chevron_right, color: AppColors.primary, size: 18),
               ],
             ),

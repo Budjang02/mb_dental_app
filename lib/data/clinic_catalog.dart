@@ -1,11 +1,10 @@
-import 'package:flutter/cupertino.dart';
-
 import '../models/dental_service.dart';
 import '../models/dentist.dart';
+import '../repositories/clinic_api.dart';
 
-/// The clinic's static reference data — the service menu, the dentist roster
-/// and the operating schedule. This is the seam a real backend would replace:
-/// every consumer reads through the helpers below rather than the raw lists.
+/// The clinic's reference data — the service menu, the dentist roster and the
+/// operating schedule. Every consumer reads through the helpers below, which is
+/// what let the service menu move to Supabase without touching the screens.
 
 // --- Specialization credentials ---
 
@@ -18,180 +17,18 @@ const String kCosmeticDentistry = 'Cosmetic Dentistry';
 
 // --- Service menu ---
 
-const List<DentalService> kDentalServices = [
-  // Preventive
-  DentalService(
-    id: 'svc-checkup',
-    name: 'Dental Checkup',
-    description: 'Routine exam, screening and diagnosis.',
-    category: ServiceCategory.preventive,
-    durationMinutes: 30,
-    price: 500,
-    requiredSpecialization: kGeneralDentistry,
-    icon: CupertinoIcons.search,
-  ),
-  DentalService(
-    id: 'svc-prophylaxis',
-    name: 'Oral Prophylaxis',
-    description: 'Scaling, polishing and plaque removal.',
-    category: ServiceCategory.preventive,
-    durationMinutes: 45,
-    price: 1000,
-    requiredSpecialization: kGeneralDentistry,
-    icon: CupertinoIcons.sparkles,
-  ),
-  DentalService(
-    id: 'svc-fluoride',
-    name: 'Fluoride Treatment',
-    description: 'Protective varnish that strengthens enamel.',
-    category: ServiceCategory.preventive,
-    durationMinutes: 15,
-    price: 800,
-    requiredSpecialization: kGeneralDentistry,
-    icon: CupertinoIcons.drop,
-  ),
-  DentalService(
-    id: 'svc-sealant',
-    name: 'Dental Sealant',
-    description: 'Seals molar grooves against decay.',
-    category: ServiceCategory.preventive,
-    durationMinutes: 30,
-    price: 1200,
-    requiredSpecialization: kGeneralDentistry,
-    icon: CupertinoIcons.shield,
-  ),
-  DentalService(
-    id: 'svc-xray',
-    name: 'Dental X-Ray',
-    description: 'Periapical or panoramic imaging.',
-    category: ServiceCategory.preventive,
-    durationMinutes: 15,
-    price: 500,
-    requiredSpecialization: kGeneralDentistry,
-    icon: CupertinoIcons.doc_text_viewfinder,
-  ),
+/// The bookable procedure menu, loaded from the clinic's `procedures` table by
+/// [ClinicCatalog]. Empty until that load completes, so the booking wizard
+/// shows its loading state rather than a stale hardcoded menu.
+List<DentalService> get kDentalServices => ClinicCatalog().services;
 
-  // Restorative
-  DentalService(
-    id: 'svc-filling',
-    name: 'Composite Filling',
-    description: 'Repairs cavities and small chips.',
-    category: ServiceCategory.restorative,
-    durationMinutes: 45,
-    price: 2000,
-    requiredSpecialization: kGeneralDentistry,
-    icon: CupertinoIcons.bandage,
-  ),
-  DentalService(
-    id: 'svc-rootcanal',
-    name: 'Root Canal Therapy',
-    description: 'Treats infected pulp and saves the tooth.',
-    category: ServiceCategory.restorative,
-    durationMinutes: 90,
-    price: 8000,
-    requiredSpecialization: kEndodontics,
-    icon: CupertinoIcons.bolt,
-  ),
-  DentalService(
-    id: 'svc-crown',
-    name: 'Crown / Bridge',
-    description: 'Caps or replaces a badly damaged tooth.',
-    category: ServiceCategory.restorative,
-    durationMinutes: 90,
-    price: 12000,
-    requiredSpecialization: kProsthodontics,
-    icon: CupertinoIcons.rosette,
-  ),
-  DentalService(
-    id: 'svc-denture',
-    name: 'Partial Denture',
-    description: 'Removable replacement for missing teeth.',
-    category: ServiceCategory.restorative,
-    durationMinutes: 60,
-    price: 15000,
-    requiredSpecialization: kProsthodontics,
-    icon: CupertinoIcons.square_stack_3d_up,
-  ),
-  DentalService(
-    id: 'svc-extraction',
-    name: 'Tooth Extraction',
-    description: 'Removes a damaged or impacted tooth.',
-    category: ServiceCategory.restorative,
-    durationMinutes: 45,
-    price: 2500,
-    requiredSpecialization: kOralSurgery,
-    icon: CupertinoIcons.scissors,
-  ),
-
-  // Orthodontics
-  DentalService(
-    id: 'svc-braces',
-    name: 'Braces Installation',
-    description: 'Fixed appliance fitting for alignment.',
-    category: ServiceCategory.orthodontics,
-    durationMinutes: 120,
-    price: 45000,
-    requiredSpecialization: kOrthodontics,
-    icon: CupertinoIcons.wand_rays,
-  ),
-  DentalService(
-    id: 'svc-braces-adjust',
-    name: 'Braces Adjustment',
-    description: 'Monthly wire change and tightening.',
-    category: ServiceCategory.orthodontics,
-    durationMinutes: 30,
-    price: 1500,
-    requiredSpecialization: kOrthodontics,
-    icon: CupertinoIcons.slider_horizontal_3,
-  ),
-  DentalService(
-    id: 'svc-retainer',
-    name: 'Retainer Fitting',
-    description: 'Holds teeth in place after treatment.',
-    category: ServiceCategory.orthodontics,
-    durationMinutes: 45,
-    price: 8000,
-    requiredSpecialization: kOrthodontics,
-    icon: CupertinoIcons.rectangle_grid_1x2,
-  ),
-
-  // Esthetic
-  DentalService(
-    id: 'svc-whitening',
-    name: 'Teeth Whitening',
-    description: 'In-clinic bleaching for stained teeth.',
-    category: ServiceCategory.esthetic,
-    durationMinutes: 60,
-    price: 9000,
-    requiredSpecialization: kCosmeticDentistry,
-    icon: CupertinoIcons.sun_max,
-  ),
-  DentalService(
-    id: 'svc-veneers',
-    name: 'Porcelain Veneers',
-    description: 'Thin shells bonded to the front teeth.',
-    category: ServiceCategory.esthetic,
-    durationMinutes: 90,
-    price: 18000,
-    requiredSpecialization: kCosmeticDentistry,
-    icon: CupertinoIcons.rectangle_stack,
-  ),
-  DentalService(
-    id: 'svc-recontour',
-    name: 'Gum Recontouring',
-    description: 'Reshapes the gum line for an even smile.',
-    category: ServiceCategory.esthetic,
-    durationMinutes: 45,
-    price: 7000,
-    requiredSpecialization: kCosmeticDentistry,
-    icon: CupertinoIcons.scribble,
-  ),
-];
-
-/// The menu grouped for Step 1, in the order the categories are presented.
-Map<ServiceCategory, List<DentalService>> get servicesByCategory => {
-      for (final category in ServiceCategory.values)
-        category: kDentalServices.where((s) => s.category == category).toList(),
+/// The menu grouped for Step 1, in the order the clinic lists its service
+/// lines. Groups with nothing active in them are left out rather than shown
+/// empty.
+Map<ServiceGroup, List<DentalService>> get servicesByCategory => {
+      for (final group in ClinicCatalog().groups)
+        if (kDentalServices.any((s) => s.categoryId == group.code))
+          group: kDentalServices.where((s) => s.categoryId == group.code).toList(),
     };
 
 DentalService? serviceById(String id) {
@@ -403,8 +240,13 @@ int? parseMinuteOfDay(String timeSlot) {
 
 // --- Clinic contact details (Profile → Support) ---
 
-const String kClinicName = 'Mariano & Bolasoc Dental Center';
-const String kClinicPhone = '+63 917 555 0142';
-const String kClinicEmail = 'hello@mbdentalcenter.ph';
-const String kClinicAddress =
-    '2nd Floor, Unit 204 Sunrise Plaza, Rizal Avenue, Olongapo City, Zambales';
+/// The clinic's own contact card, read from the `clinics` table. Hardcoding
+/// these sent patients to an address the clinic had already moved from, so the
+/// only fallback is the name.
+String get kClinicName => ClinicCatalog().clinic.name;
+String get kClinicPhone => ClinicCatalog().clinic.phone;
+String get kClinicAddress => ClinicCatalog().clinic.address;
+
+/// The clinic publishes no email address, so support routes through the phone
+/// number and the in-app chat instead.
+const String kClinicEmail = '';

@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 
 import '../../app/theme.dart';
 import '../../app/theme_controller.dart';
+import '../../services/auth_service.dart';
 import '../../widgets/app_overlays.dart';
+import '../../widgets/app_toast.dart';
 import '../../widgets/auth_widgets.dart';
 
 /// Step two of recovery: set the replacement. Pops `true` once the change is
@@ -39,11 +41,18 @@ class _CreateNewPasswordScreenState extends State<CreateNewPasswordScreen> {
 
     showBlockingLoader(context, 'Updating your password, please wait...');
 
-    // TODO: swap for the real reset (POST /auth/reset-password with the token
-    // from the recovery link) once the backend is ready.
-    await Future.delayed(const Duration(milliseconds: 1200));
+    // Works off whichever session is already open: the recovery session the
+    // emailed link established, or the patient's normal one when they reach
+    // this screen from Profile. Without a session Supabase rejects the call,
+    // which is exactly what stops anyone resetting an account they do not own.
+    final result = await AuthService.updatePassword(_passwordController.text);
     if (!mounted) return;
     hideBlockingLoader(context);
+
+    if (!result.success) {
+      showAppToast(context, result.message ?? 'Could not update your password.', isError: true);
+      return;
+    }
 
     await showSuccessOverlay(
       context,

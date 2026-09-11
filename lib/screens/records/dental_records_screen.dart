@@ -1,13 +1,18 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:mb_dental_app/app/messages.dart';
 import 'package:mb_dental_app/app/theme.dart';
+import 'package:mb_dental_app/data/clinic_catalog.dart';
 import 'package:mb_dental_app/app/theme_controller.dart';
+import 'package:mb_dental_app/models/patient_document.dart';
 import 'package:mb_dental_app/models/treatment.dart';
 import 'package:mb_dental_app/repositories/patient_repository.dart';
 import 'package:mb_dental_app/widgets/app_dialog.dart';
+import 'package:mb_dental_app/widgets/app_toast.dart';
 import 'dental_arch_chart.dart';
+import 'document_viewer_screen.dart';
 import 'tooth_glyphs.dart';
-import 'treatment_notes_data.dart';
 import 'treatment_notes_screen.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
@@ -97,12 +102,35 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
   /// Null until a crown is tapped: the chart opens with nothing singled out.
   int? _selectedToothNumber;
 
-  final Map<int, Map<String, dynamic>> _toothConditions = {
-    6: {'condition': 'Filled', 'color': const Color(0xFF64B5F6), 'notes': 'Composite filling applied on Upper Right Canine.'},
-    14: {'condition': 'Caries/Cavity', 'color': const Color(0xFFFFB74D), 'notes': 'Slight cavity detected on Upper Left Molar.'},
-    19: {'condition': 'Crown', 'color': const Color(0xFFE040FB), 'notes': 'Porcelain crown fitted.'},
-    30: {'condition': 'Missing', 'color': const Color(0xFFE57373), 'notes': 'Tooth extracted.'},
-  };
+  /// The file currently being opened, so only its row shows a spinner.
+  String? _openingDocumentId;
+
+  /// What the clinic has currently recorded against each tooth, read from the
+  /// patient's own chart.
+  ///
+  /// One entry per tooth: `tooth_records` comes back newest first, so the first
+  /// row for a tooth is its present state and any earlier row for the same
+  /// tooth is history the chart does not paint.
+  Map<int, Map<String, dynamic>> get _toothConditions {
+    final current = <int, Map<String, dynamic>>{};
+    for (final record in PatientRepository().toothRecords) {
+      final tooth = toothNumberOf(record['tooth'] ?? '');
+      if (tooth == null) continue;
+      if (current.containsKey(tooth)) continue;
+
+      final condition = (record['condition'] ?? '').trim();
+      current[tooth] = {
+        'condition': condition.isEmpty ? 'Other' : condition,
+        // An unrecognised condition still has to paint something, so it falls
+        // back to the catch-all swatch rather than crashing the chart.
+        'color': kToothConditionColors[condition] ?? kToothConditionColors['Other']!,
+        'notes': record['notes'] ?? '',
+        'date': record['date'] ?? '',
+        'doctor': record['doctor'] ?? '',
+      };
+    }
+    return current;
+  }
 
   Future<void> _exportOdontogramPdf() async {
     final patient = PatientRepository().patient;
@@ -116,7 +144,8 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
           children: [
             pw.Text('Dental Record Summary', style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold)),
             pw.SizedBox(height: 4),
-            pw.Text('Mariano & Bolasoc Dental Center'),
+            pw.Text(kClinicName),
+            if (kClinicAddress.isNotEmpty) pw.Text(kClinicAddress),
             pw.SizedBox(height: 16),
             pw.Text('Patient: ${patient.fullName}'),
             pw.Text('Patient Code: ${patient.patientCode}'),
@@ -128,12 +157,14 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
               pw.Text('No conditions recorded. All teeth healthy.')
             else
               pw.TableHelper.fromTextArray(
-                headers: ['Tooth #', 'Name', 'Condition', 'Notes'],
+                headers: ['Tooth #', 'Name', 'Condition', 'Doctor', 'Recorded', 'Notes'],
                 data: rows
                     .map((e) => [
                           '#${e.key}',
                           toothName(e.key),
                           e.value['condition'].toString(),
+                          doctorLabel(e.value['doctor'] as String?),
+                          e.value['date'].toString(),
                           e.value['notes'].toString(),
                         ])
                     .toList(),
@@ -433,7 +464,14 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
   }
 
   // --- TAB 3: X-RAYS & FILES ---
+  /// The X-rays, prescriptions and other files the clinic holds for this
+  /// patient, newest first.
+  ///
+  /// The files themselves are private in storage, so nothing here is a direct
+  /// link — tapping a row asks for a short-lived signed URL and opens that.
   Widget _buildXRaysAndFilesTab() {
+    final documents = PatientRepository().documents;
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
@@ -445,55 +483,119 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'X-Rays & Files',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'X-Rays & Files',
+                  style: TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                ),
+              ),
+              if (documents.isNotEmpty)
+                Text(
+                  '${documents.length} file${documents.length == 1 ? '' : 's'}',
+                  style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                ),
+            ],
           ),
           const SizedBox(height: 16),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(vertical: 48),
-            decoration: BoxDecoration(
-              color: AppColors.background,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: AppColors.border),
-            ),
-            child: Column(
-              children: [
-                Icon(CupertinoIcons.tray, size: 36, color: AppColors.textSecondary),
-                const SizedBox(height: 12),
-                Text(
-                  'No X-rays or files yet',
-                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textSecondary),
-                ),
-                const SizedBox(height: 6),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 32),
-                  child: Text(
-                    'Files your dentist uploads will appear here automatically once your records are connected.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+          if (documents.isEmpty)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 48),
+              decoration: BoxDecoration(
+                color: AppColors.background,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.border),
+              ),
+              child: Column(
+                children: [
+                  Icon(CupertinoIcons.tray, size: 36, color: AppColors.textSecondary),
+                  const SizedBox(height: 12),
+                  Text(
+                    'No X-rays or files yet',
+                    style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textSecondary),
                   ),
-                ),
-              ],
-            ),
-          ),
+                  const SizedBox(height: 6),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 32),
+                    child: Text(
+                      'Files your dentist uploads will appear here.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else
+            for (int i = 0; i < documents.length; i++) ...[
+              if (i > 0) const SizedBox(height: 10),
+              _PatientFileRow(
+                document: documents[i],
+                previewUrl: PatientRepository().previewUrlFor(documents[i]),
+                isOpening: _openingDocumentId == documents[i].id,
+                onTap: () => _openDocument(documents[i]),
+              ),
+            ],
         ],
       ),
     );
   }
 
-  /// Everything on file for one tooth, opened by tapping its crown: what it
-  /// is, what has been recorded against it, and every treatment note filed
-  /// under it. This is where the chart's colours get named, now that no legend
-  /// sits under the arch.
+  /// Opens a file. Anything the app can draw — an X-ray image or a PDF — is
+  /// shown in [DocumentViewerScreen]; anything else is handed to the device.
+  Future<void> _openDocument(PatientDocument document) async {
+    if (document.isPreviewable) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => DocumentViewerScreen(document: document)),
+      );
+      return;
+    }
+
+    if (_openingDocumentId != null) return;
+    setState(() => _openingDocumentId = document.id);
+
+    try {
+      final url = await PatientRepository().documentUrl(document);
+      if (!mounted) return;
+      if (url == null) {
+        showAppToast(context, 'That file is not available to open.', isError: true);
+        return;
+      }
+      final launched = await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+      if (!launched && mounted) {
+        showAppToast(context, 'No app on this device can open that file.', isError: true);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      showAppToast(context, 'We could not open that file. Please try again.', isError: true);
+    } finally {
+      if (mounted) setState(() => _openingDocumentId = null);
+    }
+  }
+
+  /// What the tooth is and what the clinic currently has recorded against it,
+  /// opened by tapping its crown. This is where the chart's colours get named,
+  /// now that no legend sits under the arch.
+  ///
+  /// Shows the present state only. The full history per tooth lives under
+  /// Treatment Notes, so repeating it here just buried the one line a patient
+  /// opens this dialog to read.
   void _showToothDetail(int tooth) {
     final info = _toothConditions[tooth];
     final condition = (info?['condition'] as String?) ?? 'Not Recorded';
     final swatch = (info?['color'] as Color?) ?? kToothConditionColors[condition]!;
     // The unrecorded swatch is white, which cannot carry a chip on its own.
     final accent = info == null ? AppColors.textSecondary : swatch;
-    final notes = kTreatmentNotes.where((n) => toothNumberOf(n['tooth'] ?? '') == tooth).toList();
+    final clinicalNote = (info?['notes'] as String?)?.trim() ?? '';
+    final recordedOn = (info?['date'] as String?)?.trim() ?? '';
+    final recordedBy = (info?['doctor'] as String?)?.trim() ?? '';
 
     showAppDialog(
       context,
@@ -560,44 +662,16 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
             _kv('Name', toothName(tooth)),
             _kv('Type', _toothTypeLabel(tooth)),
             _kv('Condition', condition),
-            if (info?['notes'] != null) _kv('Clinical note', info!['notes'] as String),
-            const SizedBox(height: 8),
-            Divider(height: 20, color: AppColors.border),
-            Text(
-              'Treatment History',
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
-            ),
-            const SizedBox(height: 8),
-            if (notes.isEmpty)
+            if (recordedOn.isNotEmpty) _kv('Last updated', recordedOn),
+            if (recordedBy.isNotEmpty) _kv('Doctor', recordedBy),
+            if (clinicalNote.isNotEmpty) _kv('Clinical note', clinicalNote),
+            if (info == null) ...[
+              const SizedBox(height: 4),
               Text(
-                'No treatment recorded for this tooth yet.',
-                style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
-              )
-            else
-              for (int i = 0; i < notes.length; i++) ...[
-                if (i > 0) Divider(height: 18, color: AppColors.border),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      notes[i]['procedure'] ?? '',
-                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '${notes[i]['date'] ?? ''} \u2022 ${notes[i]['doctor'] ?? ''}',
-                      style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
-                    ),
-                    if ((notes[i]['notes'] ?? '').isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        notes[i]['notes']!,
-                        style: TextStyle(fontSize: 12, color: AppColors.textPrimary, height: 1.35),
-                      ),
-                    ],
-                  ],
-                ),
-              ],
+                'Your dentist has not recorded anything for this tooth yet.',
+                style: TextStyle(fontSize: 12, color: AppColors.textSecondary, height: 1.35),
+              ),
+            ],
           ],
         ),
       ),
@@ -720,6 +794,20 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
                           : '${item.toothLabel} \u2022 ${_formatPlanDate(item.plannedFor!)}',
                       style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
                     ),
+                    const SizedBox(height: 3),
+                    Row(
+                      children: [
+                        Icon(kDoctorIcon, size: 12, color: AppColors.textSecondary),
+                        const SizedBox(width: 5),
+                        Expanded(
+                          child: Text(
+                            doctorLabel(item.doctorName),
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                          ),
+                        ),
+                      ],
+                    ),
                   ],
                 ),
               ),
@@ -755,7 +843,7 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
             ),
             const SizedBox(height: 16),
             _kv('Tooth', item.toothLabel),
-            _kv('Dentist', item.doctorName),
+            _kv('Doctor', doctorLabel(item.doctorName)),
             _kv('Planned for', item.plannedFor == null ? 'Not scheduled' : _formatPlanDate(item.plannedFor!)),
             _kv('Estimated cost', '\u20b1${item.estimatedCost.toStringAsFixed(2)}'),
             if (item.notes.isNotEmpty) _kv('Notes', item.notes),
@@ -796,6 +884,158 @@ class _ToothTypeInfoRow extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// One file in the X-Rays & Files list.
+class _PatientFileRow extends StatelessWidget {
+  final PatientDocument document;
+
+  /// Signed link for the thumbnail, when one has been fetched. Null falls back
+  /// to the kind icon rather than leaving a hole in the row.
+  final String? previewUrl;
+
+  final bool isOpening;
+  final VoidCallback onTap;
+
+  const _PatientFileRow({
+    required this.document,
+    required this.previewUrl,
+    required this.isOpening,
+    required this.onTap,
+  });
+
+  /// A thumbnail of the file itself where the app can draw one, otherwise the
+  /// icon for its kind. An X-ray is far easier to pick out of a list by sight
+  /// than by filename.
+  Widget _thumbnail() {
+    final url = previewUrl;
+    if (document.isImage && url != null) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: Image.network(
+          url,
+          width: 52,
+          height: 52,
+          fit: BoxFit.cover,
+          // A broken or expired link must not blank the row.
+          errorBuilder: (context, _, __) => _iconTile(),
+          loadingBuilder: (context, child, progress) => progress == null
+              ? child
+              : SizedBox(
+                  width: 52,
+                  height: 52,
+                  child: Center(
+                    child: SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: AppColors.primary),
+                    ),
+                  ),
+                ),
+        ),
+      );
+    }
+    return _iconTile();
+  }
+
+  Widget _iconTile() {
+    return Container(
+      width: 52,
+      height: 52,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: AppColors.primary.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Icon(document.kind.icon, size: 20, color: AppColors.primary),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: isOpening ? null : onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: AppColors.background,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.border),
+          ),
+          child: Row(
+            children: [
+              _thumbnail(),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      document.name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      [
+                        document.kind.label,
+                        _formatPlanDate(document.uploadedOn),
+                        if (document.sizeLabel.isNotEmpty) document.sizeLabel,
+                      ].join(' • '),
+                      style: TextStyle(fontSize: 11.5, color: AppColors.textSecondary),
+                    ),
+                    // Who put the file on the record. Blank for files the
+                    // patient uploaded themselves, which need no attribution.
+                    if (document.uploadedBy.isNotEmpty) ...[
+                      const SizedBox(height: 3),
+                      Row(
+                        children: [
+                          Icon(kDoctorIcon, size: 12, color: AppColors.textSecondary),
+                          const SizedBox(width: 5),
+                          Expanded(
+                            child: Text(
+                              document.uploadedBy,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(fontSize: 11.5, color: AppColors.textSecondary),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              if (isOpening)
+                SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primary),
+                )
+              else
+                Icon(
+                  document.isPreviewable
+                      ? CupertinoIcons.eye
+                      : CupertinoIcons.arrow_up_right_square,
+                  size: 18,
+                  color: AppColors.textSecondary,
+                ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

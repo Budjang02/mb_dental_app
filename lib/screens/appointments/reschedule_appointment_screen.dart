@@ -63,16 +63,23 @@ class _RescheduleAppointmentScreenState extends State<RescheduleAppointmentScree
     }
 
     setState(() => _isSubmitting = true);
-    await Future.delayed(const Duration(milliseconds: 300));
+
+    try {
+      await _repository.rescheduleAppointment(
+        widget.appointment.id,
+        date: _selectedDate!,
+        timeSlot: formatMinuteOfDay(_selectedStartMinute!),
+        notes: _notesController.text.trim().isEmpty ? null : _notesController.text.trim(),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isSubmitting = false);
+      showAppToast(context, 'We could not reschedule your appointment. Please try again.',
+          isError: true);
+      return;
+    }
+
     if (!mounted) return;
-
-    _repository.rescheduleAppointment(
-      widget.appointment.id,
-      date: _selectedDate!,
-      timeSlot: formatMinuteOfDay(_selectedStartMinute!),
-      notes: _notesController.text.trim().isEmpty ? null : _notesController.text.trim(),
-    );
-
     setState(() => _isSubmitting = false);
     showAppToast(context, 'Appointment rescheduled.');
     Navigator.pop(context);
@@ -107,8 +114,19 @@ class _RescheduleAppointmentScreenState extends State<RescheduleAppointmentScree
                         Text(widget.appointment.serviceName,
                             style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppColors.textPrimary)),
                         const SizedBox(height: 4),
-                        Text('with ${widget.appointment.doctorName}',
-                            style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                        Row(
+                          children: [
+                            Icon(kDoctorIcon, size: 13, color: AppColors.textSecondary),
+                            const SizedBox(width: 5),
+                            Expanded(
+                              child: Text(
+                                doctorLabel(widget.appointment.doctorName),
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                              ),
+                            ),
+                          ],
+                        ),
                         const SizedBox(height: 8),
                         Text(
                           'Currently: ${formatAppointmentDate(widget.appointment.date)} at ${widget.appointment.timeRangeLabel}',

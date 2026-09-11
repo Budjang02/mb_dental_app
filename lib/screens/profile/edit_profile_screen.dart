@@ -82,21 +82,29 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _isSaving = true);
-    await Future.delayed(const Duration(milliseconds: 500));
+
+    try {
+      await _repository.updatePatient(
+        firstName: _firstNameController.text.trim(),
+        lastName: _lastNameController.text.trim(),
+        phone: _phoneController.text.trim(),
+        gender: _gender,
+        dateOfBirth: _dateOfBirth,
+        bloodType: _bloodType,
+        address: _addressController.text.trim().isEmpty ? null : _addressController.text.trim(),
+        maritalStatus: _maritalStatus,
+        medicalHistory: _medicalHistoryController.text.trim().isEmpty
+            ? null
+            : _medicalHistoryController.text.trim(),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isSaving = false);
+      showAppToast(context, 'We could not save your profile. Please try again.', isError: true);
+      return;
+    }
+
     if (!mounted) return;
-
-    _repository.updatePatient(
-      firstName: _firstNameController.text.trim(),
-      lastName: _lastNameController.text.trim(),
-      phone: _phoneController.text.trim(),
-      gender: _gender,
-      dateOfBirth: _dateOfBirth,
-      bloodType: _bloodType,
-      address: _addressController.text.trim().isEmpty ? null : _addressController.text.trim(),
-      maritalStatus: _maritalStatus,
-      medicalHistory: _medicalHistoryController.text.trim().isEmpty ? null : _medicalHistoryController.text.trim(),
-    );
-
     setState(() => _isSaving = false);
     showAppToast(context, 'Profile updated.');
     Navigator.pop(context);

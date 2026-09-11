@@ -5,6 +5,7 @@ import 'package:mb_dental_app/app/messages.dart';
 import 'package:mb_dental_app/models/appointment.dart';
 import 'package:mb_dental_app/models/dental_service.dart';
 import 'package:mb_dental_app/repositories/patient_repository.dart';
+import 'package:mb_dental_app/widgets/app_toast.dart';
 import 'package:mb_dental_app/screens/appointments/reschedule_appointment_screen.dart';
 import 'package:mb_dental_app/widgets/app_dialog.dart';
 
@@ -80,7 +81,7 @@ void showAppointmentDetailSheet(BuildContext context, Appointment appointment) {
               ),
             ),
             const SizedBox(height: 20),
-            _detailRow(CupertinoIcons.person, 'Dentist', appointment.doctorName),
+            _detailRow(kDoctorIcon, 'Doctor', doctorLabel(appointment.doctorName)),
             const SizedBox(height: 14),
             _detailRow(CupertinoIcons.calendar, 'Date', formatAppointmentDate(appointment.date)),
             const SizedBox(height: 14),
@@ -362,18 +363,31 @@ void _confirmCancel(BuildContext sheetContext, Appointment appointment) {
                           minimumSize: const Size(0, 46),
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                         ),
-                        onPressed: () {
+                        onPressed: () async {
                           final detail = otherController.text.trim();
                           if (selectedReason == null || (needsDetail && detail.isEmpty)) {
                             setDialogState(() => showError = true);
                             return;
                           }
-                          PatientRepository().cancelAppointment(
-                            appointment.id,
-                            reason: needsDetail ? detail : selectedReason!,
-                          );
+                          final reason = needsDetail ? detail : selectedReason!;
+                          // Both the dialog and the sheet below it are about to
+                          // close, so a failure has to report through a context
+                          // that outlives them.
+                          final rootContext =
+                              Navigator.of(sheetContext, rootNavigator: true).context;
                           Navigator.pop(dialogContext);
                           Navigator.pop(sheetContext);
+                          try {
+                            await PatientRepository()
+                                .cancelAppointment(appointment.id, reason: reason);
+                          } catch (e) {
+                            if (!rootContext.mounted) return;
+                            showAppToast(
+                              rootContext,
+                              'We could not cancel your appointment. Please try again.',
+                              isError: true,
+                            );
+                          }
                         },
                         child: const Text('Cancel It', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                       ),

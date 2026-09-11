@@ -74,5 +74,18 @@
 		<true/>
 		<key>UIViewControllerBasedStatusBarAppearance</key>
 		<false/>
-	</dict>
+		<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>supabase-auth-callback</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>mbdental</string>
+			</array>
+		</dict>
+	</array>
+</dict>
 </plist>

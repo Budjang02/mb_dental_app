@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "688998194046",
+    "project_id": "mymobileapp-6499d",
+    "storage_bucket": "mymobileapp-6499d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:688998194046:android:e06bd2025a166e8e27712f",
+        "android_client_info": {
+          "package_name": "com.example.mb_dental_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyABWhJFNRZjMmXznIUuQwFHMI1AEBMgkg4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:688998194046:android:54c3b9b7473daf9427712f",
+        "android_client_info": {
+          "package_name": "com.example.mbdental"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyABWhJFNRZjMmXznIUuQwFHMI1AEBMgkg4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

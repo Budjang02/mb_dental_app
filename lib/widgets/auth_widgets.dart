@@ -225,9 +225,13 @@ void showLegalDocument(BuildContext context, String title) {
               ),
             ),
             const SizedBox(height: 16),
-            _contactLine(Icons.mail_outline, kClinicEmail),
-            const SizedBox(height: 8),
-            _contactLine(Icons.phone_outlined, kClinicPhone),
+            // Shown only where the clinic has published one. This sheet is
+            // reachable before sign-in, so those fields may still be blank.
+            if (kClinicEmail.isNotEmpty) ...[
+              _contactLine(Icons.mail_outline, kClinicEmail),
+              const SizedBox(height: 8),
+            ],
+            if (kClinicPhone.isNotEmpty) _contactLine(Icons.phone_outlined, kClinicPhone),
             const SizedBox(height: 24),
             SizedBox(
               width: double.infinity,

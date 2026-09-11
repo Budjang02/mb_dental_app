@@ -210,18 +210,26 @@ class _WalletScreenState extends State<WalletScreen> {
                 ElevatedButton(
                   onPressed: amount == null
                       ? null
-                      : () {
+                      : () async {
                           final credited = amount!;
                           final source = method;
                           Navigator.pop(dialogContext);
-                          _repository.addWalletTransaction(
-                            title: 'Wallet Top-up',
-                            subtitle: source,
-                            amount: credited,
-                            type: TransactionType.credit,
-                            icon: CupertinoIcons.creditcard,
-                            method: source,
-                          );
+                          try {
+                            await _repository.addWalletTransaction(
+                              title: 'Wallet Top-up',
+                              subtitle: source,
+                              amount: credited,
+                              type: TransactionType.credit,
+                              icon: CupertinoIcons.creditcard,
+                              method: source,
+                            );
+                          } catch (e) {
+                            if (!mounted) return;
+                            showAppToast(context, 'The top-up did not go through. Please try again.',
+                                isError: true);
+                            return;
+                          }
+                          if (!mounted) return;
                           showAppToast(context, '${formatPeso(credited)} added to your wallet.');
                         },
                   child: Text(amount == null ? 'Enter an amount' : 'Add ${formatPeso(amount!)}'),

@@ -2,7 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:mb_dental_app/app/theme.dart';
 import 'package:mb_dental_app/app/theme_controller.dart';
-import 'package:mb_dental_app/repositories/patient_repository.dart';
+import 'package:mb_dental_app/services/auth_service.dart';
 import 'package:mb_dental_app/widgets/app_toast.dart';
 
 class ChangePasswordScreen extends StatefulWidget {
@@ -17,7 +17,6 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
   final _currentController = TextEditingController();
   final _newController = TextEditingController();
   final _confirmController = TextEditingController();
-  final PatientRepository _repository = PatientRepository();
   bool _isSaving = false;
   bool _currentHidden = true;
   bool _newHidden = true;
@@ -35,7 +34,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _isSaving = true);
 
-    final success = await _repository.changePassword(
+    final result = await AuthService.changePassword(
       currentPassword: _currentController.text,
       newPassword: _newController.text,
     );
@@ -43,11 +42,12 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
     if (!mounted) return;
     setState(() => _isSaving = false);
 
-    if (success) {
+    if (result.success) {
       showAppToast(context, 'Password updated.');
       Navigator.pop(context);
     } else {
-      showAppToast(context, 'Could not update password. Try again.', isError: true);
+      showAppToast(context, result.message ?? 'Could not update password. Try again.',
+          isError: true);
     }
   }
 

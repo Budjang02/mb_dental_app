@@ -4,8 +4,9 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mb_dental_app/app/theme.dart';
+import 'package:mb_dental_app/repositories/clinic_api.dart';
+import 'package:mb_dental_app/services/auth_service.dart';
 import 'package:mb_dental_app/app/theme_controller.dart';
-import 'package:mb_dental_app/app/routes.dart';
 import 'package:mb_dental_app/data/clinic_catalog.dart';
 import 'package:mb_dental_app/repositories/patient_repository.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -84,9 +85,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                       textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
                     ),
-                    onPressed: () {
+                    onPressed: () async {
                       Navigator.pop(dialogContext);
-                      Navigator.pushNamedAndRemoveUntil(context, AppRoutes.login, (route) => false);
+                      // Clears the stored session so the next launch lands on
+                      // Login. The app-wide auth listener handles the actual
+                      // navigation once Supabase reports the sign-out.
+                      await AuthService.signOut();
                     },
                     child: const Text('Log out'),
                   ),
@@ -136,10 +140,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
       final picker = ImagePicker();
       final picked = await picker.pickImage(source: source, imageQuality: 80, maxWidth: 800);
       if (picked == null || !mounted) return;
-      _repository.updateAvatar(picked.path);
+      await _repository.updateAvatar(picked.path);
     } catch (e) {
       if (!mounted) return;
-      showAppToast(context, 'Could not set photo: $e', isError: true);
+      showAppToast(context, 'Could not save your photo. Please try again.', isError: true);
     }
   }
 
@@ -183,44 +187,52 @@ class _ProfileScreenState extends State<ProfileScreen> {
               style: TextStyle(fontSize: 12.5, color: AppColors.textSecondary),
             ),
             const SizedBox(height: 16),
-            _SupportRow(
-              icon: CupertinoIcons.phone,
-              label: 'Call the clinic',
-              value: kClinicPhone,
-              onTap: () {
-                Navigator.pop(dialogContext);
-                _launchSupport(
-                  Uri(scheme: 'tel', path: kClinicPhone.replaceAll(' ', '')),
-                  'No dialer is available on this device.',
-                );
-              },
-            ),
-            const SizedBox(height: 10),
-            _SupportRow(
-              icon: CupertinoIcons.mail,
-              label: 'Email us',
-              value: kClinicEmail,
-              onTap: () {
-                Navigator.pop(dialogContext);
-                _launchSupport(
-                  Uri(scheme: 'mailto', path: kClinicEmail),
-                  'No mail app is available on this device.',
-                );
-              },
-            ),
-            const SizedBox(height: 10),
-            _SupportRow(
-              icon: CupertinoIcons.map_pin_ellipse,
-              label: 'Visit us',
-              value: kClinicAddress,
-              onTap: () {
-                Navigator.pop(dialogContext);
-                _launchSupport(
-                  Uri.https('www.google.com', '/maps/search/', {'api': '1', 'query': kClinicAddress}),
-                  'No maps app is available on this device.',
-                );
-              },
-            ),
+            // Only what the clinic has actually published. A row with nothing
+            // behind it used to dial an empty string.
+            if (kClinicPhone.isNotEmpty) ...[
+              _SupportRow(
+                icon: CupertinoIcons.phone,
+                label: 'Call the clinic',
+                value: kClinicPhone,
+                onTap: () {
+                  Navigator.pop(dialogContext);
+                  _launchSupport(
+                    Uri(scheme: 'tel', path: kClinicPhone.replaceAll(RegExp(r'[^0-9+]'), '')),
+                    'No dialer is available on this device.',
+                  );
+                },
+              ),
+              const SizedBox(height: 10),
+            ],
+            if (kClinicEmail.isNotEmpty) ...[
+              _SupportRow(
+                icon: CupertinoIcons.mail,
+                label: 'Email us',
+                value: kClinicEmail,
+                onTap: () {
+                  Navigator.pop(dialogContext);
+                  _launchSupport(
+                    Uri(scheme: 'mailto', path: kClinicEmail),
+                    'No mail app is available on this device.',
+                  );
+                },
+              ),
+              const SizedBox(height: 10),
+            ],
+            if (kClinicAddress.isNotEmpty)
+              _SupportRow(
+                icon: CupertinoIcons.map_pin_ellipse,
+                label: 'Visit us',
+                value: kClinicAddress,
+                onTap: () {
+                  Navigator.pop(dialogContext);
+                  _launchSupport(
+                    Uri.https('www.google.com', '/maps/search/',
+                        {'api': '1', 'query': kClinicAddress}),
+                    'No maps app is available on this device.',
+                  );
+                },
+              ),
             const SizedBox(height: 14),
             Container(
               width: double.infinity,
@@ -235,7 +247,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      'Open $clinicOperatingDaysLabel · $clinicHoursLabel',
+                      // The clinic writes its own hours; the weekday grid is
+                      // only the fallback for when it has not.
+                      ClinicCatalog().clinic.hours.isNotEmpty
+                          ? ClinicCatalog().clinic.hours
+                          : 'Open $clinicOperatingDaysLabel · $clinicHoursLabel',
                       style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
                     ),
                   ),
@@ -344,7 +360,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: Listenable.merge([_repository, ThemeController()]),
+      // ClinicCatalog too: the Support row prints the clinic's own number, so
+      // the page has to repaint once that has loaded.
+      listenable: Listenable.merge([_repository, ClinicCatalog(), ThemeController()]),
       builder: (context, _) {
         final patient = _repository.patient;
         return Scaffold(

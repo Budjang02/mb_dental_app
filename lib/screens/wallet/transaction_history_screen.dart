@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:mb_dental_app/app/messages.dart';
 import 'package:mb_dental_app/app/theme.dart';
 import 'package:mb_dental_app/app/theme_controller.dart';
 import 'package:mb_dental_app/models/payment.dart';
@@ -180,10 +181,19 @@ class _BillingTab extends StatelessWidget {
                 children: [
                   Text(bill.procedureName,
                       style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textPrimary)),
-                  const SizedBox(height: 2),
-                  Text(
-                    '${bill.doctorName} • ${formatBillDate(bill.billedOn)}',
-                    style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                  const SizedBox(height: 3),
+                  Row(
+                    children: [
+                      Icon(kDoctorIcon, size: 12, color: AppColors.textSecondary),
+                      const SizedBox(width: 5),
+                      Expanded(
+                        child: Text(
+                          '${doctorLabel(bill.doctorName)} • ${formatBillDate(bill.billedOn)}',
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -245,7 +255,7 @@ void _showBillingDetailDialog(BuildContext context, Payment bill) {
           const SizedBox(height: 16),
           _kv('Date', formatBillDate(bill.billedOn)),
           _kv('Procedure', bill.procedureName),
-          _kv('Doctor', bill.doctorName),
+          _kv('Doctor', doctorLabel(bill.doctorName)),
           _kv('Amount', '₱${bill.amount.toStringAsFixed(2)}'),
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 8),

@@ -1,8 +1,10 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:mb_dental_app/app/messages.dart';
 import 'package:mb_dental_app/app/theme.dart';
 import 'package:mb_dental_app/app/theme_controller.dart';
 import 'package:mb_dental_app/widgets/app_dialog.dart';
+import '../../repositories/patient_repository.dart';
 import 'treatment_notes_data.dart';
 
 /// Full treatment history, reached from the clock control on the dental
@@ -13,7 +15,9 @@ class TreatmentNotesScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: ThemeController(),
+      // Listens to the repository too: the notes come from the patient's chart,
+      // so the page has to repaint when a refresh brings new entries in.
+      listenable: Listenable.merge([ThemeController(), PatientRepository()]),
       builder: (context, _) => Scaffold(
         backgroundColor: AppColors.background,
         appBar: AppBar(title: const Text('Treatment Notes')),
@@ -69,7 +73,7 @@ class TreatmentNotesScreen extends StatelessWidget {
             const SizedBox(height: 16),
             _kv('Tooth', note['tooth'] ?? ''),
             _kv('Condition', note['condition'] ?? ''),
-            _kv('Performed by', note['doctor'] ?? ''),
+            _kv('Doctor', doctorLabel(note['doctor'])),
             const SizedBox(height: 8),
             Text('Notes', style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
             const SizedBox(height: 4),
@@ -156,11 +160,12 @@ class _TreatmentNoteCard extends StatelessWidget {
                 const SizedBox(height: 10),
                 Row(
                   children: [
-                    Icon(CupertinoIcons.person, size: 13, color: AppColors.textSecondary),
+                    Icon(kDoctorIcon, size: 13, color: AppColors.textSecondary),
                     const SizedBox(width: 5),
                     Expanded(
                       child: Text(
-                        'Performed by ${note['doctor'] ?? 'the clinic'}',
+                        doctorLabel(note['doctor']),
+                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(fontSize: 11.5, color: AppColors.textSecondary),
                       ),
                     ),

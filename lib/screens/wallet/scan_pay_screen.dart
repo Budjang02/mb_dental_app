@@ -87,22 +87,30 @@ class _ScanPayScreenState extends State<ScanPayScreen> with SingleTickerProvider
                 Expanded(
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary),
-                    onPressed: () {
+                    onPressed: () async {
                       final repository = PatientRepository();
                       if (repository.walletBalance < _amount) {
                         Navigator.pop(sheetContext);
                         showAppToast(context, 'Insufficient wallet balance.', isError: true);
                         return;
                       }
-                      repository.addWalletTransaction(
-                        title: _merchant,
-                        subtitle: 'QR Payment',
-                        amount: _amount,
-                        type: TransactionType.debit,
-                        icon: CupertinoIcons.qrcode_viewfinder,
-                        method: 'Wallet',
-                      );
                       Navigator.pop(sheetContext);
+                      try {
+                        await repository.addWalletTransaction(
+                          title: _merchant,
+                          subtitle: 'QR Payment',
+                          amount: _amount,
+                          type: TransactionType.debit,
+                          icon: CupertinoIcons.qrcode_viewfinder,
+                          method: 'Wallet',
+                        );
+                      } catch (e) {
+                        if (!mounted) return;
+                        showAppToast(context, 'The payment did not go through. Please try again.',
+                            isError: true);
+                        return;
+                      }
+                      if (!mounted) return;
                       Navigator.pop(context);
                       showAppToast(context, 'Payment sent.');
                     },

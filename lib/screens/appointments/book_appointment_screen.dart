@@ -5,16 +5,18 @@ import '../../app/messages.dart';
 import '../../app/theme.dart';
 import '../../app/theme_controller.dart';
 import '../../data/clinic_catalog.dart';
-import '../../models/appointment.dart';
 import '../../models/dental_service.dart';
 import '../../models/dentist.dart';
 import '../../models/wallet_transaction.dart';
+import '../../repositories/clinic_api.dart';
 import '../../repositories/patient_repository.dart';
 import '../../widgets/app_toast.dart';
 import '../../widgets/schedule_picker.dart';
 
-/// Placeholder doctor value for bookings left to the clinic to staff.
-const String unassignedDoctor = 'To be assigned';
+/// Placeholder doctor value for bookings left to the clinic to staff. Aliases
+/// the app-wide constant so the booking summary and the appointment screens
+/// cannot drift apart on the wording.
+const String unassignedDoctor = kUnassignedDoctor;
 
 /// The three stages of the guided booking flow — one per node of the stepper
 /// pinned to the top of the screen.
@@ -124,11 +126,10 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
     setState(() => _step = BookingStep.values[_step.index + 1]);
   }
 
+  /// Steps back one stage. Only offered from Schedule onwards — on the first
+  /// stage there is nothing behind it, and the close button leaves instead.
   void _back() {
-    if (_step == BookingStep.services) {
-      Navigator.pop(context);
-      return;
-    }
+    if (_step == BookingStep.services) return;
     setState(() => _step = BookingStep.values[_step.index - 1]);
   }
 
@@ -197,38 +198,43 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
     }
 
     setState(() => _isSubmitting = true);
-    await Future.delayed(const Duration(milliseconds: 700));
-    if (!mounted) return;
 
     final timeSlot = formatMinuteOfDay(startMinute);
 
     final typed = _notesController.text.trim();
     final notes = typed.isEmpty ? null : typed;
 
-    _repository.addWalletTransaction(
-      title: 'Appointment Downpayment',
-      subtitle: _serviceSummary,
-      amount: _downPayment,
-      type: TransactionType.debit,
-      icon: CupertinoIcons.calendar_badge_plus,
-      method: 'GCash',
-    );
+    try {
+      await _repository.addWalletTransaction(
+        title: 'Appointment Downpayment',
+        subtitle: _serviceSummary,
+        amount: _downPayment,
+        type: TransactionType.debit,
+        icon: CupertinoIcons.calendar_badge_plus,
+        method: 'GCash',
+      );
 
-    // The settled downpayment secures the slot, so the booking arrives
-    // confirmed rather than waiting on the clinic.
-    _repository.addAppointment(
-      serviceName: _serviceSummary,
-      doctorName: _assignedDentist?.name ?? unassignedDoctor,
-      date: date,
-      timeSlot: timeSlot,
-      notes: notes,
-      paymentMethod: 'GCash',
-      status: AppointmentStatus.confirmed,
-      serviceIds: _selectedServices.map((s) => s.id).toList(),
-      durationMinutes: _totalDuration,
-      totalPrice: _totalPrice,
-      amountPaid: _downPayment,
-    );
+      // The booking arrives pending whatever the patient paid: only the clinic
+      // may confirm a slot, so the app never asks for a confirmed one.
+      await _repository.addAppointment(
+        serviceName: _serviceSummary,
+        doctorName: _assignedDentist?.name ?? unassignedDoctor,
+        date: date,
+        timeSlot: timeSlot,
+        notes: notes,
+        paymentMethod: 'GCash',
+        serviceIds: _selectedServices.map((s) => s.id).toList(),
+        durationMinutes: _totalDuration,
+        totalPrice: _totalPrice,
+        amountPaid: _downPayment,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isSubmitting = false);
+      showAppToast(context, 'We could not complete your booking. Please try again.',
+          isError: true);
+      return;
+    }
 
     if (!mounted) return;
     setState(() => _isSubmitting = false);
@@ -250,9 +256,13 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
         backgroundColor: AppColors.background,
         appBar: AppBar(
           title: const Text('Book Appointment'),
+          // Closes the whole flow. Stepping back between stages is the job of
+          // the Back button beside the CTA, so this one is unambiguous: it
+          // leaves booking rather than rewinding it.
           leading: IconButton(
-            icon: const Icon(CupertinoIcons.chevron_back),
-            onPressed: _isSubmitting ? null : _back,
+            tooltip: 'Close',
+            icon: const Icon(CupertinoIcons.xmark),
+            onPressed: _isSubmitting ? null : () => Navigator.pop(context),
           ),
         ),
         body: Column(
@@ -334,42 +344,81 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
   static const double _actionButtonHeight = 44;
 
   Widget _buildFloatingCta() {
-    final label = _step == BookingStep.summary ? 'PAY' : 'CONTINUE';
+    final isSummary = _step == BookingStep.summary;
+    final label = isSummary ? 'PAY' : 'CONTINUE';
+    // Nothing to go back to on the first stage, so Back only appears from the
+    // Schedule stage onwards.
+    final showBack = _step != BookingStep.services;
+
+    final primary = SizedBox(
+      height: _actionButtonHeight,
+      child: ElevatedButton(
+        onPressed: _isSubmitting ? null : _next,
+        style: ElevatedButton.styleFrom(
+          minimumSize: const Size(0, _actionButtonHeight),
+          // A floating button needs its own lift: there is no bar behind it
+          // separating it from whatever it happens to be sitting over.
+          elevation: 6,
+          shadowColor: AppColors.primary.withOpacity(0.45),
+        ),
+        child: _isSubmitting
+            ? const SizedBox(
+                height: 20,
+                width: 20,
+                child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+              )
+            : Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 0.9,
+                ),
+              ),
+      ),
+    );
 
     return Padding(
       // Clears the screen edges on the sides; the FAB location handles the
       // bottom inset for us.
       padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: SizedBox(
-        width: double.infinity,
-        height: _actionButtonHeight,
-        child: ElevatedButton(
-          onPressed: _isSubmitting ? null : _next,
-          style: ElevatedButton.styleFrom(
-            minimumSize: const Size(0, _actionButtonHeight),
-            // A floating button needs its own lift: there is no bar behind it
-            // separating it from whatever it happens to be sitting over.
-            elevation: 6,
-            shadowColor: AppColors.primary.withOpacity(0.45),
-          ),
-          child: _isSubmitting
-              ? const SizedBox(
-                  height: 20,
-                  width: 20,
-                  child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
-                )
-              : Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 0.9,
+      child: showBack
+          ? Row(
+              children: [
+                // Filled surface, not transparent: this floats over the page,
+                // and an outline alone would let the content show through it.
+                SizedBox(
+                  height: _actionButtonHeight,
+                  child: ElevatedButton(
+                    onPressed: _isSubmitting ? null : _back,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.surface,
+                      foregroundColor: AppColors.textPrimary,
+                      minimumSize: const Size(0, _actionButtonHeight),
+                      padding: const EdgeInsets.symmetric(horizontal: 18),
+                      elevation: 6,
+                      shadowColor: Colors.black.withOpacity(0.25),
+                      side: BorderSide(color: AppColors.border),
+                    ),
+                    child: const Text(
+                      'BACK',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 0.9,
+                      ),
+                    ),
                   ),
                 ),
-        ),
-      ),
+                const SizedBox(width: 12),
+                // The primary action keeps the remaining width, so Back never
+                // grows to rival it.
+                Expanded(child: primary),
+              ],
+            )
+          : SizedBox(width: double.infinity, child: primary),
     );
   }
 }
@@ -534,17 +583,6 @@ class _SelectedServiceCard extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Container(
-            height: 40,
-            width: 40,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: AppColors.primary.withOpacity(0.12),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(service.icon, size: 19, color: AppColors.primary),
-          ),
-          const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -561,7 +599,7 @@ class _SelectedServiceCard extends StatelessWidget {
                 Row(
                   children: [
                     Text(
-                      formatPeso(service.price),
+                      service.priceLabel,
                       style: TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.bold,
@@ -709,9 +747,59 @@ class _ServicePickerSheet extends StatefulWidget {
 }
 
 class _ServicePickerSheetState extends State<_ServicePickerSheet> {
+  final TextEditingController _searchController = TextEditingController();
+
+  /// Which groups are open. Empty to begin with: seven headings on one screen
+  /// is a far easier thing to scan than every procedure the clinic offers.
+  final Set<String> _expanded = {};
+
+  String _query = '';
+
+  @override
+  void initState() {
+    super.initState();
+    // The menu is normally already in memory from sign-in; this covers a
+    // failed or not-yet-finished load without making the sheet wait on it.
+    ClinicCatalog().load();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  bool get _isSearching => _query.trim().isNotEmpty;
+
+  /// Matches on the procedure name and its description, so "whitening" and
+  /// "enamel" both find the same row.
+  bool _matches(DentalService service) {
+    if (!_isSearching) return true;
+    final needle = _query.trim().toLowerCase();
+    return service.name.toLowerCase().contains(needle) ||
+        service.description.toLowerCase().contains(needle);
+  }
+
+  /// The menu with the search applied, groups that match nothing dropped.
+  Map<ServiceGroup, List<DentalService>> get _visibleGroups {
+    final result = <ServiceGroup, List<DentalService>>{};
+    servicesByCategory.forEach((group, services) {
+      final matching = services.where(_matches).toList();
+      if (matching.isNotEmpty) result[group] = matching;
+    });
+    return result;
+  }
+
   @override
   Widget build(BuildContext context) {
-    final grouped = servicesByCategory;
+    return ListenableBuilder(
+      listenable: ClinicCatalog(),
+      builder: (context, _) => _buildSheet(context),
+    );
+  }
+
+  Widget _buildSheet(BuildContext context) {
+    final catalog = ClinicCatalog();
 
     return DraggableScrollableSheet(
       initialChildSize: 0.85,
@@ -730,27 +818,15 @@ class _ServicePickerSheetState extends State<_ServicePickerSheet> {
               title: 'Dental Procedures',
               subtitle: '${widget.selected.length} selected',
             ),
-            Expanded(
-              child: ListView(
-                controller: scrollController,
-                padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
-                children: [
-                  for (final category in ServiceCategory.values) ...[
-                    _categoryHeader(category, grouped[category]!.length),
-                    const SizedBox(height: 10),
-                    for (final service in grouped[category]!) ...[
-                      _ServiceTile(
-                        service: service,
-                        isSelected: widget.selected.contains(service),
-                        onTap: () => setState(() => widget.onToggle(service)),
-                      ),
-                      const SizedBox(height: 8),
-                    ],
-                    const SizedBox(height: 16),
-                  ],
-                ],
-              ),
-            ),
+            if (catalog.hasLoaded) _buildSearchField(),
+            if (!catalog.hasLoaded && catalog.isLoading)
+              Expanded(
+                child: Center(child: CircularProgressIndicator(color: AppColors.primary)),
+              )
+            else if (!catalog.hasLoaded)
+              Expanded(child: _buildUnavailable(catalog))
+            else
+              Expanded(child: _buildGroupList(scrollController)),
             _SheetFooter(
               label: 'DONE',
               onPressed: () => Navigator.pop(context),
@@ -761,51 +837,241 @@ class _ServicePickerSheetState extends State<_ServicePickerSheet> {
     );
   }
 
-  Widget _categoryHeader(ServiceCategory category, int count) {
-    return Row(
-      children: [
-        Container(
-          padding: const EdgeInsets.all(7),
-          decoration: BoxDecoration(
-            color: AppColors.primary.withOpacity(0.12),
+  Widget _buildSearchField() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+      child: TextField(
+        controller: _searchController,
+        textInputAction: TextInputAction.search,
+        style: TextStyle(fontSize: 14, color: AppColors.textPrimary),
+        onChanged: (value) => setState(() => _query = value),
+        decoration: InputDecoration(
+          isDense: true,
+          hintText: 'Search procedures',
+          hintStyle: TextStyle(fontSize: 14, color: AppColors.textSecondary),
+          prefixIcon: Icon(CupertinoIcons.search, size: 18, color: AppColors.textSecondary),
+          suffixIcon: _isSearching
+              ? IconButton(
+                  icon: Icon(CupertinoIcons.clear_circled_solid,
+                      size: 18, color: AppColors.textSecondary),
+                  onPressed: () {
+                    _searchController.clear();
+                    setState(() => _query = '');
+                  },
+                )
+              : null,
+          filled: true,
+          fillColor: AppColors.surface,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: AppColors.border),
           ),
-          child: Icon(category.icon, size: 16, color: AppColors.primary),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                category.label,
-                style: TextStyle(
-                  fontSize: 14.5,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.textPrimary,
-                ),
-              ),
-              Text(
-                category.blurb,
-                style: TextStyle(fontSize: 11.5, color: AppColors.textSecondary),
-              ),
-            ],
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: AppColors.border),
           ),
         ),
-        Text(
-          '$count',
-          style: TextStyle(
-            fontSize: 11.5,
-            fontWeight: FontWeight.w600,
-            color: AppColors.textSecondary,
+      ),
+    );
+  }
+
+  Widget _buildUnavailable(ClinicCatalog catalog) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              catalog.loadError ?? 'The service menu is not available right now.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 14, color: AppColors.textSecondary),
+            ),
+            const SizedBox(height: 20),
+            TextButton(
+              onPressed: () => catalog.load(force: true),
+              child: const Text('Try Again'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGroupList(ScrollController scrollController) {
+    final groups = _visibleGroups;
+
+    if (groups.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Text(
+            'No procedure matches that search.',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 13.5, color: AppColors.textSecondary),
           ),
         ),
+      );
+    }
+
+    return ListView(
+      controller: scrollController,
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+      children: [
+        for (final entry in groups.entries) ...[
+          _CategorySection(
+            group: entry.key,
+            services: entry.value,
+            selected: widget.selected,
+            // A search is already a filter, so its results open on their own —
+            // making the patient expand each group to see what matched would
+            // defeat the search.
+            isExpanded: _isSearching || _expanded.contains(entry.key.code),
+            canCollapse: !_isSearching,
+            onToggleExpanded: () => setState(() {
+              if (!_expanded.remove(entry.key.code)) _expanded.add(entry.key.code);
+            }),
+            onToggleService: (service) => setState(() => widget.onToggle(service)),
+          ),
+          const SizedBox(height: 10),
+        ],
       ],
     );
   }
 }
 
-/// The grab handle and title block every booking sheet opens with.
+/// One collapsible group: a tappable heading, and the procedures under it.
+class _CategorySection extends StatelessWidget {
+  final ServiceGroup group;
+  final List<DentalService> services;
+  final Set<DentalService> selected;
+  final bool isExpanded;
+  final bool canCollapse;
+  final VoidCallback onToggleExpanded;
+  final ValueChanged<DentalService> onToggleService;
+
+  const _CategorySection({
+    required this.group,
+    required this.services,
+    required this.selected,
+    required this.isExpanded,
+    required this.canCollapse,
+    required this.onToggleExpanded,
+    required this.onToggleService,
+  });
+
+  int get _selectedCount => services.where(selected.contains).length;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: _selectedCount > 0 ? AppColors.primary : AppColors.border,
+          width: _selectedCount > 0 ? 1.5 : 1,
+        ),
+      ),
+      child: Column(
+        children: [
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(14),
+              onTap: canCollapse ? onToggleExpanded : null,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 13, 12, 13),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            group.label,
+                            style: TextStyle(
+                              fontSize: 14.5,
+                              fontWeight: FontWeight.bold,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                          if (group.blurb.isNotEmpty) ...[
+                            const SizedBox(height: 2),
+                            Text(
+                              group.blurb,
+                              style: TextStyle(fontSize: 11.5, color: AppColors.textSecondary),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    // How many are picked in here, so a collapsed group still
+                    // shows it is contributing to the booking.
+                    if (_selectedCount > 0)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: AppColors.primary,
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                          '$_selectedCount',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
+                        ),
+                      )
+                    else
+                      Text(
+                        '${services.length}',
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    if (canCollapse) ...[
+                      const SizedBox(width: 6),
+                      Icon(
+                        isExpanded
+                            ? CupertinoIcons.chevron_up
+                            : CupertinoIcons.chevron_down,
+                        size: 16,
+                        color: AppColors.textSecondary,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ),
+          if (isExpanded)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+              child: Column(
+                children: [
+                  for (final service in services) ...[
+                    _ServiceTile(
+                      service: service,
+                      isSelected: selected.contains(service),
+                      onTap: () => onToggleService(service),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class _SheetHandle extends StatelessWidget {
   final String title;
   final String subtitle;
@@ -931,8 +1197,6 @@ class _ServiceTile extends StatelessWidget {
           ),
           child: Row(
             children: [
-              Icon(service.icon, size: 19, color: AppColors.primary),
-              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -961,7 +1225,7 @@ class _ServiceTile extends StatelessWidget {
                         ),
                         const SizedBox(width: 10),
                         Text(
-                          formatPeso(service.price),
+                          service.priceLabel,
                           style: TextStyle(
                             fontSize: 11.5,
                             fontWeight: FontWeight.bold,
@@ -1140,7 +1404,7 @@ class _PaymentStep extends StatelessWidget {
     );
   }
 
-  /// Who the clinic assigned, against what the patient still owes for it.
+  /// Which doctor the clinic assigned, against what the patient still owes.
   Widget _providerRow() {
     final assigned = dentist;
 
@@ -1156,7 +1420,7 @@ class _PaymentStep extends StatelessWidget {
             color: AppColors.primary.withOpacity(0.12),
           ),
           child: assigned == null
-              ? Icon(CupertinoIcons.person, size: 19, color: AppColors.primary)
+              ? Icon(kDoctorIcon, size: 19, color: AppColors.primary)
               : Text(
                   assigned.initials,
                   style: TextStyle(
@@ -1171,13 +1435,22 @@ class _PaymentStep extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                assigned?.name ?? unassignedDoctor,
-                style: TextStyle(
-                  fontSize: 13.5,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.textPrimary,
-                ),
+              Row(
+                children: [
+                  Icon(kDoctorIcon, size: 12, color: AppColors.textSecondary),
+                  const SizedBox(width: 5),
+                  Expanded(
+                    child: Text(
+                      doctorLabel(assigned?.name),
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                  ),
+                ],
               ),
               const SizedBox(height: 5),
               if (assigned != null)

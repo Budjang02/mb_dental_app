@@ -1,47 +1,32 @@
-import 'package:flutter/cupertino.dart';
+import '../app/messages.dart';
 
-/// The four service groups the booking wizard lists procedures under.
-enum ServiceCategory { preventive, restorative, orthodontics, esthetic }
+/// One heading the booking wizard groups procedures under.
+///
+/// These are the clinic's own specializations, loaded from the `specializations`
+/// table rather than fixed in the app — the clinic adds or retires a service
+/// line without a new build.
+class ServiceGroup {
+  /// The code procedures point at (`general`, `ortho`, `surgery`, …).
+  final String code;
 
-extension ServiceCategoryX on ServiceCategory {
-  String get label {
-    switch (this) {
-      case ServiceCategory.preventive:
-        return 'Preventive';
-      case ServiceCategory.restorative:
-        return 'Restorative';
-      case ServiceCategory.orthodontics:
-        return 'Orthodontics';
-      case ServiceCategory.esthetic:
-        return 'Esthetic';
-    }
-  }
+  final String label;
+  final String blurb;
 
-  String get blurb {
-    switch (this) {
-      case ServiceCategory.preventive:
-        return 'Routine care that keeps problems from starting.';
-      case ServiceCategory.restorative:
-        return 'Repair and rebuild damaged or missing teeth.';
-      case ServiceCategory.orthodontics:
-        return 'Straighten teeth and correct the bite.';
-      case ServiceCategory.esthetic:
-        return 'Improve the look of your smile.';
-    }
-  }
+  /// Where the clinic wants this group to sit in the list.
+  final int sortOrder;
 
-  IconData get icon {
-    switch (this) {
-      case ServiceCategory.preventive:
-        return CupertinoIcons.shield_lefthalf_fill;
-      case ServiceCategory.restorative:
-        return CupertinoIcons.wrench;
-      case ServiceCategory.orthodontics:
-        return CupertinoIcons.wand_rays;
-      case ServiceCategory.esthetic:
-        return CupertinoIcons.sparkles;
-    }
-  }
+  const ServiceGroup({
+    required this.code,
+    required this.label,
+    required this.blurb,
+    required this.sortOrder,
+  });
+
+  @override
+  bool operator ==(Object other) => other is ServiceGroup && other.code == code;
+
+  @override
+  int get hashCode => code.hashCode;
 }
 
 /// A bookable procedure. [durationMinutes] is what the wizard sums to size the
@@ -51,7 +36,15 @@ class DentalService {
   final String id;
   final String name;
   final String description;
-  final ServiceCategory category;
+
+  /// The clinic's own specialization code (`ortho`, `surgery`, …). Not what
+  /// the wizard groups by — it is what the dentist roster matches credentials
+  /// against, via [requiredSpecialization].
+  final String specializationCode;
+
+  /// The patient-facing group this is listed under. See
+  /// `data/service_categories.dart`.
+  final String categoryId;
 
   /// Chair time in minutes. Always a multiple of the 15-minute booking grid.
   final int durationMinutes;
@@ -62,18 +55,35 @@ class DentalService {
   /// Orthodontist for braces.
   final String requiredSpecialization;
 
-  final IconData icon;
+  /// How the clinic prices it: `Per tooth`, `Per arch`, `Flat`, and so on.
+  /// Blank when the clinic has not said, and shown next to the amount so a
+  /// per-tooth price is never read as the whole bill.
+  final String priceUnit;
 
   const DentalService({
     required this.id,
     required this.name,
     required this.description,
-    required this.category,
+    required this.specializationCode,
+    required this.categoryId,
     required this.durationMinutes,
     required this.price,
     required this.requiredSpecialization,
-    required this.icon,
+    this.priceUnit = '',
   });
+
+  /// What to print where the price goes.
+  ///
+  /// Much of the clinic's menu is quoted at the chair rather than priced up
+  /// front, and a lot of the rest is priced per tooth or per arch. Printing a
+  /// bare peso figure for either would read as the price of the whole visit,
+  /// so the unit travels with the amount and an unpriced procedure says so.
+  String get priceLabel {
+    if (price <= 0) return 'Quoted at clinic';
+    final amount = formatPeso(price);
+    if (priceUnit.isEmpty || priceUnit.toLowerCase() == 'flat') return amount;
+    return '$amount · ${priceUnit.toLowerCase()}';
+  }
 
   /// "1 hr 30 min" / "45 min" — used wherever a duration is shown to patients.
   String get durationLabel => formatDuration(durationMinutes);

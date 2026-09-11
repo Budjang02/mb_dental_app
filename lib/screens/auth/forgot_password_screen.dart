@@ -3,6 +3,9 @@ import 'package:flutter/material.dart';
 
 import '../../app/theme.dart';
 import '../../app/theme_controller.dart';
+import '../../services/auth_service.dart';
+import '../../widgets/app_overlays.dart';
+import '../../widgets/app_toast.dart';
 import '../../widgets/auth_widgets.dart';
 import 'create_new_password_screen.dart';
 
@@ -29,20 +32,36 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     super.dispose();
   }
 
+  bool _isSending = false;
+
   Future<void> _next() async {
     if (!_formKey.currentState!.validate()) return;
     FocusScope.of(context).unfocus();
 
-    final reset = await Navigator.push<bool>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => CreateNewPasswordScreen(email: _emailController.text.trim()),
-      ),
-    );
+    setState(() => _isSending = true);
+    final result = await AuthService.sendPasswordReset(_emailController.text.trim());
+    if (!mounted) return;
+    setState(() => _isSending = false);
 
-    // The new password took, so recovery is over — hand the patient back to
-    // Sign In rather than leaving this screen on the stack behind them.
-    if (reset == true && mounted) Navigator.pop(context);
+    if (!result.success) {
+      showAppToast(context, result.message ?? 'Could not send the email.', isError: true);
+      return;
+    }
+
+    // Deliberately the same message whether or not the address is registered:
+    // telling the patient "no such account" would let anyone probe this screen
+    // to find out which emails the clinic holds.
+    await showSuccessOverlay(
+      context,
+      message: 'If that email belongs to an account, a reset link is on its '
+          'way. Open the link on this device to choose a new password.',
+    );
+    if (!mounted) return;
+
+    // Recovery continues in the emailed link, not here — hand the patient back
+    // to Sign In. [CreateNewPasswordScreen] opens by itself once the link
+    // returns to the app with a recovery session.
+    Navigator.pop(context);
   }
 
   @override
@@ -93,7 +112,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                   const SizedBox(height: 8),
                   Text(
                     'Enter the email address registered to your account and we '
-                    'will help you set a new password.',
+                    'will send you a link to set a new password.',
                     style: TextStyle(
                       fontSize: 14,
                       height: 1.45,
@@ -130,11 +149,20 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                           borderRadius: BorderRadius.circular(12),
                         ),
                       ),
-                      onPressed: _next,
-                      child: const Text(
-                        'Next',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                      ),
+                      onPressed: _isSending ? null : _next,
+                      child: _isSending
+                          ? const SizedBox(
+                              height: 20,
+                              width: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                              ),
+                            )
+                          : const Text(
+                              'Send Reset Link',
+                              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                            ),
                     ),
                   ),
                 ],

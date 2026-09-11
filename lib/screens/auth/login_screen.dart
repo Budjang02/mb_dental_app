@@ -8,6 +8,7 @@ import 'package:mb_dental_app/app/theme.dart';
 import 'package:mb_dental_app/app/theme_controller.dart';
 import 'package:mb_dental_app/screens/auth/forgot_password_screen.dart';
 import 'package:mb_dental_app/screens/auth/register_screen.dart';
+import 'package:mb_dental_app/services/auth_service.dart';
 import 'package:mb_dental_app/widgets/app_toast.dart';
 import 'package:mb_dental_app/widgets/auth_widgets.dart';
 
@@ -42,23 +43,22 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  // Trial/demo mode: skips validation and goes straight to the dashboard.
-  // TODO: replace with a real auth call (e.g. POST /auth/login with
-  // _emailController.text / _passwordController.text) once the backend
-  // is ready, and only navigate on a successful response.
-  Future<bool> _authenticateWithBackend() async {
-    await Future.delayed(const Duration(milliseconds: 800));
-    return true;
-  }
-
   void _handleLogin() async {
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+
     setState(() => _isLoading = true);
-    final success = await _authenticateWithBackend();
+    final result = await AuthService.signIn(
+      email: _emailController.text,
+      password: _passwordController.text,
+    );
     if (!mounted) return;
     setState(() => _isLoading = false);
-    if (success) {
-      Navigator.pushReplacementNamed(context, AppRoutes.dashboard);
+
+    if (!result.success) {
+      showAppToast(context, result.message ?? 'Sign in failed.', isError: true);
+      return;
     }
+    Navigator.pushReplacementNamed(context, AppRoutes.dashboard);
   }
 
   void _openForgotPassword() {
@@ -129,6 +129,14 @@ class _LoginScreenState extends State<LoginScreen> {
                         TextFormField(
                           controller: _emailController,
                           keyboardType: TextInputType.emailAddress,
+                          validator: (value) {
+                            final email = value?.trim() ?? '';
+                            if (email.isEmpty) return 'Enter your email address.';
+                            if (!email.contains('@') || !email.contains('.')) {
+                              return 'Enter a valid email address.';
+                            }
+                            return null;
+                          },
                           decoration: InputDecoration(
                             labelText: 'Email Address',
                             prefixIcon: Icon(
@@ -152,6 +160,8 @@ class _LoginScreenState extends State<LoginScreen> {
                         TextFormField(
                           controller: _passwordController,
                           obscureText: !_isPasswordVisible,
+                          validator: (value) =>
+                              (value == null || value.isEmpty) ? 'Enter your password.' : null,
                           decoration: InputDecoration(
                             labelText: 'Password',
                             prefixIcon: Icon(

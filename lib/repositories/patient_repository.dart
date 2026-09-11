@@ -1,3 +1,7 @@
+import 'dart:async';
+import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:flutter/cupertino.dart';
 import 'package:mb_dental_app/models/patient.dart';
 import 'package:mb_dental_app/models/appointment.dart';
@@ -5,241 +9,209 @@ import 'package:mb_dental_app/models/treatment.dart';
 import 'package:mb_dental_app/models/payment.dart';
 import 'package:mb_dental_app/models/notification.dart';
 import 'package:mb_dental_app/models/patient_document.dart';
+import 'package:mb_dental_app/models/patient_message.dart';
 import 'package:mb_dental_app/models/wallet_transaction.dart';
-import 'package:mb_dental_app/app/messages.dart';
 import 'package:mb_dental_app/data/clinic_catalog.dart';
+import 'package:mb_dental_app/repositories/patient_api.dart';
 import 'package:mb_dental_app/services/push_notification_service.dart';
+import 'package:mb_dental_app/services/supabase_service.dart';
 
-/// In-memory mock data layer, shared across every screen for this session.
+/// The signed-in patient's record, held in memory and backed by Supabase.
 ///
-/// This is the single seam where a real backend/API integration will slot in
-/// later: every method here keeps the same signature it would need against a
-/// real service, it just resolves from memory instead of a network call.
+/// Screens read it synchronously through the getters below and rebuild on
+/// [notifyListeners], so nothing here returns a future to the widget tree.
+/// [load] refills everything from the server; mutations write through to
+/// Supabase first and only then update the local copy, so the screens never
+/// show a change the database rejected.
 class PatientRepository extends ChangeNotifier {
   static final PatientRepository _instance = PatientRepository._internal();
   factory PatientRepository() => _instance;
 
-  PatientRepository._internal() {
-    _seed();
+  PatientRepository._internal();
+
+  Patient? _patient;
+  List<Appointment> _appointments = const [];
+  List<Treatment> _treatments = const [];
+  List<TreatmentPlanItem> _treatmentPlan = const [];
+  List<Payment> _billing = const [];
+  List<NotificationItem> _notifications = const [];
+  List<WalletTransaction> _transactions = const [];
+  List<PatientDocument> _documents = const [];
+  List<Map<String, String>> _toothRecords = const [];
+  List<PatientMessage> _messages = const [];
+
+  /// Signed preview links, keyed by document id. Fetched in one batch after a
+  /// load so the file list can show thumbnails without a request per row.
+  Map<String, String> _documentUrls = const {};
+  double _walletBalance = 0;
+
+  bool _isLoading = false;
+  String? _loadError;
+  Future<void>? _inFlight;
+
+  /// Alert ids already shown to this patient in this session. A refresh that
+  /// brings the same rows back must not re-raise banners for them.
+  final Set<String> _announcedNotificationIds = {};
+
+  // --- Load state ---
+
+  /// True while the first load is still running, so screens can show a spinner
+  /// instead of an empty chart the patient might mistake for a real one.
+  bool get isLoading => _isLoading;
+
+  /// Why the last load failed, or null. Set when the account has no linked
+  /// patient record as well as on network failures.
+  String? get loadError => _loadError;
+
+  bool get hasLoaded => _patient != null;
+
+  /// Pulls the whole record from Supabase. Concurrent calls share one request,
+  /// so several screens appearing at once do not each hit the network.
+  Future<void> load({bool force = false}) {
+    if (_inFlight != null && !force) return _inFlight!;
+    final request = _load();
+    _inFlight = request;
+    return request.whenComplete(() => _inFlight = null);
   }
 
-  late Patient _patient;
-  late List<Appointment> _appointments;
-  late List<Treatment> _treatments;
-  late List<TreatmentPlanItem> _treatmentPlan;
-  late List<Payment> _billing;
-  late List<NotificationItem> _notifications;
-  late List<WalletTransaction> _transactions;
-  late List<PatientDocument> _documents;
-  final List<_ScheduledReminder> _reminders = [];
-  double _walletBalance = 1500.0;
-  int _appointmentSeq = 4;
-  int _transactionSeq = 4;
-  int _notificationSeq = 4;
-  int _patientSeq = 101;
-  int _documentSeq = 3;
+  Future<void> _load() async {
+    _isLoading = true;
+    _loadError = null;
+    notifyListeners();
 
-  void _seed() {
-    _patient = Patient(
-      id: 'p-101',
-      patientCode: 'PAT-2026-0089',
-      firstName: 'John Wilson',
-      lastName: 'Salvador',
-      username: 'jwsalvador',
-      email: 'salvadorjohnwilson55@gmail.com',
-      phone: '+63 992 299 0844',
-      gender: 'Male',
-      dateOfBirth: DateTime(2002, 5, 14),
-    );
+    // Read before anything is assigned: nothing announced yet means this is
+    // the patient's first load of the session.
+    final isFirstLoad = _announcedNotificationIds.isEmpty;
 
-    _appointments = [
-      Appointment(
-        id: 'app-01',
-        serviceName: 'Oral Prophylaxis (Cleaning)',
-        doctorName: 'Dr. Rey Vincent Bolasoc',
-        date: DateTime(2026, 8, 28),
-        timeSlot: '10:00 AM',
-        status: AppointmentStatus.confirmed,
-        notes: 'Regular checkup and cleaning.',
-        serviceIds: const ['svc-prophylaxis'],
-        durationMinutes: 45,
-        totalPrice: 1000,
-        amountPaid: 200,
-      ),
-      Appointment(
-        id: 'app-02',
-        serviceName: 'Tooth Filling (Composite)',
-        doctorName: 'Dr. Jenneline Mariano',
-        date: DateTime(2026, 9, 12),
-        timeSlot: '01:30 PM',
-        status: AppointmentStatus.pending,
-        serviceIds: const ['svc-filling'],
-        durationMinutes: 45,
-        totalPrice: 2000,
-      ),
-      Appointment(
-        id: 'app-03',
-        serviceName: 'Dental Checkup',
-        doctorName: 'Dr. John Paul Mariano',
-        date: DateTime(2026, 5, 10),
-        timeSlot: '11:00 AM',
-        status: AppointmentStatus.completed,
-        serviceIds: const ['svc-checkup'],
-        durationMinutes: 30,
-        totalPrice: 500,
-        amountPaid: 500,
-      ),
-    ];
+    try {
+      final snapshot = await PatientApi.loadAll();
+      _announceNew(snapshot.notifications, isFirstLoad: isFirstLoad);
+      _patient = snapshot.patient;
+      _appointments = snapshot.appointments;
+      _treatments = snapshot.treatments;
+      _treatmentPlan = snapshot.treatmentPlan;
+      _billing = snapshot.billing;
+      _notifications = snapshot.notifications;
+      _transactions = snapshot.transactions;
+      _documents = snapshot.documents;
+      _toothRecords = snapshot.toothRecords;
+      _messages = snapshot.messages;
+      _walletBalance = snapshot.walletBalance;
+      // Deliberately after the record is in place: thumbnails are a nicety and
+      // must never hold up the rest of the chart, nor fail the load.
+      unawaited(_refreshDocumentUrls());
+    } on NoPatientRecordException catch (e) {
+      _loadError = e.message;
+    } catch (e) {
+      _loadError = 'We could not load your records. Check your connection and try again.';
+      debugPrint('PatientRepository.load failed: $e');
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
 
-    _treatments = [
-      Treatment(
-        id: 'treat-01',
-        procedure: 'Tooth #17 Composite Filling',
-        doctorName: 'Dr. Rey Vincent Bolasoc',
-        date: DateTime(2026, 1, 15),
-        notes: 'Restoration complete. Patient advised regarding oral hygiene.',
-      ),
-      Treatment(
-        id: 'treat-02',
-        procedure: 'Full Prophylaxis',
-        doctorName: 'Dr. Jenneline Mariano',
-        date: DateTime(2025, 12, 10),
-        notes: 'Routine cleaning performed without complications.',
-      ),
-    ];
+  /// Raises a banner for alerts that have arrived since the last read.
+  ///
+  /// Skipped on the very first load: a patient opening the app is not "sent"
+  /// every unread alert they already had, they just see the badge.
+  void _announceNew(List<NotificationItem> incoming, {required bool isFirstLoad}) {
+    for (final item in incoming) {
+      if (!_announcedNotificationIds.add(item.id)) continue;
+      if (isFirstLoad || item.isRead) continue;
+      PushNotificationService().deliver(
+        item,
+        channel: PatientApi.notificationChannels[item.id] ?? PushChannel.statusUpdate,
+      );
+    }
+  }
 
-    _treatmentPlan = [];
+  /// Re-reads just the alerts, so a banner can appear without pulling the whole
+  /// record down again.
+  Future<void> refreshNotifications() async {
+    final userId = SupabaseService.currentUserId;
+    if (userId == null || _patient == null) return;
+    final incoming = await PatientApi.fetchNotifications(userId);
+    _announceNew(incoming, isFirstLoad: false);
+    _notifications = incoming;
+    notifyListeners();
+  }
 
-    _billing = [
-      Payment(
-        id: 'bill-01',
-        referenceNo: 'REC-2026-8801',
-        invoiceNo: 'INV-2026-0114',
-        receiptNo: 'RCPT-2026-0114',
-        procedureName: 'Tooth Filling',
-        doctorName: 'Dr. Rey Vincent Bolasoc',
-        amount: 2000.0,
-        billedOn: DateTime(2026, 1, 15),
-        status: 'Paid',
-        paymentMethod: 'GCash',
-      ),
-      Payment(
-        id: 'bill-02',
-        referenceNo: 'REC-2026-9042',
-        invoiceNo: 'INV-2026-0228',
-        procedureName: 'Oral Prophylaxis',
-        doctorName: 'Dr. Rey Vincent Bolasoc',
-        amount: 1000.0,
-        billedOn: DateTime(2026, 8, 28),
-        status: 'Unpaid',
-      ),
-      Payment(
-        id: 'bill-03',
-        referenceNo: 'REC-2025-7714',
-        invoiceNo: 'INV-2025-0912',
-        receiptNo: 'RCPT-2025-0912',
-        procedureName: 'Dental X-Ray',
-        doctorName: 'Dr. Jenneline Mariano',
-        amount: 500.0,
-        billedOn: DateTime(2025, 12, 10),
-        status: 'Paid',
-        paymentMethod: 'Wallet',
-      ),
-    ];
+  /// Drops everything held for the previous account. Called on sign-out so the
+  /// next patient to use the device never sees the last one's chart.
+  void clear() {
+    _patient = null;
+    _appointments = const [];
+    _treatments = const [];
+    _treatmentPlan = const [];
+    _billing = const [];
+    _notifications = const [];
+    _transactions = const [];
+    _documents = const [];
+    _toothRecords = const [];
+    _messages = const [];
+    _documentUrls = const {};
+    _walletBalance = 0;
+    _announcedNotificationIds.clear();
+    _loadError = null;
+    _isLoading = false;
+    notifyListeners();
+  }
 
-    _notifications = [
-      NotificationItem(
-        id: 'notif-01',
-        title: 'Appointment Confirmed',
-        body: 'Your Oral Prophylaxis on Aug 28, 2026 at 10:00 AM is confirmed.',
-        createdAt: DateTime(2026, 8, 23, 9, 0),
-        relatedAppointmentId: 'app-01',
-      ),
-      NotificationItem(
-        id: 'notif-02',
-        title: 'Payment Received',
-        body: 'We received your payment of ₱800.00 for Dental Cleaning.',
-        createdAt: DateTime(2026, 8, 20, 10, 20),
-        relatedTransactionId: 'txn-01',
-      ),
-      NotificationItem(
-        id: 'notif-03',
-        title: 'Reminder',
-        body: 'Your next visit is coming up in 5 days. See you soon!',
-        createdAt: DateTime(2026, 8, 18, 8, 0),
-        isRead: true,
-        relatedAppointmentId: 'app-01',
-      ),
-    ];
+  /// Installs a record directly, bypassing Supabase, so the slot and booking
+  /// rules can be tested without a live session.
+  @visibleForTesting
+  void seedForTest({
+    required Patient patient,
+    List<Appointment> appointments = const [],
+    List<WalletTransaction> transactions = const [],
+    double walletBalance = 0,
+  }) {
+    _patient = patient;
+    _appointments = List.of(appointments);
+    _treatments = const [];
+    _treatmentPlan = const [];
+    _billing = const [];
+    _notifications = const [];
+    _transactions = List.of(transactions);
+    _documents = const [];
+    _toothRecords = const [];
+    _messages = const [];
+    _documentUrls = const {};
+    _walletBalance = walletBalance;
+    _isLoading = false;
+    _loadError = null;
+    notifyListeners();
+  }
 
-    _transactions = [
-      WalletTransaction(
-        id: 'txn-01',
-        title: 'Dental Cleaning',
-        subtitle: 'Payment',
-        amount: 800.0,
-        type: TransactionType.debit,
-        icon: CupertinoIcons.sparkles,
-        dateTime: DateTime(2026, 8, 23, 10, 15),
-        referenceNo: 'PAY-2026-0231',
-        method: 'Wallet',
-      ),
-      WalletTransaction(
-        id: 'txn-02',
-        title: 'Wallet Top-up',
-        subtitle: 'GCash',
-        amount: 2000.0,
-        type: TransactionType.credit,
-        icon: CupertinoIcons.creditcard,
-        dateTime: DateTime(2026, 8, 22, 15, 20),
-        referenceNo: 'TOPUP-2026-0198',
-        method: 'GCash',
-      ),
-      WalletTransaction(
-        id: 'txn-03',
-        title: 'Dental X-Ray',
-        subtitle: 'Payment',
-        amount: 500.0,
-        type: TransactionType.debit,
-        icon: CupertinoIcons.bandage,
-        dateTime: DateTime(2026, 8, 18, 11, 5),
-        referenceNo: 'PAY-2026-0187',
-        method: 'Wallet',
-      ),
-    ];
-
-    // Files the patient uploaded from another device. Booking's "select from
-    // your uploaded files" flow reads this list; new uploads append to it.
-    final today = DateTime.now();
-    _documents = [
-      PatientDocument(
-        id: 'doc-01',
-        name: 'Amoxicillin prescription.pdf',
-        kind: DocumentKind.prescription,
-        uploadedOn: today.subtract(const Duration(days: 12)),
-      ),
-      PatientDocument(
-        id: 'doc-02',
-        name: 'Panoramic X-ray (outside clinic).jpg',
-        kind: DocumentKind.xray,
-        uploadedOn: today.subtract(const Duration(days: 40)),
-      ),
-    ];
-
-    _autoCompletePastAppointments();
+  /// Adds a booking to the in-memory schedule only. Test-only counterpart to
+  /// [addAppointment], which always writes through to Supabase.
+  @visibleForTesting
+  void addAppointmentForTest(Appointment appointment) {
+    _appointments = [..._appointments, appointment];
+    notifyListeners();
   }
 
   // --- Reads ---
 
-  Patient get patient => _patient;
+  /// Empty placeholder until [load] completes, so screens that build before the
+  /// first frame of data can read `.firstName` without a null check.
+  static final Patient _empty = Patient(
+    id: '',
+    patientCode: '',
+    firstName: '',
+    lastName: '',
+    username: '',
+    email: '',
+    phone: '',
+  );
 
-  List<Appointment> get appointments {
-    _autoCompletePastAppointments();
-    return List.unmodifiable(_appointments);
-  }
+  Patient get patient => _patient ?? _empty;
+
+  List<Appointment> get appointments => List.unmodifiable(_appointments);
 
   Appointment? get nextUpcomingAppointment {
-    final upcoming = appointments
+    final upcoming = _appointments
         .where((a) =>
             a.status == AppointmentStatus.pending || a.status == AppointmentStatus.confirmed)
         .toList()
@@ -250,31 +222,25 @@ class PatientRepository extends ChangeNotifier {
   List<Treatment> get treatments => List.unmodifiable(_treatments);
 
   /// The procedures the clinic has planned but not yet carried out.
-  /// Drawn up chairside and pushed to the patient, so it is empty until
-  /// a dentist actually proposes something.
   List<TreatmentPlanItem> get treatmentPlan => List.unmodifiable(_treatmentPlan);
 
   List<Payment> get billing => List.unmodifiable(_billing);
 
+  /// Newest first. `List.sort` is not stable, so insertion order breaks ties
+  /// explicitly — two alerts raised in the same millisecond (a payment and the
+  /// booking it paid for) must not swap places between reads.
   List<NotificationItem> get notifications {
-    _materializeDueReminders();
-    // Newest first. `List.sort` is not stable, so insertion order breaks ties
-    // explicitly — two alerts raised in the same millisecond (a payment and
-    // the booking it paid for) must not swap places between reads.
     final indexed = List<(int, NotificationItem)>.generate(
       _notifications.length,
       (i) => (i, _notifications[i]),
     )..sort((a, b) {
         final byTime = b.$2.createdAt.compareTo(a.$2.createdAt);
-        return byTime != 0 ? byTime : b.$1.compareTo(a.$1);
+        return byTime != 0 ? byTime : a.$1.compareTo(b.$1);
       });
     return List.unmodifiable(indexed.map((e) => e.$2));
   }
 
-  int get unreadNotificationCount {
-    _materializeDueReminders();
-    return _notifications.where((n) => !n.isRead).length;
-  }
+  int get unreadNotificationCount => _notifications.where((n) => !n.isRead).length;
 
   double get walletBalance => _walletBalance;
 
@@ -292,24 +258,41 @@ class PatientRepository extends ChangeNotifier {
     return List.unmodifiable(sorted);
   }
 
-  // --- Mutations ---
+  /// The clinic's per-tooth chart entries, newest first — what the odontogram
+  /// colours each tooth from and what the Treatment Notes page lists.
+  List<Map<String, String>> get toothRecords => List.unmodifiable(_toothRecords);
 
-  /// Any pending/confirmed appointment whose date has passed is automatically
-  /// marked completed — patients cannot mark an appointment complete themselves.
-  void _autoCompletePastAppointments() {
-    final today = DateTime.now();
-    final startOfToday = DateTime(today.year, today.month, today.day);
-    bool changed = false;
-    _appointments = _appointments.map((a) {
-      final isOpen = a.status == AppointmentStatus.pending || a.status == AppointmentStatus.confirmed;
-      if (isOpen && a.date.isBefore(startOfToday)) {
-        changed = true;
-        return a.copyWith(status: AppointmentStatus.completed);
-      }
-      return a;
-    }).toList();
-    if (changed) notifyListeners();
+  /// The support conversation with the clinic, oldest first.
+  List<PatientMessage> get messages => List.unmodifiable(_messages);
+
+  /// Messages from the clinic the patient has not opened yet — what the chat
+  /// bubble badges.
+  int get unreadMessageCount =>
+      _messages.where((m) => !m.fromPatient && !m.isRead).length;
+
+  /// A cached signed link for [document], or null when one is not ready. Used
+  /// for the thumbnail in the file list; the viewer signs on demand when this
+  /// is missing.
+  String? previewUrlFor(PatientDocument document) => _documentUrls[document.id];
+
+  Future<void> _refreshDocumentUrls() async {
+    if (_documents.isEmpty) {
+      _documentUrls = const {};
+      return;
+    }
+    final urls = await PatientApi.signedUrlsForDocuments(_documents);
+    _documentUrls = urls;
+    notifyListeners();
   }
+
+  /// The bytes of a file, for rendering a PDF inside the app.
+  Future<Uint8List?> documentBytes(PatientDocument document) =>
+      PatientApi.downloadDocument(document);
+
+  /// A temporary link to open or download [document]. Patient files are private
+  /// in storage, so this has to be fetched per view rather than stored.
+  Future<String?> documentUrl(PatientDocument document) =>
+      PatientApi.signedUrlForDocument(document);
 
   // --- Slot availability ---
 
@@ -318,6 +301,10 @@ class PatientRepository extends ChangeNotifier {
   /// block would run past closing, or when it overlaps a booking that still
   /// holds its slot. [excludeAppointmentId] lets a reschedule ignore the
   /// booking it is moving.
+  ///
+  /// Checked against this patient's own bookings only — their chart is all RLS
+  /// lets the app see. The clinic confirms against the full diary, which is why
+  /// a new booking lands as pending rather than confirmed.
   bool isSlotAvailable({
     required DateTime day,
     required int startMinute,
@@ -395,9 +382,14 @@ class PatientRepository extends ChangeNotifier {
   static bool _isSameDay(DateTime a, DateTime b) =>
       a.year == b.year && a.month == b.month && a.day == b.day;
 
-  /// [status] defaults to pending — the clinic confirms manually. Bookings
-  /// paid with a 20% down payment come in already confirmed.
-  Appointment addAppointment({
+  // --- Mutations ---
+
+  /// Books a visit. [status] defaults to pending — the clinic confirms bookings
+  /// itself, and nothing the app sends can grant a confirmed slot.
+  ///
+  /// Reloads afterwards rather than guessing the stored row, because the
+  /// clinic's own triggers decide the reference numbers and any alert raised.
+  Future<Appointment?> addAppointment({
     required String serviceName,
     required String doctorName,
     required DateTime date,
@@ -409,136 +401,96 @@ class PatientRepository extends ChangeNotifier {
     int durationMinutes = 60,
     double totalPrice = 0,
     double amountPaid = 0,
-  }) {
-    final appointment = Appointment(
-      id: 'app-${(_appointmentSeq++).toString().padLeft(2, '0')}',
-      serviceName: serviceName,
-      doctorName: doctorName,
+  }) async {
+    final patientId = _patient?.id;
+    if (patientId == null || patientId.isEmpty) return null;
+
+    final id = await PatientApi.createAppointment(
+      patientId: patientId,
       date: date,
       timeSlot: timeSlot,
-      status: status,
+      procedureIds: serviceIds,
       notes: notes,
       paymentMethod: paymentMethod,
-      serviceIds: serviceIds,
-      durationMinutes: durationMinutes,
-      totalPrice: totalPrice,
-      amountPaid: amountPaid,
     );
-    _appointments = [..._appointments, appointment];
 
-    if (status == AppointmentStatus.confirmed) {
-      _raise(
-        title: 'Appointment Confirmed',
-        body: 'Your $serviceName on ${_dateLabel(date)} at $timeSlot is confirmed. '
-            'The ${formatPeso(amountPaid)} down payment has been received.',
-        channel: PushChannel.statusUpdate,
-        appointmentId: appointment.id,
-      );
-    } else {
-      _raise(
-        title: 'Booking Request Received',
-        body: 'Your $serviceName on ${_dateLabel(date)} at $timeSlot is pending approval. '
-            'We will confirm it shortly.',
-        channel: PushChannel.statusUpdate,
-        appointmentId: appointment.id,
-      );
+    await load(force: true);
+    for (final appointment in _appointments) {
+      if (appointment.id == id) return appointment;
     }
-
-    _scheduleRemindersFor(appointment);
-    notifyListeners();
-    return appointment;
+    return null;
   }
 
-  void cancelAppointment(String id, {required String reason}) {
-    Appointment? cancelled;
-    _appointments = _appointments.map((a) {
-      if (a.id != id) return a;
-      cancelled = a.copyWith(status: AppointmentStatus.cancelled, cancellationReason: reason);
-      return cancelled!;
-    }).toList();
-
-    _clearRemindersFor(id);
-    final item = cancelled;
-    if (item != null) {
-      _raise(
-        title: 'Appointment Cancelled',
-        body: 'Your ${item.serviceName} on ${_dateLabel(item.date)} has been cancelled.',
-        channel: PushChannel.statusUpdate,
-        appointmentId: id,
-      );
-    }
+  Future<void> cancelAppointment(String id, {required String reason}) async {
+    await PatientApi.cancelAppointment(id, reason: reason);
+    _appointments = _appointments
+        .map((a) => a.id == id
+            ? a.copyWith(status: AppointmentStatus.cancelled, cancellationReason: reason)
+            : a)
+        .toList();
     notifyListeners();
   }
 
   /// Moves an existing appointment to a new date/time in place (does not
   /// create a new appointment) and resets it to pending re-confirmation.
-  void rescheduleAppointment(String id, {required DateTime date, required String timeSlot, String? notes}) {
-    Appointment? moved;
-    _appointments = _appointments.map((a) {
-      if (a.id != id) return a;
-      moved = a.copyWith(
-        date: date,
-        timeSlot: timeSlot,
-        status: AppointmentStatus.pending,
-        notes: notes,
-      );
-      return moved!;
-    }).toList();
-
-    _clearRemindersFor(id);
-    final item = moved;
-    if (item != null) {
-      _scheduleRemindersFor(item);
-      _raise(
-        title: 'Appointment Rescheduled',
-        body: 'Your ${item.serviceName} has moved to ${_dateLabel(date)} at $timeSlot, '
-            'pending clinic approval.',
-        channel: PushChannel.statusUpdate,
-        appointmentId: id,
-      );
-    }
+  Future<void> rescheduleAppointment(
+    String id, {
+    required DateTime date,
+    required String timeSlot,
+    String? notes,
+  }) async {
+    await PatientApi.rescheduleAppointment(id, date: date, timeSlot: timeSlot, notes: notes);
+    _appointments = _appointments
+        .map((a) => a.id == id
+            ? a.copyWith(
+                date: date,
+                timeSlot: timeSlot,
+                status: AppointmentStatus.pending,
+                notes: notes,
+              )
+            : a)
+        .toList();
     notifyListeners();
   }
 
-  WalletTransaction addWalletTransaction({
+  Future<WalletTransaction?> addWalletTransaction({
     required String title,
     required String subtitle,
     required double amount,
     required TransactionType type,
     required IconData icon,
     required String method,
-  }) {
-    final txn = WalletTransaction(
-      id: 'txn-${(_transactionSeq++).toString().padLeft(2, '0')}',
-      title: title,
-      subtitle: subtitle,
+  }) async {
+    final patientId = _patient?.id;
+    if (patientId == null || patientId.isEmpty) return null;
+
+    await PatientApi.addWalletTransaction(
+      patientId: patientId,
       amount: amount,
       type: type,
-      icon: icon,
-      dateTime: DateTime.now(),
-      referenceNo: 'REF-${DateTime.now().millisecondsSinceEpoch % 1000000}',
       method: method,
-    );
-    _transactions = [..._transactions, txn];
-    if (type == TransactionType.credit) {
-      _walletBalance += amount;
-    } else {
-      _walletBalance -= amount;
-    }
-
-    _raise(
-      title: type == TransactionType.credit ? 'Wallet Top-up Successful' : 'Receipt Generated',
-      body: type == TransactionType.credit
-          ? '${formatPeso(amount)} was added to your wallet via $method. '
-              'New balance: ${formatPeso(_walletBalance)}.'
-          : '${AppMessages.paymentProcessed} ${formatPeso(amount)} paid for $title — '
-              'receipt ${txn.referenceNo} is in your transaction history.',
-      channel: PushChannel.payment,
-      transactionId: txn.id,
+      description: title,
     );
 
+    // The ledger is the balance, so re-reading it is what keeps the two in step.
+    await load(force: true);
+    return _transactions.isEmpty ? null : _transactions.first;
+  }
+
+  Future<void> markAllNotificationsRead() async {
+    if (unreadNotificationCount == 0) return;
+    final userId = SupabaseService.currentUserId;
+    if (userId == null) return;
+
+    await PatientApi.markAllNotificationsRead(userId);
+    _notifications = _notifications.map((n) => n.isRead ? n : _copyRead(n)).toList();
     notifyListeners();
-    return txn;
+  }
+
+  Future<void> markNotificationRead(String id) async {
+    await PatientApi.markNotificationRead(id);
+    _notifications = _notifications.map((n) => n.id == id ? _copyRead(n) : n).toList();
+    notifyListeners();
   }
 
   NotificationItem _copyRead(NotificationItem n) => NotificationItem(
@@ -551,18 +503,7 @@ class PatientRepository extends ChangeNotifier {
         relatedTransactionId: n.relatedTransactionId,
       );
 
-  void markAllNotificationsRead() {
-    if (unreadNotificationCount == 0) return;
-    _notifications = _notifications.map((n) => n.isRead ? n : _copyRead(n)).toList();
-    notifyListeners();
-  }
-
-  void markNotificationRead(String id) {
-    _notifications = _notifications.map((n) => n.id == id ? _copyRead(n) : n).toList();
-    notifyListeners();
-  }
-
-  void updatePatient({
+  Future<void> updatePatient({
     String? firstName,
     String? lastName,
     String? username,
@@ -573,8 +514,27 @@ class PatientRepository extends ChangeNotifier {
     String? address,
     String? maritalStatus,
     String? medicalHistory,
-  }) {
-    _patient = _patient.copyWith(
+  }) async {
+    final patientId = _patient?.id;
+    final userId = SupabaseService.currentUserId;
+    if (patientId == null || userId == null) return;
+
+    await PatientApi.updatePatient(
+      patientId: patientId,
+      userId: userId,
+      firstName: firstName,
+      lastName: lastName,
+      username: username,
+      phone: phone,
+      gender: gender,
+      dateOfBirth: dateOfBirth,
+      bloodType: bloodType,
+      address: address,
+      maritalStatus: maritalStatus,
+      medicalHistory: medicalHistory,
+    );
+
+    _patient = patient.copyWith(
       firstName: firstName,
       lastName: lastName,
       username: username,
@@ -589,189 +549,90 @@ class PatientRepository extends ChangeNotifier {
     notifyListeners();
   }
 
-  void updateAvatar(String path) {
-    _patient = _patient.copyWith(avatarPath: path);
+  /// Shows the picked image immediately, then replaces it with the stored URL
+  /// once the upload lands. Showing the local file first keeps the profile
+  /// responsive on a slow connection; the upload is what makes the photo
+  /// survive a reinstall or appear on another device.
+  Future<void> updateAvatar(String path) async {
+    _patient = patient.copyWith(avatarPath: path);
+    notifyListeners();
+
+    final userId = SupabaseService.currentUserId;
+    if (userId == null) return;
+
+    try {
+      final url = await PatientApi.uploadAvatar(userId: userId, file: File(path));
+      _patient = patient.copyWith(avatarPath: url);
+      notifyListeners();
+    } catch (e) {
+      // The local preview stays; the next load falls back to the stored photo.
+      debugPrint('Avatar upload failed: $e');
+      rethrow;
+    }
+  }
+
+  /// Re-reads just the conversation. The chat screen calls this on open and
+  /// after sending, rather than reloading the patient's whole record.
+  Future<void> refreshMessages() async {
+    final patientId = _patient?.id;
+    if (patientId == null || patientId.isEmpty) return;
+    _messages = await PatientApi.fetchMessages(patientId);
     notifyListeners();
   }
 
-  /// Files a real backend to store the file; here it just records it against
-  /// the patient so the booking wizard can offer it straight away.
-  PatientDocument addDocument({
-    required String name,
-    required DocumentKind kind,
-    String? path,
-  }) {
-    final document = PatientDocument(
-      id: 'doc-${(_documentSeq++).toString().padLeft(2, '0')}',
-      name: name,
-      kind: kind,
-      uploadedOn: DateTime.now(),
-      path: path,
+  Future<PatientMessage?> sendMessage(String body) async {
+    final patientId = _patient?.id;
+    if (patientId == null || patientId.isEmpty) return null;
+    if (body.trim().isEmpty) return null;
+
+    final message = await PatientApi.sendMessage(patientId: patientId, body: body);
+    _messages = [..._messages, message];
+    notifyListeners();
+    return message;
+  }
+
+  /// Marks the clinic's messages as seen. Failures are swallowed: not clearing
+  /// a badge is not worth an error in front of the patient.
+  Future<void> markMessagesRead() async {
+    final patientId = _patient?.id;
+    if (patientId == null || patientId.isEmpty) return;
+    if (unreadMessageCount == 0) return;
+
+    try {
+      await PatientApi.markMessagesRead(patientId);
+      final now = DateTime.now();
+      _messages = _messages
+          .map((m) => m.fromPatient || m.isRead
+              ? m
+              : PatientMessage(
+                  id: m.id,
+                  body: m.body,
+                  fromPatient: m.fromPatient,
+                  sentAt: m.sentAt,
+                  readAt: now,
+                ))
+          .toList();
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Could not mark messages read: $e');
+    }
+  }
+
+  /// Stores a file the patient picked against their chart, so the clinic and
+  /// the booking flow can both see it.
+  Future<PatientDocument?> addDocument({required String path, required String name}) async {
+    final patientId = _patient?.id;
+    if (patientId == null || patientId.isEmpty) return null;
+
+    final document = await PatientApi.uploadDocument(
+      patientId: patientId,
+      file: File(path),
+      fileName: name,
     );
     _documents = [..._documents, document];
     notifyListeners();
     return document;
   }
-
-  /// Mock only — swap for a real backend call when auth/account APIs exist.
-  Future<bool> changePassword({required String currentPassword, required String newPassword}) async {
-    await Future.delayed(const Duration(milliseconds: 600));
-    return true;
-  }
-
-  // --- Notifications & reminders ---
-
-  /// Records an alert in the notification centre and hands it to the push
-  /// service for real-time delivery. Muted channels still land in the centre,
-  /// so nothing is silently lost — only the banner is suppressed.
-  NotificationItem _raise({
-    required String title,
-    required String body,
-    required PushChannel channel,
-    String? appointmentId,
-    String? transactionId,
-    DateTime? createdAt,
-  }) {
-    final item = NotificationItem(
-      id: 'notif-${(_notificationSeq++).toString().padLeft(2, '0')}',
-      title: title,
-      body: body,
-      createdAt: createdAt ?? DateTime.now(),
-      relatedAppointmentId: appointmentId,
-      relatedTransactionId: transactionId,
-    );
-    _notifications = [..._notifications, item];
-    PushNotificationService().deliver(item, channel: channel);
-    return item;
-  }
-
-  /// Countdown alerts for a booking: one five days out and one two hours out.
-  /// A lead time that has already passed is skipped rather than firing late.
-  void _scheduleRemindersFor(Appointment appointment) {
-    if (appointment.status == AppointmentStatus.cancelled) return;
-    final startsAt = appointment.startsAt;
-    final now = DateTime.now();
-
-    void schedule(Duration lead, String label) {
-      final fireAt = startsAt.subtract(lead);
-      if (!fireAt.isAfter(now)) return;
-      _reminders.add(_ScheduledReminder(
-        appointmentId: appointment.id,
-        fireAt: fireAt,
-        title: 'Appointment Reminder',
-        body: 'Your ${appointment.serviceName} with ${appointment.doctorName} is $label — '
-            '${_dateLabel(appointment.date)} at ${appointment.timeSlot}.',
-      ));
-    }
-
-    schedule(const Duration(days: 5), 'in 5 days');
-    schedule(const Duration(hours: 2), 'in 2 hours');
-  }
-
-  void _clearRemindersFor(String appointmentId) {
-    _reminders.removeWhere((r) => r.appointmentId == appointmentId);
-  }
-
-  /// Fires any scheduled reminder whose time has come. Called on every read of
-  /// the notification list, which is how this mock scheduler stands in for a
-  /// server-side job without a background isolate.
-  void _materializeDueReminders() {
-    if (_reminders.isEmpty) return;
-    final now = DateTime.now();
-    final due = _reminders.where((r) => !r.fireAt.isAfter(now)).toList();
-    if (due.isEmpty) return;
-    _reminders.removeWhere((r) => !r.fireAt.isAfter(now));
-
-    for (final reminder in due) {
-      _raise(
-        title: reminder.title,
-        body: reminder.body,
-        channel: PushChannel.reminder,
-        appointmentId: reminder.appointmentId,
-        createdAt: reminder.fireAt,
-      );
-    }
-  }
-
-  static const List<String> _monthNames = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-  ];
-
-  static String _dateLabel(DateTime date) =>
-      '${_monthNames[date.month - 1]} ${date.day}, ${date.year}';
-
-  // --- Account ---
-
-  /// Streamlined sign-up: name, email and phone only. Everything else stays
-  /// null until the patient completes their profile or checks in at the
-  /// clinic. Mock only — a real backend call replaces the body, not the shape.
-  Future<Patient> registerPatient({
-    required String fullName,
-    required String email,
-    required String phone,
-  }) async {
-    await Future.delayed(const Duration(milliseconds: 600));
-
-    final parts = fullName.trim().split(RegExp(r'\s+'));
-    final firstName = parts.isEmpty ? fullName.trim() : parts.first;
-    final lastName = parts.length > 1 ? parts.sublist(1).join(' ') : '';
-    final year = DateTime.now().year;
-
-    _patientSeq++;
-    _patient = Patient(
-      id: 'p-$_patientSeq',
-      patientCode: 'PAT-$year-${_patientSeq.toString().padLeft(4, '0')}',
-      firstName: firstName,
-      lastName: lastName,
-      username: email.split('@').first,
-      email: email.trim(),
-      phone: phone.trim(),
-    );
-
-    // A brand-new account starts on a clean slate rather than inheriting the
-    // seeded demo history, so the app never shows another patient's records.
-    _appointments = [];
-    _treatments = [];
-    _treatmentPlan = [];
-    _billing = [];
-    _transactions = [];
-    _notifications = [];
-    _documents = [];
-    _reminders.clear();
-    _walletBalance = 0;
-
-    _raise(
-      title: 'Welcome to $kClinicName',
-      body: 'Your account is ready. Complete your profile to speed up your first visit.',
-      channel: PushChannel.statusUpdate,
-    );
-
-    notifyListeners();
-    return _patient;
-  }
-
-  // --- Legacy-named getters kept for call-site compatibility ---
-  Patient getMockPatient() => patient;
-  List<Appointment> getMockAppointments() => appointments;
-  List<Treatment> getMockTreatments() => treatments;
-  List<Payment> getMockBilling() => billing;
-}
-
-/// One pending countdown alert. Held in memory only: a real build hands these
-/// to the platform scheduler (or the clinic's push backend) instead.
-class _ScheduledReminder {
-  final String appointmentId;
-  final DateTime fireAt;
-  final String title;
-  final String body;
-
-  _ScheduledReminder({
-    required this.appointmentId,
-    required this.fireAt,
-    required this.title,
-    required this.body,
-  });
 }
 
 /// A 15-minute start time offered by the schedule step, and whether the block

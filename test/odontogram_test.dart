@@ -154,6 +154,84 @@ void main() {
     });
   });
 
+  group('tooth numbers', () {
+    // Worst case for a two-digit number: the painter places by the larger of
+    // the text's width and height, and "32" is wider than it is tall. Using the
+    // bare font size here would understate it and let a clipped number pass.
+    double extentFor(DentalArchLayout layout) => layout.numberFontSize * 2.0;
+
+    test('every number sits outside its own crown', () {
+      for (final width in _widths) {
+        final layout = DentalArchLayout.build(_canvasFor(width));
+        for (final n in [...kUpperArchTeeth, ...kLowerArchTeeth]) {
+          final placement = layout.placements[n]!;
+          final number = layout.numberCenterFor(n, extentFor(layout));
+          expect(
+            (number - placement.center).distance,
+            greaterThan(placement.height / 2),
+            reason: 'the number for #\$n overlaps its crown at \${width}px',
+          );
+        }
+      }
+    });
+
+    test('every number stays on the canvas', () {
+      for (final width in _widths) {
+        final size = _canvasFor(width);
+        final layout = DentalArchLayout.build(size);
+        for (final n in [...kUpperArchTeeth, ...kLowerArchTeeth]) {
+          final extent = extentFor(layout);
+          final number = layout.numberCenterFor(n, extent);
+          expect(number.dx - extent / 2, greaterThanOrEqualTo(0), reason: '#\$n left');
+          expect(number.dx + extent / 2, lessThanOrEqualTo(size.width), reason: '#\$n right');
+          expect(number.dy - extent / 2, greaterThanOrEqualTo(0), reason: '#\$n top');
+          expect(number.dy + extent / 2, lessThanOrEqualTo(size.height), reason: '#\$n bottom');
+        }
+      }
+    });
+
+    test('numbers sit away from the mouth, never inside the horseshoe', () {
+      final size = _canvasFor(360);
+      final layout = DentalArchLayout.build(size);
+      // The empty middle of the chart. A number drawn toward it would land
+      // inside the arch rather than outside, which is what the reference and
+      // the clinic's own charts avoid.
+      final mouthCentre = Offset(size.width / 2, size.height / 2);
+      for (final n in [...kUpperArchTeeth, ...kLowerArchTeeth]) {
+        final placement = layout.placements[n]!;
+        final number = layout.numberCenterFor(n, extentFor(layout));
+        expect(
+          (number - mouthCentre).distance,
+          greaterThan((placement.center - mouthCentre).distance),
+          reason: 'the number for #\$n sits inside the arch',
+        );
+      }
+    });
+
+    test('the outward direction is a unit vector', () {
+      final layout = DentalArchLayout.build(_canvasFor(360));
+      for (final n in [...kUpperArchTeeth, ...kLowerArchTeeth]) {
+        expect(layout.placements[n]!.outward.distance, closeTo(1.0, 0.0001), reason: '#\$n');
+      }
+    });
+
+    test('neighbouring numbers do not land on top of each other', () {
+      final layout = DentalArchLayout.build(_canvasFor(360));
+      final extent = extentFor(layout);
+      for (final arch in [kUpperArchTeeth, kLowerArchTeeth]) {
+        for (var i = 0; i + 1 < arch.length; i++) {
+          final a = layout.numberCenterFor(arch[i], extent);
+          final b = layout.numberCenterFor(arch[i + 1], extent);
+          expect(
+            (a - b).distance,
+            greaterThan(extent * 0.9),
+            reason: '#\${arch[i]} and #\${arch[i + 1]} numbers overlap',
+          );
+        }
+      }
+    });
+  });
+
   group('hit testing', () {
     test('every tooth answers a tap on its own crown', () {
       for (final width in _widths) {

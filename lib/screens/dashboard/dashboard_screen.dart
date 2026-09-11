@@ -7,6 +7,7 @@ import '../records/dental_records_screen.dart';
 import '../wallet/wallet_screen.dart';
 import '../profile/profile_screen.dart';
 import '../../widgets/app_icons.dart';
+import '../../widgets/record_load_gate.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -50,7 +51,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           children: [
             // Each tab's scroll view already leaves room at the bottom, so
             // running the page full height hides nothing behind the pill.
-            Positioned.fill(child: tabs[_selectedIndex]),
+            Positioned.fill(child: RecordLoadGate(child: tabs[_selectedIndex])),
             Positioned(
               left: 18,
               right: 18,

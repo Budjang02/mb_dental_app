@@ -5,6 +5,8 @@ import 'package:mb_dental_app/data/clinic_catalog.dart';
 import 'package:mb_dental_app/models/appointment.dart';
 import 'package:mb_dental_app/models/dental_service.dart';
 import 'package:mb_dental_app/models/wallet_transaction.dart';
+import 'package:mb_dental_app/models/patient.dart';
+import 'package:mb_dental_app/repositories/clinic_api.dart';
 import 'package:mb_dental_app/repositories/patient_repository.dart';
 
 /// The next occurrence of [weekday] strictly after today, so tests never book
@@ -17,7 +19,100 @@ DateTime nextWeekday(int weekday) {
   return DateTime(day.year, day.month, day.day);
 }
 
+/// The service menu these tests reason about. The real menu now comes from the
+/// clinic's `procedures` table, so it is pinned here rather than read from the
+/// network — the booking maths is what is under test, not the catalog.
+const List<DentalService> _testServices = [
+  DentalService(
+    id: 'svc-prophylaxis',
+    name: 'Oral Prophylaxis',
+    description: 'Scaling, polishing and plaque removal.',
+    specializationCode: 'general',
+    categoryId: 'other',
+    durationMinutes: 45,
+    price: 1000,
+    requiredSpecialization: kGeneralDentistry,
+  ),
+  DentalService(
+    id: 'svc-xray',
+    name: 'Dental X-Ray',
+    description: 'Diagnostic imaging.',
+    specializationCode: 'general',
+    categoryId: 'other',
+    durationMinutes: 15,
+    price: 500,
+    requiredSpecialization: kGeneralDentistry,
+  ),
+  DentalService(
+    id: 'svc-filling',
+    name: 'Composite Filling',
+    description: 'Tooth-coloured restoration.',
+    specializationCode: 'restorative',
+    categoryId: 'other',
+    durationMinutes: 45,
+    price: 2000,
+    requiredSpecialization: kGeneralDentistry,
+  ),
+  DentalService(
+    id: 'svc-braces',
+    name: 'Braces Installation',
+    description: 'Fixed appliance fitting.',
+    specializationCode: 'ortho',
+    categoryId: 'braces-alignment',
+    durationMinutes: 120,
+    price: 45000,
+    requiredSpecialization: kOrthodontics,
+  ),
+  DentalService(
+    id: 'svc-veneers',
+    name: 'Porcelain Veneers',
+    description: 'Custom shells bonded to the front teeth.',
+    specializationCode: 'esthetics',
+    categoryId: 'improve-smile',
+    durationMinutes: 90,
+    price: 18000,
+    requiredSpecialization: kCosmeticDentistry,
+  ),
+];
+
+Patient _testPatient() => Patient(
+      id: 'test-patient',
+      patientCode: 'PAT-TEST-0001',
+      firstName: 'Test',
+      lastName: 'Patient',
+      username: 'testpatient',
+      email: 'test@example.com',
+      phone: '+63 900 000 0000',
+    );
+
+/// Builds a booking the way the repository holds one, without going near
+/// Supabase.
+Appointment _booking({
+  required String id,
+  required String serviceName,
+  required DateTime date,
+  required int startMinute,
+  required int durationMinutes,
+  AppointmentStatus status = AppointmentStatus.pending,
+  double totalPrice = 0,
+  double amountPaid = 0,
+  String doctorName = 'Dr. Rey Vincent Bolasoc',
+}) =>
+    Appointment(
+      id: id,
+      serviceName: serviceName,
+      doctorName: doctorName,
+      date: date,
+      timeSlot: formatMinuteOfDay(startMinute),
+      status: status,
+      durationMinutes: durationMinutes,
+      totalPrice: totalPrice,
+      amountPaid: amountPaid,
+    );
+
 void main() {
+  setUpAll(() => ClinicCatalog().seedForTest(_testServices));
+
   group('clinic schedule', () {
     test('opens Wednesday through Sunday and closes Monday and Tuesday', () {
       expect(isClinicOpenOn(nextWeekday(DateTime.wednesday)), isTrue);
@@ -107,26 +202,23 @@ void main() {
     late PatientRepository repository;
     late DateTime day;
 
-    setUp(() async {
-      // registerPatient clears the seeded demo history, giving each test an
-      // empty schedule to book against.
+    setUp(() {
+      // Seeded directly: the repository is backed by Supabase now, and the
+      // slot rules under test are pure scheduling logic over whatever bookings
+      // it happens to hold.
       repository = PatientRepository();
-      await repository.registerPatient(
-        fullName: 'Test Patient',
-        email: 'test@example.com',
-        phone: '+63 900 000 0000',
-      );
+      repository.seedForTest(patient: _testPatient());
       day = nextWeekday(DateTime.wednesday);
     });
 
     test('a booked block makes overlapping starts unavailable', () {
-      repository.addAppointment(
+      repository.addAppointmentForTest(_booking(
+        id: 'app-01',
         serviceName: 'Oral Prophylaxis',
-        doctorName: 'Dr. Rey Vincent Bolasoc',
         date: day,
-        timeSlot: formatMinuteOfDay(10 * 60),
+        startMinute: 10 * 60,
         durationMinutes: 45,
-      );
+      ));
 
       // 10:00–10:45 is taken, so a 30-minute visit cannot start at 10:15…
       expect(
@@ -146,20 +238,26 @@ void main() {
     });
 
     test('a cancelled booking releases its slot', () {
-      final booking = repository.addAppointment(
+      final booking = _booking(
+        id: 'app-01',
         serviceName: 'Oral Prophylaxis',
-        doctorName: 'Dr. Rey Vincent Bolasoc',
         date: day,
-        timeSlot: formatMinuteOfDay(10 * 60),
+        startMinute: 10 * 60,
         durationMinutes: 45,
       );
+      repository.addAppointmentForTest(booking);
 
       expect(
         repository.isSlotAvailable(day: day, startMinute: 10 * 60, durationMinutes: 45),
         isFalse,
       );
 
-      repository.cancelAppointment(booking.id, reason: 'Changed my mind');
+      // Cancelling is a server write, so the state it leaves behind is what
+      // matters here: a cancelled booking must stop holding its slot.
+      repository.seedForTest(
+        patient: _testPatient(),
+        appointments: [booking.copyWith(status: AppointmentStatus.cancelled)],
+      );
 
       expect(
         repository.isSlotAvailable(day: day, startMinute: 10 * 60, durationMinutes: 45),
@@ -168,20 +266,22 @@ void main() {
     });
 
     test('a reschedule may keep its own slot but not take another booking\'s', () {
-      final first = repository.addAppointment(
+      final first = _booking(
+        id: 'app-01',
         serviceName: 'Dental Checkup',
-        doctorName: 'Dr. Rey Vincent Bolasoc',
         date: day,
-        timeSlot: formatMinuteOfDay(10 * 60),
+        startMinute: 10 * 60,
         durationMinutes: 30,
       );
-      repository.addAppointment(
+      repository.addAppointmentForTest(first);
+      repository.addAppointmentForTest(_booking(
+        id: 'app-02',
         serviceName: 'Composite Filling',
-        doctorName: 'Dr. Jenneline Mariano',
         date: day,
-        timeSlot: formatMinuteOfDay(14 * 60),
+        startMinute: 14 * 60,
         durationMinutes: 45,
-      );
+        doctorName: 'Dr. Jenneline Mariano',
+      ));
 
       expect(
         repository.isSlotAvailable(
@@ -205,13 +305,13 @@ void main() {
 
     test('slot options mark taken starts unavailable rather than hiding them', () {
       final beforeBooking = repository.slotOptionsFor(day: day, durationMinutes: 30);
-      repository.addAppointment(
+      repository.addAppointmentForTest(_booking(
+        id: 'app-01',
         serviceName: 'Dental Checkup',
-        doctorName: 'Dr. Rey Vincent Bolasoc',
         date: day,
-        timeSlot: formatMinuteOfDay(11 * 60),
+        startMinute: 11 * 60,
         durationMinutes: 30,
-      );
+      ));
       final afterBooking = repository.slotOptionsFor(day: day, durationMinutes: 30);
 
       expect(afterBooking.length, beforeBooking.length);
@@ -234,30 +334,21 @@ void main() {
   });
 
   group('booking outcomes', () {
-    late PatientRepository repository;
-    late DateTime day;
+    final day = nextWeekday(DateTime.thursday);
 
-    setUp(() async {
-      repository = PatientRepository();
-      await repository.registerPatient(
-        fullName: 'Test Patient',
-        email: 'test@example.com',
-        phone: '+63 900 000 0000',
-      );
-      day = nextWeekday(DateTime.thursday);
-    });
-
-    test('a wallet downpayment confirms the booking instantly', () {
-      final booking = repository.addAppointment(
+    // Status, confirmation and the alerts a booking raises are the clinic's to
+    // decide and now live server-side, so what the app is responsible for is
+    // presenting a booking correctly once it comes back.
+    test('a part-paid booking reports the balance still owed', () {
+      final booking = _booking(
+        id: 'app-01',
         serviceName: 'Oral Prophylaxis',
-        doctorName: 'Dr. Rey Vincent Bolasoc',
         date: day,
-        timeSlot: formatMinuteOfDay(10 * 60),
+        startMinute: 10 * 60,
         durationMinutes: 45,
+        status: AppointmentStatus.confirmed,
         totalPrice: 1000,
         amountPaid: 200,
-        paymentMethod: 'Wallet',
-        status: AppointmentStatus.confirmed,
       );
 
       expect(booking.status, AppointmentStatus.confirmed);
@@ -265,15 +356,15 @@ void main() {
       expect(booking.timeRangeLabel, '10:00 AM – 10:45 AM');
     });
 
-    test('a cash booking is held for approval with nothing paid', () {
-      final booking = repository.addAppointment(
+    test('an unpaid booking owes the whole amount', () {
+      final booking = _booking(
+        id: 'app-02',
         serviceName: 'Oral Prophylaxis',
-        doctorName: unassignedDoctorForTest,
         date: day,
-        timeSlot: formatMinuteOfDay(10 * 60),
+        startMinute: 10 * 60,
         durationMinutes: 45,
         totalPrice: 1000,
-        paymentMethod: 'Cash',
+        doctorName: unassignedDoctorForTest,
       );
 
       expect(booking.status, AppointmentStatus.pending);
@@ -281,52 +372,17 @@ void main() {
       expect(booking.balanceDue, 1000);
     });
 
-    test('every booking raises a status notification', () {
-      final before = repository.notifications.length;
-      repository.addAppointment(
+    test('a cancelled booking stops holding its slot', () {
+      final booking = _booking(
+        id: 'app-03',
         serviceName: 'Dental Checkup',
-        doctorName: 'Dr. Rey Vincent Bolasoc',
         date: day,
-        timeSlot: formatMinuteOfDay(10 * 60),
+        startMinute: 10 * 60,
         durationMinutes: 30,
       );
 
-      expect(repository.notifications.length, before + 1);
-      expect(repository.notifications.first.title, 'Booking Request Received');
-    });
-
-    test('a wallet payment generates a receipt notification', () {
-      repository.addWalletTransaction(
-        title: 'Wallet Top-up',
-        subtitle: 'GCash',
-        amount: 1000,
-        type: TransactionType.credit,
-        icon: CupertinoIcons.creditcard,
-        method: 'GCash',
-      );
-
-      expect(repository.walletBalance, 1000);
-      expect(repository.notifications.first.title, 'Wallet Top-up Successful');
-    });
-  });
-
-  group('registration', () {
-    test('splits the full name and leaves optional details for later', () async {
-      final repository = PatientRepository();
-      final patient = await repository.registerPatient(
-        fullName: 'Maria Clara Santos',
-        email: 'maria.santos@example.com',
-        phone: '+63 917 555 0100',
-      );
-
-      expect(patient.firstName, 'Maria');
-      expect(patient.lastName, 'Clara Santos');
-      expect(patient.fullName, 'Maria Clara Santos');
-      expect(patient.username, 'maria.santos');
-      expect(patient.dateOfBirth, isNull);
-      expect(patient.gender, isNull);
-      expect(patient.isProfileComplete, isFalse);
-      expect(patient.missingProfileFields, ['Gender', 'Date of Birth', 'Address']);
+      expect(booking.holdsSlot, isTrue);
+      expect(booking.copyWith(status: AppointmentStatus.cancelled).holdsSlot, isFalse);
     });
   });
 

@@ -1,5 +1,6 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import '../../app/messages.dart';
 import '../../app/theme.dart';
 import '../../app/theme_controller.dart';
 import '../../models/appointment.dart';
@@ -168,9 +169,15 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
               const SizedBox(height: 8),
               Row(
                 children: [
-                  Icon(CupertinoIcons.person, size: 16, color: AppColors.textSecondary),
+                  Icon(kDoctorIcon, size: 16, color: AppColors.textSecondary),
                   const SizedBox(width: 6),
-                  Text(item.doctorName, style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+                  Expanded(
+                    child: Text(
+                      doctorLabel(item.doctorName),
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                    ),
+                  ),
                 ],
               ),
               const SizedBox(height: 4),
