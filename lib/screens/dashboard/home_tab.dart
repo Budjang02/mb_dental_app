@@ -1,8 +1,11 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:mb_dental_app/app/messages.dart';
 import 'package:mb_dental_app/app/theme.dart';
 import 'package:mb_dental_app/app/theme_controller.dart';
+import 'package:mb_dental_app/data/clinic_catalog.dart';
+import 'package:mb_dental_app/models/dental_service.dart';
 import 'package:mb_dental_app/models/appointment.dart';
 import 'package:mb_dental_app/models/notification.dart';
 import 'package:mb_dental_app/models/wallet_transaction.dart';
@@ -36,31 +39,24 @@ String _formatFullDate(DateTime date) {
 /// Three-letter month for the date badge, e.g. "SEP".
 String _shortMonth(DateTime date) => _monthNames[date.month - 1].substring(0, 3);
 
-/// Picks an icon + accent color for a notification based on keywords in its
-/// title, so the list reads at a glance instead of every row looking the same.
-IconData notificationIcon(NotificationItem n) {
-  final title = n.title.toLowerCase();
-  if (title.contains('payment') || title.contains('wallet') || title.contains('receipt')) {
-    return CupertinoIcons.creditcard_fill;
+/// The website's Font Awesome (solid) icon for each notice type. The six keys
+/// shared with the website use its own icons; app-only notices, which the
+/// website does not have, and `notifications` rows get the nearest equivalent.
+FaIconData notificationIconFor(NotificationItem n) {
+  final id = n.id;
+  if (id.startsWith('booked|')) return FontAwesomeIcons.calendarPlus;
+  if (id.startsWith('confirmed|')) return FontAwesomeIcons.calendarCheck;
+  if (id.startsWith('awaiting|')) return FontAwesomeIcons.hourglassHalf;
+  if (id.startsWith('reminder|')) return FontAwesomeIcons.clock;
+  if (id.startsWith('rcpt|')) return FontAwesomeIcons.receipt;
+  if (id.startsWith('plan|')) return FontAwesomeIcons.listCheck;
+  if (id.startsWith('local:cancelled:')) return FontAwesomeIcons.calendarXmark;
+  if (id.startsWith('local:completed:')) return FontAwesomeIcons.circleCheck;
+  if (id.startsWith('local:due:')) return FontAwesomeIcons.fileInvoiceDollar;
+  if (id.startsWith('local:topup:') || id.startsWith('local:walletpay:')) {
+    return FontAwesomeIcons.wallet;
   }
-  if (title.contains('reminder')) {
-    return CupertinoIcons.bell_fill;
-  }
-  if (title.contains('appointment') || title.contains('confirm') || title.contains('schedule')) {
-    return CupertinoIcons.calendar;
-  }
-  return CupertinoIcons.sparkles;
-}
-
-Color notificationColor(NotificationItem n) {
-  final title = n.title.toLowerCase();
-  if (title.contains('payment') || title.contains('wallet') || title.contains('receipt')) {
-    return AppColors.success;
-  }
-  if (title.contains('reminder')) {
-    return AppColors.warning;
-  }
-  return AppColors.primary;
+  return FontAwesomeIcons.bell;
 }
 
 String formatNotificationDate(DateTime date) => '${_monthNames[date.month - 1].substring(0, 1)}${_monthNames[date.month - 1].substring(1).toLowerCase()} ${date.day}, ${date.year}';
@@ -140,28 +136,21 @@ void showNotificationDetailDialog(BuildContext context, NotificationItem n) {
           children: [
             Row(
               children: [
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(color: notificationColor(n).withOpacity(0.14), shape: BoxShape.circle),
-                  child: Icon(notificationIcon(n), color: notificationColor(n), size: 20),
-                ),
-                const SizedBox(width: 12),
+
                 Expanded(
                   child: Text(
                     n.title,
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
                   ),
                 ),
                 const AppDialogCloseButton(),
               ],
             ),
             const SizedBox(height: 16),
-            Text(n.body, style: TextStyle(fontSize: 14, color: AppColors.textPrimary, height: 1.4)),
+            Text(n.body, style: TextStyle(fontSize: 15, color: AppColors.textPrimary, height: 1.45)),
             const SizedBox(height: 16),
             Row(
               children: [
-                Icon(CupertinoIcons.clock, size: 13, color: AppColors.textSecondary),
-                const SizedBox(width: 6),
                 Text(
                   '${formatNotificationDate(n.createdAt)} • ${formatNotificationTime(n.createdAt)}',
                   style: TextStyle(fontSize: 12, color: AppColors.textSecondary, fontWeight: FontWeight.w600),
@@ -377,7 +366,13 @@ class _HomeTabState extends State<HomeTab> {
                     shape: BoxShape.circle,
                     border: Border.all(color: AppColors.border),
                   ),
-                  child: Icon(CupertinoIcons.ellipses_bubble, color: AppColors.primary, size: 22),
+                  child: SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: Center(
+                      child: FaIcon(FontAwesomeIcons.commentDots, color: AppColors.primary, size: 19),
+                    ),
+                  ),
                 ),
                 // Counts only what the clinic sent and the patient has not
                 // opened — the patient's own messages are never unread.
@@ -417,10 +412,12 @@ class _HomeTabState extends State<HomeTab> {
                       shape: BoxShape.circle,
                       border: Border.all(color: AppColors.border),
                     ),
-                    child: Icon(
-                      _notificationOverlay != null ? CupertinoIcons.bell_fill : CupertinoIcons.bell,
-                      color: AppColors.primary,
-                      size: 22,
+                    child: SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: Center(
+                        child: FaIcon(FontAwesomeIcons.bell, color: AppColors.primary, size: 19),
+                      ),
                     ),
                   ),
                   if (_repository.unreadNotificationCount > 0)
@@ -511,13 +508,13 @@ class _HomeTabState extends State<HomeTab> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'You have no upcoming visits',
+                          'No upcoming appointments',
                           style: TextStyle(
                               fontWeight: FontWeight.bold, fontSize: 15, color: Colors.white),
                         ),
                         SizedBox(height: 4),
                         Text(
-                          'Tap here to book your next appointment.',
+                          'Book one and it will show up here.',
                           style: TextStyle(fontSize: 12.5, height: 1.35, color: Colors.white70),
                         ),
                       ],
@@ -574,17 +571,33 @@ class _HomeTabState extends State<HomeTab> {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        appointment.timeSlot,
+                        appointment.timeSlot.isEmpty ? 'Time to be confirmed' : appointment.timeSlot,
                         style: const TextStyle(
                             fontWeight: FontWeight.bold, fontSize: 22, color: Colors.white),
                       ),
+                      // The start time alone does not say when the patient
+                      // is free again, so the block's end and length ride with
+                      // it. Skipped only for a legacy slot label that cannot
+                      // be parsed back to a start minute.
+                      if (appointment.endMinuteOfDay != null) ...[
+                        const SizedBox(height: 4),
+                        _buildDetailLine(
+                          'Until ${formatMinuteOfDay(appointment.endMinuteOfDay!)}'
+                          ' · ${formatDuration(appointment.durationMinutes)}',
+                        ),
+                      ],
                       const SizedBox(height: 12),
-                      // No glyph on this card, so the doctor's name is prefixed
-                      // instead — otherwise it is just a name with nothing
-                      // saying whose it is.
-                      _buildDetailLine('Doctor: ${doctorLabel(appointment.doctorName)}'),
+                      // The website prints the doctor's `full_name`, and
+                      // "your doctor" when there is none.
+                      _buildDetailLine(
+                        appointment.doctorName.trim().isEmpty ||
+                                appointment.doctorName.trim() == kDoctorAssignedUnnamed
+                            ? 'your doctor'
+                            : appointment.doctorName.trim(),
+                      ),
+
                       const SizedBox(height: 6),
-                      _buildDetailLine(appointment.serviceName),
+                      _buildDetailLine(appointment.serviceName.trim().isEmpty ? 'Appointment' : appointment.serviceName),
                     ],
                   ),
                 ),
@@ -696,26 +709,28 @@ class _HomeTabState extends State<HomeTab> {
   }
 
   Widget _buildQuickActions() {
+    // The website's four quick actions, in its order, with its icons.
     final actions = <_QuickAction>[
       _QuickAction(
-        icon: CupertinoIcons.calendar,
+        icon: FontAwesomeIcons.calendarPlus,
         label: 'Book\nAppointment',
         onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const BookAppointmentScreen())),
       ),
       _QuickAction(
-        icon: Icons.receipt_long_rounded,
-        label: 'Billing',
-        onTap: () => Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => const TransactionHistoryScreen(initialTabIndex: 1)),
-        ),
-      ),
-      _QuickAction(
-        icon: CupertinoIcons.plus_circle,
+        icon: FontAwesomeIcons.plus,
         label: 'Add\nMoney',
         onTap: () => widget.onNavigateToTab(2),
       ),
-      _QuickAction(icon: CupertinoIcons.folder, label: 'My\nRecords', onTap: () => widget.onNavigateToTab(3)),
+      _QuickAction(
+        icon: FontAwesomeIcons.fileMedical,
+        label: 'My\nRecords',
+        onTap: () => widget.onNavigateToTab(3),
+      ),
+      _QuickAction(
+        icon: FontAwesomeIcons.commentDots,
+        label: 'Message\nClinic',
+        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ChatScreen())),
+      ),
     ];
 
     return Row(
@@ -791,8 +806,8 @@ class _NotificationDropdown extends StatelessWidget {
       // the title, timestamp and everything around them live one tap away,
       // in the detail dialog and on the "See All" page.
       child: Container(
-        width: 232,
-        constraints: const BoxConstraints(maxHeight: 236),
+        width: 300,
+        constraints: const BoxConstraints(maxHeight: 380),
         decoration: BoxDecoration(
           color: AppColors.surface,
           borderRadius: BorderRadius.circular(18),
@@ -814,7 +829,7 @@ class _NotificationDropdown extends StatelessWidget {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Text('Notifications',
-                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5, color: AppColors.textPrimary)),
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppColors.textPrimary)),
                       if (repository.unreadNotificationCount > 0)
                         Row(
                           mainAxisSize: MainAxisSize.min,
@@ -867,32 +882,22 @@ class _NotificationDropdown extends StatelessWidget {
                           onTap: () => onNotificationTap(n),
                           child: Container(
                             color: n.isRead ? Colors.transparent : AppColors.primary.withOpacity(0.05),
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
                             child: Row(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                // The icon says at a glance what kind of alert
-                                // this is; the message says what it is about.
-                                // Title and timestamp stay one tap away in the
-                                // detail dialog rather than turning this peek
-                                // into a second copy of the list.
-                                Container(
-                                  padding: const EdgeInsets.all(6),
-                                  decoration: BoxDecoration(
-                                    color: notificationColor(n).withOpacity(0.14),
-                                    shape: BoxShape.circle,
-                                  ),
-                                  child: Icon(notificationIcon(n), color: notificationColor(n), size: 14),
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 2, right: 10),
+                                  child: FaIcon(notificationIconFor(n), size: 15, color: AppColors.primary),
                                 ),
-                                const SizedBox(width: 9),
                                 Expanded(
                                   child: Text(
                                     n.body,
                                     maxLines: 2,
                                     overflow: TextOverflow.ellipsis,
                                     style: TextStyle(
-                                      fontSize: 12,
-                                      height: 1.3,
+                                      fontSize: 13.5,
+                                      height: 1.35,
                                       fontWeight: n.isRead ? FontWeight.w400 : FontWeight.w600,
                                       color: n.isRead ? AppColors.textSecondary : AppColors.textPrimary,
                                     ),
@@ -937,7 +942,7 @@ class _NotificationDropdown extends StatelessWidget {
 }
 
 class _QuickAction extends StatelessWidget {
-  final IconData icon;
+  final FaIconData icon;
   final String label;
   final VoidCallback onTap;
 
@@ -958,7 +963,7 @@ class _QuickAction extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, color: AppColors.primary, size: 24),
+            FaIcon(icon, color: AppColors.primary, size: 22),
             const SizedBox(height: 8),
             SizedBox(
               height: 28,

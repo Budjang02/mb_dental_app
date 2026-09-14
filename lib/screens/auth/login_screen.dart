@@ -2,6 +2,7 @@
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:mb_dental_app/widgets/field_icons.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:mb_dental_app/app/routes.dart';
 import 'package:mb_dental_app/app/theme.dart';
@@ -139,11 +140,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           },
                           decoration: InputDecoration(
                             labelText: 'Email Address',
-                            prefixIcon: Icon(
-                              CupertinoIcons.mail,
-                              color: AppColors.primary,
-                              size: 20,
-                            ),
+                            prefixIcon: fieldIcon(FieldKind.email),
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(12),
                               borderSide: BorderSide(color: Colors.grey.shade300),
@@ -164,14 +161,10 @@ class _LoginScreenState extends State<LoginScreen> {
                               (value == null || value.isEmpty) ? 'Enter your password.' : null,
                           decoration: InputDecoration(
                             labelText: 'Password',
-                            prefixIcon: Icon(
-                              CupertinoIcons.lock,
-                              color: AppColors.primary,
-                              size: 20,
-                            ),
+                            prefixIcon: fieldIcon(FieldKind.password),
                             suffixIcon: IconButton(
                               icon: Icon(
-                                _isPasswordVisible ? CupertinoIcons.eye_slash : CupertinoIcons.eye,
+                                _isPasswordVisible ? TablerIcons.eye_off : TablerIcons.eye,
                                 color: AppColors.textSecondary,
                                 size: 20,
                               ),

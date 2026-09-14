@@ -2,6 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:mb_dental_app/app/theme.dart';
 import 'package:mb_dental_app/app/messages.dart';
+import 'package:mb_dental_app/data/clinic_catalog.dart';
 import 'package:mb_dental_app/models/appointment.dart';
 import 'package:mb_dental_app/models/dental_service.dart';
 import 'package:mb_dental_app/repositories/patient_repository.dart';
@@ -81,21 +82,19 @@ void showAppointmentDetailSheet(BuildContext context, Appointment appointment) {
               ),
             ),
             const SizedBox(height: 20),
-            _detailRow(kDoctorIcon, 'Doctor', doctorLabel(appointment.doctorName)),
+            _detailRow('Doctor', doctorLabel(appointment.doctorName)),
             const SizedBox(height: 14),
-            _detailRow(CupertinoIcons.calendar, 'Date', formatAppointmentDate(appointment.date)),
+            _detailRow('Date', formatAppointmentDate(appointment.date)),
             const SizedBox(height: 14),
             _detailRow(
-              CupertinoIcons.clock,
               'Time',
               '${appointment.timeRangeLabel}  (${formatDuration(appointment.durationMinutes)})',
             ),
             if (appointment.totalPrice > 0) ...[
               const SizedBox(height: 14),
-              _detailRow(CupertinoIcons.money_dollar, 'Total', formatPeso(appointment.totalPrice)),
+              _detailRow('Total', formatPeso(appointment.totalPrice)),
               const SizedBox(height: 14),
               _detailRow(
-                CupertinoIcons.checkmark_seal,
                 'Paid',
                 appointment.amountPaid > 0
                     ? '${formatPeso(appointment.amountPaid)} downpayment · '
@@ -105,13 +104,13 @@ void showAppointmentDetailSheet(BuildContext context, Appointment appointment) {
             ],
             if (appointment.notes != null && appointment.notes!.isNotEmpty) ...[
               const SizedBox(height: 14),
-              _detailRow(CupertinoIcons.doc_text, 'Notes', appointment.notes!),
+              _detailRow('Notes', appointment.notes!),
             ],
             if (appointment.status == AppointmentStatus.cancelled &&
                 appointment.cancellationReason != null &&
                 appointment.cancellationReason!.isNotEmpty) ...[
               const SizedBox(height: 14),
-              _detailRow(CupertinoIcons.exclamationmark_circle, 'Cancellation Reason', appointment.cancellationReason!),
+              _detailRow('Cancellation Reason', appointment.cancellationReason!),
             ],
             if (isCancellable) ...[
               const SizedBox(height: 24),
@@ -170,22 +169,13 @@ void showAppointmentDetailSheet(BuildContext context, Appointment appointment) {
   );
 }
 
-Widget _detailRow(IconData icon, String label, String value) {
-  return Row(
+Widget _detailRow(String label, String value) {
+  return Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Icon(icon, size: 18, color: AppColors.primary),
-      const SizedBox(width: 12),
-      Expanded(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(label, style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
-            const SizedBox(height: 2),
-            Text(value, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
-          ],
-        ),
-      ),
+      Text(label, style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+      const SizedBox(height: 2),
+      Text(value, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
     ],
   );
 }

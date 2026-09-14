@@ -1,5 +1,6 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:mb_dental_app/widgets/field_icons.dart';
 import 'package:mb_dental_app/app/theme.dart';
 import 'package:mb_dental_app/app/theme_controller.dart';
 import 'package:mb_dental_app/services/auth_service.dart';
@@ -82,7 +83,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
                     _buildField(
                       label: 'CURRENT PASSWORD',
                       hint: 'Enter current password',
-                      icon: CupertinoIcons.lock_fill,
+                      icon: fieldIconFor(FieldKind.password),
                       controller: _currentController,
                       obscured: _currentHidden,
                       onToggle: () => setState(() => _currentHidden = !_currentHidden),
@@ -98,7 +99,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
                     _buildField(
                       label: 'NEW PASSWORD',
                       hint: 'Create a new password',
-                      icon: Icons.key_rounded,
+                      icon: fieldIconFor(FieldKind.newPassword),
                       controller: _newController,
                       obscured: _newHidden,
                       onToggle: () => setState(() => _newHidden = !_newHidden),
@@ -108,7 +109,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
                     _buildField(
                       label: 'CONFIRM NEW PASSWORD',
                       hint: 'Re-enter new password',
-                      icon: Icons.key_rounded,
+                      icon: fieldIconFor(FieldKind.confirmPassword),
                       controller: _confirmController,
                       obscured: _confirmHidden,
                       onToggle: () => setState(() => _confirmHidden = !_confirmHidden),
@@ -217,11 +218,12 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
             hintStyle: TextStyle(fontSize: 14, color: AppColors.textSecondary.withOpacity(0.8)),
             filled: true,
             fillColor: AppColors.surface,
-            prefixIcon: Icon(icon, size: 18, color: AppColors.textSecondary),
+            // No fixed colour: grey, and teal while the field has focus (theme).
+            prefixIcon: Icon(icon, size: 18),
             prefixIconConstraints: const BoxConstraints(minWidth: 44),
             suffixIcon: IconButton(
               icon: Icon(
-                obscured ? CupertinoIcons.eye : CupertinoIcons.eye_slash,
+                obscured ? TablerIcons.eye : TablerIcons.eye_off,
                 size: 18,
                 color: AppColors.textSecondary,
               ),

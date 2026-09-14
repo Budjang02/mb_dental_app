@@ -6,7 +6,7 @@ import '../appointments/appointments_screen.dart';
 import '../records/dental_records_screen.dart';
 import '../wallet/wallet_screen.dart';
 import '../profile/profile_screen.dart';
-import '../../widgets/app_icons.dart';
+import 'package:flutter_tabler_icons/flutter_tabler_icons.dart';
 import '../../widgets/record_load_gate.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -107,11 +107,13 @@ class _FloatingNavBar extends StatelessWidget {
             // Outline, rounded glyphs throughout — the active tab is marked
             // by colour, not by swapping in a filled icon.
             children: [
-              _navItem(0, AppIconGlyph.home, 'Home'),
-              _navItem(1, AppIconGlyph.calendar, 'Schedule'),
-              _navItem(2, AppIconGlyph.wallet, 'Wallet'),
-              _navItem(3, AppIconGlyph.records, 'Records'),
-              _navItem(4, AppIconGlyph.person, 'Profile'),
+              // Tabler icons, as the website's sidebar uses. Tabler names the
+              // tooth glyph `dental`; Profile has no website tab, so `user`.
+              _navItem(0, TablerIcons.layout_dashboard, 'Home'),
+              _navItem(1, TablerIcons.calendar_check, 'Schedule'),
+              _navItem(2, TablerIcons.wallet, 'Wallet'),
+              _navItem(3, TablerIcons.dental, 'Records'),
+              _navItem(4, TablerIcons.user, 'Profile'),
             ],
           ),
         ),
@@ -119,7 +121,7 @@ class _FloatingNavBar extends StatelessWidget {
     );
   }
 
-  Widget _navItem(int index, AppIconGlyph glyph, String label) {
+  Widget _navItem(int index, IconData icon, String label) {
     return Expanded(
       child: Builder(
         builder: (context) {
@@ -130,14 +132,7 @@ class _FloatingNavBar extends StatelessWidget {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                AppIcon(
-                  glyph: glyph,
-                  color: color,
-                  size: 22,
-                  // The selected tab thickens rather than filling in,
-                  // keeping every glyph a linear outline.
-                  weight: selected ? 0.10 : 0.085,
-                ),
+                Icon(icon, color: color, size: 24),
                 const SizedBox(height: 4),
                 Text(
                   label,

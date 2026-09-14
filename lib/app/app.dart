@@ -9,6 +9,7 @@ import '../screens/auth/create_new_password_screen.dart';
 import '../repositories/clinic_api.dart';
 import '../repositories/patient_repository.dart';
 import '../screens/splash/splash_screen.dart';
+import '../services/realtime_sync_service.dart';
 import '../services/supabase_service.dart';
 import '../widgets/push_banner.dart';
 
@@ -19,7 +20,7 @@ class DentalApp extends StatefulWidget {
   State<DentalApp> createState() => _DentalAppState();
 }
 
-class _DentalAppState extends State<DentalApp> {
+class _DentalAppState extends State<DentalApp> with WidgetsBindingObserver {
   /// Lets the auth listener navigate from outside the widget tree, which is
   /// where password-recovery links and expired sessions arrive.
   static final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
@@ -29,6 +30,9 @@ class _DentalAppState extends State<DentalApp> {
   @override
   void initState() {
     super.initState();
+    // A device asleep in the background receives no realtime events, so coming
+    // back to the foreground has to re-read the record.
+    WidgetsBinding.instance.addObserver(this);
     _authSubscription = SupabaseService.onAuthStateChange.listen(_onAuthStateChange);
 
     // Supabase restores a stored session inside `Supabase.initialize()`, which
@@ -43,11 +47,33 @@ class _DentalAppState extends State<DentalApp> {
   void _loadForSignedInPatient() {
     PatientRepository().load(force: true);
     ClinicCatalog().load(force: true);
+    // Live updates for the rows this patient owns, so a change made on the
+    // admin or patient web platform lands here without waiting for a reload.
+    final userId = SupabaseService.currentUserId;
+    if (userId != null) unawaited(RealtimeSyncService().start(userId));
+    // The service menu and dentist roster are the clinic's, not this patient's:
+    // an admin edit has to land here too.
+    unawaited(RealtimeSyncService().startClinicSync());
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    if (!SupabaseService.isSignedIn) return;
+    unawaited(PatientRepository().refreshOnResume());
+    unawaited(ClinicCatalog().load(force: true));
+    final userId = SupabaseService.currentUserId;
+    // The socket may have been dropped while the app was backgrounded.
+    if (userId != null) unawaited(RealtimeSyncService().start(userId));
+    unawaited(RealtimeSyncService().startClinicSync());
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _authSubscription?.cancel();
+    unawaited(RealtimeSyncService().stop());
+    unawaited(RealtimeSyncService().stopClinicSync());
     super.dispose();
   }
 
@@ -71,6 +97,7 @@ class _DentalAppState extends State<DentalApp> {
       // so a revoked session cannot leave patient data on screen.
       case AuthChangeEvent.signedOut:
         PatientRepository().clear();
+        unawaited(RealtimeSyncService().stop());
         navigator.pushNamedAndRemoveUntil(AppRoutes.login, (route) => false);
       // Fires on sign-in and on the session restored at launch, so the record
       // is fetched once per session from whichever route the patient entered by.

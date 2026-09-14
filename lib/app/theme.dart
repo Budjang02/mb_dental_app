@@ -93,6 +93,15 @@ class AppTheme {
           borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide(color: primary, width: 2),
         ),
+        // A field's leading icon is grey, and turns teal while the field has
+        // focus — as on the website. Icons that set their own colour opt out,
+        // so field icons are drawn without one (see widgets/field_icons.dart).
+        prefixIconColor: WidgetStateColor.resolveWith(
+          (states) => states.contains(WidgetState.focused)
+              ? primary
+              // AppColors.textSecondary for this brightness.
+              : (brightness == Brightness.dark ? const Color(0xFF94A3B8) : const Color(0xFF64748B)),
+        ),
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(

@@ -2,7 +2,7 @@ import '../../repositories/patient_repository.dart';
 
 /// Treatment notes shown on the dental chart and on the Treatment Notes page.
 ///
-/// Read straight from the clinic's `tooth_records` table through
-/// [PatientRepository]: the chart is the clinic's record of the patient's
-/// mouth, so there is nothing for the app to hold of its own.
-List<Map<String, String>> get kTreatmentNotes => PatientRepository().toothRecords;
+/// Read from the clinic's `treatment_notes` history through
+/// [PatientRepository], falling back to the chart's `tooth_records` for a
+/// patient whose history has not been written yet.
+List<Map<String, String>> get kTreatmentNotes => PatientRepository().treatmentNotes;

@@ -26,13 +26,27 @@ class ServiceCategoryDef {
   /// Matched case- and punctuation-insensitively — see [categoryIdForProcedure].
   final List<String> procedureNames;
 
+  /// Set on a group that books one procedure outright instead of opening a
+  /// submenu. A patient who does not know what they need should not have to
+  /// choose from a list to say so, so tapping the group books this procedure.
+  /// Empty on every group that lists its procedures normally.
+  final String directProcedureName;
+
   const ServiceCategoryDef({
     required this.id,
     required this.label,
     required this.blurb,
     this.procedureNames = const [],
+    this.directProcedureName = '',
   });
+
+  /// True when tapping the heading books [directProcedureName] directly.
+  bool get isDirectPick => directProcedureName.isNotEmpty;
 }
+
+/// The procedure a patient books when they cannot name what they need. It is
+/// what the catch-all group books outright — see [ServiceCategoryDef.isDirectPick].
+const String kCheckupProcedureName = 'Dental Checkup';
 
 /// Key of the catch-all group. Anything the clinic adds that is not named in a
 /// group below lands here rather than disappearing from the menu.
@@ -80,6 +94,7 @@ const List<ServiceCategoryDef> kServiceCategories = [
     procedureNames: [
       'Simple Tooth Extraction',
       'Tooth Extraction',
+      'Surgical Extraction',
       'Wisdom Tooth Removal',
       'Pre- and Post-Operative Care',
     ],
@@ -108,8 +123,9 @@ const List<ServiceCategoryDef> kServiceCategories = [
   ),
   ServiceCategoryDef(
     id: kOtherServiceCategoryId,
-    label: 'Dental Checkup / Other',
-    blurb: 'Not sure what you need? Start here.',
+    label: 'Other / Not sure',
+    blurb: 'Not sure what you need? This books a dental checkup.',
+    directProcedureName: kCheckupProcedureName,
   ),
 ];
 
@@ -134,6 +150,21 @@ String _normalise(String value) => value
     .toLowerCase()
     .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
     .trim();
+
+/// The one procedure a direct-pick [group] books, picked out of the [services]
+/// filed under it.
+///
+/// Falls back to the group's first procedure when the clinic has renamed or
+/// retired the named one: the group must stay bookable rather than tap onto
+/// nothing. Null for a group that opens a submenu, or an empty one.
+DentalService? directPickService(ServiceGroup group, List<DentalService> services) {
+  if (!group.isDirectPick || services.isEmpty) return null;
+  final wanted = _normalise(group.directProcedureName);
+  for (final service in services) {
+    if (_normalise(service.name) == wanted) return service;
+  }
+  return services.first;
+}
 
 /// The group definition for [id], falling back to the catch-all.
 ServiceCategoryDef serviceCategoryById(String id) => kServiceCategories.firstWhere(

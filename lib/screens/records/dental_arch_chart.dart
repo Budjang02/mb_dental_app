@@ -78,6 +78,17 @@ class DentalArchChart extends StatefulWidget {
   /// The tooth numbers printed outside the arch.
   final Color labelColor;
 
+  /// Outline per tooth number, from the same condition as [conditionColors].
+  /// A tooth absent here is outlined in [idleStroke], or [outlineColor].
+  final Map<int, Color> conditionStrokes;
+
+  /// Outline for a tooth with nothing recorded against it.
+  final Color? idleStroke;
+
+  /// Teeth outlined with a dashed line ([kToothDashPattern]) rather than a
+  /// solid one.
+  final Set<int> dashedTeeth;
+
   const DentalArchChart({
     super.key,
     required this.conditionColors,
@@ -88,6 +99,9 @@ class DentalArchChart extends StatefulWidget {
     required this.selectedFill,
     required this.selectedOutline,
     required this.labelColor,
+    this.conditionStrokes = const {},
+    this.idleStroke,
+    this.dashedTeeth = const {},
   });
 
   @override
@@ -147,6 +161,9 @@ class _DentalArchChartState extends State<DentalArchChart> {
                         selectedFill: widget.selectedFill,
                         selectedOutline: widget.selectedOutline,
                         labelColor: widget.labelColor,
+                        conditionStrokes: widget.conditionStrokes,
+                        idleStroke: widget.idleStroke,
+                        dashedTeeth: widget.dashedTeeth,
                       ),
                     ),
                   ),
@@ -388,6 +405,31 @@ class DentalArchLayout {
 
 // --- Painting -------------------------------------------------------------
 
+/// The website's `stroke-dasharray: 3 2`: a 3px dash, then a 2px gap.
+const List<double> kToothDashPattern = [3, 2];
+
+/// [source] cut into dashes of [pattern] (dash, gap, dash, gap, ...), for a
+/// dashed outline Canvas cannot draw natively.
+Path dashedPath(Path source, List<double> pattern) {
+  final dashed = Path();
+  for (final metric in source.computeMetrics()) {
+    var distance = 0.0;
+    var index = 0;
+    while (distance < metric.length) {
+      final length = pattern[index % pattern.length];
+      if (index.isEven) {
+        dashed.addPath(
+          metric.extractPath(distance, math.min(distance + length, metric.length)),
+          Offset.zero,
+        );
+      }
+      distance += length;
+      index++;
+    }
+  }
+  return dashed;
+}
+
 class _ArchPainter extends CustomPainter {
   final DentalArchLayout layout;
   final Map<int, Color> conditionColors;
@@ -399,6 +441,9 @@ class _ArchPainter extends CustomPainter {
   final Color selectedFill;
   final Color selectedOutline;
   final Color labelColor;
+  final Map<int, Color> conditionStrokes;
+  final Color? idleStroke;
+  final Set<int> dashedTeeth;
 
   const _ArchPainter({
     required this.layout,
@@ -411,6 +456,9 @@ class _ArchPainter extends CustomPainter {
     required this.selectedFill,
     required this.selectedOutline,
     required this.labelColor,
+    required this.conditionStrokes,
+    required this.idleStroke,
+    required this.dashedTeeth,
   });
 
   @override
@@ -489,18 +537,23 @@ class _ArchPainter extends CustomPainter {
       );
     }
 
+    // The condition's own outline colour, as the website draws it; the picked
+    // tooth takes the selection colour on top of its halo instead.
+    final stroke = selected ? selectedOutline : (conditionStrokes[tooth] ?? idleStroke ?? outlineColor);
+    final dashed = dashedTeeth.contains(tooth);
     canvas.drawPath(
-      glyph.outline,
+      dashed ? dashedPath(glyph.outline, kToothDashPattern) : glyph.outline,
       Paint()
-        ..color = selected ? selectedOutline : outlineColor
+        ..color = stroke
         ..style = PaintingStyle.stroke
         ..strokeWidth = selected ? strokeWidth * 1.9 : strokeWidth
         ..strokeJoin = StrokeJoin.round
-        ..strokeCap = StrokeCap.round,
+        // Round caps would lengthen every dash past its 3px.
+        ..strokeCap = dashed ? StrokeCap.butt : StrokeCap.round,
     );
 
     final groovePaint = Paint()
-      ..color = (selected ? selectedOutline : outlineColor).withOpacity(0.7)
+      ..color = stroke.withOpacity(0.7)
       ..style = PaintingStyle.stroke
       ..strokeWidth = strokeWidth * 0.8
       ..strokeCap = StrokeCap.round
@@ -523,6 +576,9 @@ class _ArchPainter extends CustomPainter {
         old.selectedFill != selectedFill ||
         old.selectedOutline != selectedOutline ||
         old.labelColor != labelColor ||
-        !mapEquals(old.conditionColors, conditionColors);
+        old.idleStroke != idleStroke ||
+        !mapEquals(old.conditionColors, conditionColors) ||
+        !mapEquals(old.conditionStrokes, conditionStrokes) ||
+        !setEquals(old.dashedTeeth, dashedTeeth);
   }
 }

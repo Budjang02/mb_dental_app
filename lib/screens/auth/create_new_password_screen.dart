@@ -1,5 +1,6 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:mb_dental_app/widgets/field_icons.dart';
 
 import '../../app/theme.dart';
 import '../../app/theme_controller.dart';
@@ -125,7 +126,7 @@ class _CreateNewPasswordScreenState extends State<CreateNewPasswordScreen> {
                     style: TextStyle(color: AppColors.textPrimary),
                     decoration: authInputDecoration(
                       label: 'New Password',
-                      icon: CupertinoIcons.lock,
+                      icon: fieldIconFor(FieldKind.newPassword),
                       suffixIcon: _visibilityToggle(
                         isVisible: _isPasswordVisible,
                         onTap: () => setState(() => _isPasswordVisible = !_isPasswordVisible),
@@ -145,7 +146,7 @@ class _CreateNewPasswordScreenState extends State<CreateNewPasswordScreen> {
                     style: TextStyle(color: AppColors.textPrimary),
                     decoration: authInputDecoration(
                       label: 'Confirm Password',
-                      icon: CupertinoIcons.lock_shield,
+                      icon: fieldIconFor(FieldKind.confirmPassword),
                       suffixIcon: _visibilityToggle(
                         isVisible: _isConfirmVisible,
                         onTap: () => setState(() => _isConfirmVisible = !_isConfirmVisible),

@@ -15,12 +15,20 @@ class ServiceGroup {
   /// Where the clinic wants this group to sit in the list.
   final int sortOrder;
 
+  /// Name of the one procedure this group books outright, or empty when the
+  /// group opens a submenu. See `data/service_categories.dart`.
+  final String directProcedureName;
+
   const ServiceGroup({
     required this.code,
     required this.label,
     required this.blurb,
     required this.sortOrder,
+    this.directProcedureName = '',
   });
+
+  /// True when tapping the heading books a procedure instead of expanding.
+  bool get isDirectPick => directProcedureName.isNotEmpty;
 
   @override
   bool operator ==(Object other) => other is ServiceGroup && other.code == code;

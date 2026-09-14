@@ -73,7 +73,7 @@ class TreatmentNotesScreen extends StatelessWidget {
             const SizedBox(height: 16),
             _kv('Tooth', note['tooth'] ?? ''),
             _kv('Condition', note['condition'] ?? ''),
-            _kv('Doctor', doctorLabel(note['doctor'])),
+            _kv('Doctor', _doctorOrDash(note['doctor'])),
             const SizedBox(height: 8),
             Text('Notes', style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
             const SizedBox(height: 4),
@@ -99,6 +99,14 @@ class TreatmentNotesScreen extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The note's own doctor: `treatment_notes.doctor_id` resolved to
+/// `members.full_name`, or a plain em dash when the row has none. Never a
+/// guessed or "to be assigned" doctor, which is what the website shows too.
+String _doctorOrDash(String? name) {
+  final trimmed = name?.trim() ?? '';
+  return trimmed.isEmpty ? '\u2014' : trimmed;
 }
 
 class _TreatmentNoteCard extends StatelessWidget {
@@ -164,7 +172,7 @@ class _TreatmentNoteCard extends StatelessWidget {
                     const SizedBox(width: 5),
                     Expanded(
                       child: Text(
-                        doctorLabel(note['doctor']),
+                        _doctorOrDash(note['doctor']),
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(fontSize: 11.5, color: AppColors.textSecondary),
                       ),

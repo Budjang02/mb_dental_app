@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../../app/messages.dart';
 import '../../app/theme.dart';
 import '../../app/theme_controller.dart';
+import '../../data/clinic_catalog.dart';
+import '../../models/dental_service.dart';
 import '../../models/appointment.dart';
 import 'package:mb_dental_app/repositories/patient_repository.dart';
 import 'package:mb_dental_app/widgets/appointment_detail_sheet.dart';
@@ -118,10 +120,13 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
       );
     }
 
+    // Oldest first, newest at the bottom — the same reading order as the chat.
+    final ordered = [...appointments]..sort((a, b) => a.startsAt.compareTo(b.startsAt));
+
     return ListView.builder(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 104),
-      itemCount: appointments.length,
-      itemBuilder: (context, index) => _buildAppointmentCard(appointments[index]),
+      itemCount: ordered.length,
+      itemBuilder: (context, index) => _buildAppointmentCard(ordered[index]),
     );
   }
 
@@ -185,9 +190,14 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
                 children: [
                   Icon(CupertinoIcons.calendar, size: 16, color: AppColors.textSecondary),
                   const SizedBox(width: 6),
-                  Text(
-                    '${formatAppointmentDate(item.date)} at ${item.timeSlot}',
-                    style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                  // The whole booked block, not just its start: the patient
+                  // needs to know how long they are giving up.
+                  Expanded(
+                    child: Text(
+                      '${formatAppointmentDate(item.date)} at ${item.timeRangeLabel}'
+                          '  (${formatDuration(item.durationMinutes)})',
+                      style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                    ),
                   ),
                 ],
               ),

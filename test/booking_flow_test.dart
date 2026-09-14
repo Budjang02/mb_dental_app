@@ -1,10 +1,9 @@
-import 'package:flutter/cupertino.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mb_dental_app/app/messages.dart';
 import 'package:mb_dental_app/data/clinic_catalog.dart';
 import 'package:mb_dental_app/models/appointment.dart';
 import 'package:mb_dental_app/models/dental_service.dart';
-import 'package:mb_dental_app/models/wallet_transaction.dart';
+import 'package:mb_dental_app/models/dentist.dart';
 import 'package:mb_dental_app/models/patient.dart';
 import 'package:mb_dental_app/repositories/clinic_api.dart';
 import 'package:mb_dental_app/repositories/patient_repository.dart';
@@ -111,7 +110,32 @@ Appointment _booking({
     );
 
 void main() {
-  setUpAll(() => ClinicCatalog().seedForTest(_testServices));
+  // The app has no built-in doctors, so the roster is seeded the way
+  // patient_doctor_roster() would deliver it.
+  const roster = [
+    Dentist(
+      id: 'doc-bolasoc',
+      name: 'Dr. Rey Vincent Bolasoc',
+      title: 'General Dentist, Endodontist',
+      specializations: {kGeneralDentistry, kEndodontics, kOralSurgery},
+      clinicDays: {DateTime.wednesday, DateTime.thursday, DateTime.friday, DateTime.saturday},
+    ),
+    Dentist(
+      id: 'doc-jenneline',
+      name: 'Dr. Jenneline Mariano',
+      title: 'General Dentist, Prosthodontist',
+      specializations: {kGeneralDentistry, kProsthodontics, kCosmeticDentistry},
+      clinicDays: {DateTime.wednesday, DateTime.friday, DateTime.saturday, DateTime.sunday},
+    ),
+    Dentist(
+      id: 'doc-johnpaul',
+      name: 'Dr. John Paul Mariano',
+      title: 'Orthodontist',
+      specializations: {kOrthodontics, kGeneralDentistry},
+      clinicDays: {DateTime.thursday, DateTime.saturday, DateTime.sunday},
+    ),
+  ];
+  setUpAll(() => ClinicCatalog().seedForTest(_testServices, doctors: roster));
 
   group('clinic schedule', () {
     test('opens Wednesday through Sunday and closes Monday and Tuesday', () {

@@ -56,19 +56,65 @@ const List<String> _toothNames = [
 
 String toothName(int toothNumber) => _toothNames[toothNumber - 1];
 
-/// Chart legend, in the order the reference lists them. Also the source of
-/// truth for the colour each recorded condition paints its tooth with.
+/// Tooth fill per condition, the exact values in the website's
+/// css/odontogram.css. An unmarked tooth is Healthy, as it is on the website.
 const Map<String, Color> kToothConditionColors = {
-  'Not Recorded': Color(0xFFFFFFFF),
-  'Healthy': Color(0xFF2DD4BF),
-  'Caries/Cavity': Color(0xFFFFB74D),
-  'Filled': Color(0xFF64B5F6),
-  'Crown': Color(0xFFE040FB),
-  'Missing': Color(0xFFE57373),
-  'Root Canal': Color(0xFFFB923C),
-  'Impacted': Color(0xFFF472B6),
-  'Other': Color(0xFFA78BFA),
+  'Healthy': Color(0xFFD1FAE5),
+  'Caries/Cavity': Color(0xFFFEF3C7),
+  'Filled': Color(0xFFDBEAFE),
+  'Crown': Color(0xFFF3E8FF),
+  'Missing': Color(0xFFFEE2E2),
+  'Root Canal': Color(0xFFFFF7ED),
+  'Impacted': Color(0xFFFCE7F3),
+  'Other': Color(0xFFE0E7FF),
 };
+
+/// Outline and label colour per condition, the exact values in the website's
+/// css/odontogram.css.
+const Map<String, Color> kToothConditionStrokes = {
+  'Healthy': Color(0xFF10B981),
+  'Caries/Cavity': Color(0xFFF59E0B),
+  'Filled': Color(0xFF3B82F6),
+  'Crown': Color(0xFFA855F7),
+  'Missing': Color(0xFFEF4444),
+  'Root Canal': Color(0xFFEA580C),
+  'Impacted': Color(0xFFEC4899),
+  'Other': Color(0xFF6366F1),
+};
+
+/// Conditions whose outline is dashed (`stroke-dasharray: 3 2`). Missing is
+/// the only one on the website; every other outline is solid.
+const Set<String> kToothDashedConditions = {'Missing'};
+
+/// The condition name [kToothConditionColors] is keyed by, for however the
+/// row spells it.
+///
+/// Case-insensitive on purpose: the lookup used to be exact, so a row saying
+/// "crown", "Caries" or "Root canal" matched nothing and every such tooth was
+/// painted with the catch-all swatch. An empty condition is Healthy.
+String canonicalToothCondition(String raw) {
+  switch (raw.trim().toLowerCase().replaceAll(RegExp(r'[\s_]+'), ' ')) {
+    case '':
+    case 'healthy':
+      return 'Healthy';
+    case 'caries':
+    case 'cavity':
+    case 'caries/cavity':
+      return 'Caries/Cavity';
+    case 'filled':
+      return 'Filled';
+    case 'crown':
+      return 'Crown';
+    case 'missing':
+      return 'Missing';
+    case 'root canal':
+      return 'Root Canal';
+    case 'impacted':
+      return 'Impacted';
+    default:
+      return 'Other';
+  }
+}
 
 /// The coral the reference chart marks a picked tooth with. Deliberately not
 /// part of [kToothConditionColors]: a condition describes the tooth, while
@@ -118,12 +164,11 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
       if (tooth == null) continue;
       if (current.containsKey(tooth)) continue;
 
-      final condition = (record['condition'] ?? '').trim();
+      final condition = canonicalToothCondition(record['condition'] ?? '');
       current[tooth] = {
-        'condition': condition.isEmpty ? 'Other' : condition,
-        // An unrecognised condition still has to paint something, so it falls
-        // back to the catch-all swatch rather than crashing the chart.
-        'color': kToothConditionColors[condition] ?? kToothConditionColors['Other']!,
+        'condition': condition,
+        'color': kToothConditionColors[condition]!,
+        'stroke': kToothConditionStrokes[condition]!,
         'notes': record['notes'] ?? '',
         'date': record['date'] ?? '',
         'doctor': record['doctor'] ?? '',
@@ -428,9 +473,17 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
                         for (final entry in _toothConditions.entries)
                           entry.key: entry.value['color'] as Color,
                       },
-                      // Straight from the shared colour map, so every tooth is
-                      // painted with the app's own condition keys.
-                      idleFill: kToothConditionColors['Not Recorded']!,
+                      // A tooth with no row is Healthy, as on the website.
+                      idleFill: kToothConditionColors['Healthy']!,
+                      idleStroke: kToothConditionStrokes['Healthy']!,
+                      conditionStrokes: {
+                        for (final entry in _toothConditions.entries)
+                          entry.key: entry.value['stroke'] as Color,
+                      },
+                      dashedTeeth: {
+                        for (final entry in _toothConditions.entries)
+                          if (kToothDashedConditions.contains(entry.value['condition'])) entry.key,
+                      },
                       outlineColor: AppColors.toothOutline,
                       selectedFill: kToothSelectedFill,
                       selectedOutline: kToothSelectedOutline,
@@ -589,10 +642,9 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
   /// opens this dialog to read.
   void _showToothDetail(int tooth) {
     final info = _toothConditions[tooth];
-    final condition = (info?['condition'] as String?) ?? 'Not Recorded';
+    final condition = (info?['condition'] as String?) ?? 'Healthy';
     final swatch = (info?['color'] as Color?) ?? kToothConditionColors[condition]!;
-    // The unrecorded swatch is white, which cannot carry a chip on its own.
-    final accent = info == null ? AppColors.textSecondary : swatch;
+    final stroke = (info?['stroke'] as Color?) ?? kToothConditionStrokes[condition]!;
     final clinicalNote = (info?['notes'] as String?)?.trim() ?? '';
     final recordedOn = (info?['date'] as String?)?.trim() ?? '';
     final recordedBy = (info?['doctor'] as String?)?.trim() ?? '';
@@ -639,20 +691,20 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
                   decoration: BoxDecoration(
                     color: swatch,
                     borderRadius: BorderRadius.circular(3),
-                    border: Border.all(color: AppColors.border),
+                    border: Border.all(color: stroke),
                   ),
                 ),
                 const SizedBox(width: 8),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                   decoration: BoxDecoration(
-                    color: accent.withOpacity(0.14),
+                    color: swatch,
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: accent.withOpacity(0.45)),
+                    border: Border.all(color: stroke),
                   ),
                   child: Text(
                     condition,
-                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: accent),
+                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: stroke),
                   ),
                 ),
               ],

@@ -31,9 +31,15 @@ class _ChatScreenState extends State<ChatScreen> {
     'Do you accept walk-ins?',
   ];
 
+  /// Messages already on screen, so only a newly arrived one scrolls the
+  /// thread down.
+  int _shownCount = 0;
+
   @override
   void initState() {
     super.initState();
+    _shownCount = _repository.messages.length;
+    _repository.addListener(_onThreadChanged);
     // Opening the thread is what marks the clinic's messages as seen, so both
     // happen here rather than on the dashboard.
     _repository.refreshMessages().then((_) {
@@ -41,13 +47,27 @@ class _ChatScreenState extends State<ChatScreen> {
       _scrollToBottom();
       _repository.markMessagesRead();
     });
+    _scrollToBottom();
   }
 
   @override
   void dispose() {
+    _repository.removeListener(_onThreadChanged);
     _controller.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  /// A message arrived — a clinic reply over realtime, or this patient's own
+  /// send. The newest sits at the bottom, so follow it there, and mark a reply
+  /// read since the patient is looking at it.
+  void _onThreadChanged() {
+    if (!mounted) return;
+    final count = _repository.messages.length;
+    if (count <= _shownCount) return;
+    _shownCount = count;
+    _scrollToBottom();
+    if (_repository.unreadMessageCount > 0) _repository.markMessagesRead();
   }
 
   Future<void> _send([String? preset]) async {

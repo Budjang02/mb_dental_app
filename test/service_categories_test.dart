@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mb_dental_app/data/service_categories.dart';
+import 'package:mb_dental_app/models/dental_service.dart';
 
 void main() {
   group('procedure to category mapping', () {
@@ -21,6 +22,7 @@ void main() {
       'Tooth Alignment Guidance': 'child-dental-care',
       'Simple Tooth Extraction': 'tooth-extraction',
       'Tooth Extraction': 'tooth-extraction',
+      'Surgical Extraction': 'tooth-extraction',
       'Wisdom Tooth Removal': 'tooth-extraction',
       'Pre- and Post-Operative Care': 'tooth-extraction',
       'Root Canal Treatment': 'root-canal',
@@ -43,7 +45,6 @@ void main() {
       // Real rows in the clinic's table that the spec does not name.
       expect(categoryIdForProcedure('Dental Checkup'), kOtherServiceCategoryId);
       expect(categoryIdForProcedure('General Cleaning'), kOtherServiceCategoryId);
-      expect(categoryIdForProcedure('Surgical Extraction'), kOtherServiceCategoryId);
       expect(categoryIdForProcedure('Something Brand New'), kOtherServiceCategoryId);
       expect(categoryIdForProcedure(''), kOtherServiceCategoryId);
     });
@@ -53,6 +54,22 @@ void main() {
       expect(categoryIdForProcedure('Veneers - Ceramic/Direct'), 'improve-smile');
       expect(categoryIdForProcedure('  Metal   Braces  '), 'braces-alignment');
       expect(categoryIdForProcedure('Pre and Post Operative Care'), 'tooth-extraction');
+    });
+
+    test('the catch-all books a checkup outright instead of listing procedures', () {
+      final other = serviceCategoryById(kOtherServiceCategoryId);
+      expect(other.isDirectPick, isTrue);
+      expect(other.directProcedureName, kCheckupProcedureName);
+      // No submenu: a group that books one procedure must not also list them.
+      expect(other.procedureNames, isEmpty);
+    });
+
+    test('every other group opens a submenu', () {
+      for (final category in kServiceCategories) {
+        if (category.id == kOtherServiceCategoryId) continue;
+        expect(category.isDirectPick, isFalse, reason: category.id);
+        expect(category.procedureNames, isNotEmpty, reason: category.id);
+      }
     });
 
     test('the catch-all is last, so it never pushes a real group down', () {
@@ -68,6 +85,55 @@ void main() {
               reason: '"$name" is listed under more than one category');
         }
       }
+    });
+  });
+  group('direct-pick group', () {
+    DentalService service(String name) => DentalService(
+          id: name,
+          name: name,
+          description: '',
+          specializationCode: 'general',
+          categoryId: kOtherServiceCategoryId,
+          durationMinutes: 30,
+          price: 0,
+          requiredSpecialization: 'General Dentistry',
+        );
+
+    const other = ServiceGroup(
+      code: kOtherServiceCategoryId,
+      label: 'Other / not sure',
+      blurb: '',
+      sortOrder: 6,
+      directProcedureName: kCheckupProcedureName,
+    );
+
+    const listed = ServiceGroup(
+      code: 'root-canal',
+      label: 'Root canal',
+      blurb: '',
+      sortOrder: 4,
+    );
+
+    test('books the named procedure', () {
+      final picked = directPickService(
+        other,
+        [service('Surgical Extraction'), service(kCheckupProcedureName)],
+      );
+      expect(picked?.name, kCheckupProcedureName);
+    });
+
+    test('matches the name past case and punctuation', () {
+      expect(directPickService(other, [service('dental  check-up')])?.name,
+          'dental  check-up');
+    });
+
+    test('falls back to the first procedure when the clinic renamed it', () {
+      expect(directPickService(other, [service('Consultation')])?.name, 'Consultation');
+    });
+
+    test('is null for a group with a submenu, and for an empty group', () {
+      expect(directPickService(listed, [service('Root Canal Treatment')]), isNull);
+      expect(directPickService(other, const []), isNull);
     });
   });
 }

@@ -292,7 +292,8 @@ InputDecoration authInputDecoration({
 
   return InputDecoration(
     labelText: label,
-    prefixIcon: Icon(icon, color: AppColors.primary, size: 22),
+    // No fixed colour: grey, and teal while the field has focus (theme).
+    prefixIcon: Icon(icon, size: 20),
     suffixIcon: suffixIcon,
     border: border(AppColors.border),
     enabledBorder: border(AppColors.border),

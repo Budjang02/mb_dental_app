@@ -41,6 +41,7 @@ update public.procedures set patient_category = 'child-dental-care'
 update public.procedures set patient_category = 'tooth-extraction'
  where name in ('Simple Tooth Extraction',
                 'Tooth Extraction',
+                'Surgical Extraction',
                 'Wisdom Tooth Removal',
                 'Pre- and Post-Operative Care');
 
@@ -57,7 +58,9 @@ update public.procedures set patient_category = 'jaw-problem'
                 'Custom Night Guard');
 
 -- Everything the lists above did not claim. As of writing that is
--- 'Dental Checkup' and 'Surgical Extraction' among the active rows.
+-- 'Dental Checkup' among the active rows: the 'other' group books it outright
+-- rather than opening a submenu, so anything else landing here is unbookable
+-- from the wizard until it is claimed by a group above.
 update public.procedures set patient_category = 'other'
  where patient_category is null;
 

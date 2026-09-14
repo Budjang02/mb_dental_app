@@ -15,6 +15,13 @@ class Payment {
   /// Only issued once the statement is settled, so null while unpaid.
   final String? receiptNo;
 
+  /// `payment_receipts.id` behind [receiptNo]. The "payment received" notice
+  /// is keyed on it, the same way the website keys it.
+  final String? receiptId;
+
+  /// When the clinic issued that receipt.
+  final DateTime? receiptIssuedAt;
+
   Payment({
     required this.id,
     required this.referenceNo,
@@ -26,6 +33,8 @@ class Payment {
     required this.invoiceNo,
     this.paymentMethod,
     this.receiptNo,
+    this.receiptId,
+    this.receiptIssuedAt,
   });
 
   bool get isPaid => status.toLowerCase() == 'paid';

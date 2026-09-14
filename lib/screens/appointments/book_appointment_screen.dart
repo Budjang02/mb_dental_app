@@ -5,10 +5,11 @@ import '../../app/messages.dart';
 import '../../app/theme.dart';
 import '../../app/theme_controller.dart';
 import '../../data/clinic_catalog.dart';
+import '../../data/service_categories.dart';
 import '../../models/dental_service.dart';
 import '../../models/dentist.dart';
-import '../../models/wallet_transaction.dart';
 import '../../repositories/clinic_api.dart';
+import '../../repositories/patient_api.dart';
 import '../../repositories/patient_repository.dart';
 import '../../widgets/app_toast.dart';
 import '../../widgets/schedule_picker.dart';
@@ -60,6 +61,10 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
   int? _selectedStartMinute;
   bool _isSubmitting = false;
 
+  /// Idempotency key for this checkout. Held on the state, not generated per
+  /// call, so a retry after a timeout cannot debit the wallet a second time.
+  String? _checkoutReference;
+
   // --- Derived booking totals ---
 
   /// Chair time for the whole visit — the sum the schedule step books against.
@@ -76,10 +81,66 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
   /// holds clinic that weekday.
   Dentist? get _assignedDentist => _selectedDate == null
       ? null
-      : assignedDentistFor(_selectedServices, _selectedDate!);
+      : assignedDentistFor(
+          _selectedServices,
+          _selectedDate!,
+          startMinute: _selectedStartMinute,
+          durationMinutes: _totalDuration,
+        );
 
-  String get _serviceSummary =>
-      _selectedServices.map((s) => s.name).join(', ');
+  /// The day's start times, with every time no clinic dentist credentialed for
+  /// all the selected procedures is working for the whole visit marked taken.
+  /// That is what guarantees the summary always names the dentist, their
+  /// specialization and the time.
+  List<SlotOption> _slotsWithDentist(DateTime day) {
+    if (!hasClinicRoster || !hasEligibleDentistOn(_selectedServices, day)) return const [];
+    return [
+      for (final slot in _repository.slotOptionsFor(day: day, durationMinutes: _totalDuration))
+        slot.isAvailable &&
+                assignedDentistFor(
+                      _selectedServices,
+                      day,
+                      startMinute: slot.startMinute,
+                      durationMinutes: _totalDuration,
+                    ) !=
+                    null
+            ? slot
+            : SlotOption(
+                startMinute: slot.startMinute,
+                durationMinutes: slot.durationMinutes,
+                isAvailable: false,
+              ),
+    ];
+  }
+
+  /// Why no clinic dentist can take the selected procedures, split the way the
+  /// website's booking wizard words it (`_bwSplitNote`): the reason, shown in
+  /// bold, then what happens next. Null while a dentist covers the selection,
+  /// and while the roster is still loading.
+  (String, String)? get _noDentistNote {
+    if (_selectedServices.isEmpty) return null;
+    final catalog = ClinicCatalog();
+    if (!hasClinicRoster) {
+      if (catalog.isLoading) return null;
+      if (catalog.rosterFailed) {
+        return ("We couldn't load the clinic's dentists.", 'Check your connection and try again.');
+      }
+      return ('No dentists are available right now.', 'Please contact the clinic to book this visit.');
+    }
+    if (eligibleDentists(_selectedServices).isNotEmpty) return null;
+    for (final service in _selectedServices) {
+      if (eligibleDentists([service]).isEmpty) {
+        return (
+          'No dentist currently offers ${specializationLabelFor(service.specializationCode)}.',
+          'Please contact the clinic about ${service.name}.',
+        );
+      }
+    }
+    return (
+      'No one dentist covers all of these procedures.',
+      'Book them as separate visits, or contact the clinic.',
+    );
+  }
 
   @override
   void dispose() {
@@ -93,9 +154,16 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
   bool get _canAdvance {
     switch (_step) {
       case BookingStep.services:
-        return _selectedServices.isNotEmpty;
+        // A mix no single dentist is credentialed for is not bookable: a visit
+        // is staffed by one dentist, so it must not reach the calendar.
+        return _selectedServices.isNotEmpty && hasClinicRoster && _noDentistNote == null;
       case BookingStep.booking:
-        return _selectedDate != null && _selectedStartMinute != null;
+        // The booking only moves on with a real clinic dentist named for the
+        // chosen time: an unannounced dentist is not a bookable visit.
+        return _selectedDate != null &&
+            _selectedStartMinute != null &&
+            hasClinicRoster &&
+            _assignedDentist != null;
       case BookingStep.summary:
         return true;
     }
@@ -104,11 +172,19 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
   String get _blockedReason {
     switch (_step) {
       case BookingStep.services:
-        return 'Please select at least one dental service.';
+        if (_selectedServices.isEmpty) {
+          return 'Please select at least one dental service.';
+        }
+        final note = _noDentistNote;
+        if (note != null) return '${note.$1} ${note.$2}';
+        return "Loading the clinic's dentists. Please try again in a moment.";
       case BookingStep.booking:
-        return _selectedDate == null
-            ? 'Please select an appointment date.'
-            : 'Please select a start time.';
+        if (_selectedDate == null) return 'Please select an appointment date.';
+        if (_selectedStartMinute == null) return 'Please select a start time.';
+        if (!hasClinicRoster) {
+          return 'We could not load the clinic\'s dentists. Check your connection and try again.';
+        }
+        return 'No dentist for these procedures is working at that time. Please pick another time.';
       case BookingStep.summary:
         return '';
     }
@@ -192,8 +268,14 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
       return;
     }
 
+    // A local check first, so an obviously short wallet never leaves the screen.
+    // It is not the one that protects the balance — the database re-checks it
+    // under a row lock, because this figure can be stale by the time it is read.
     if (_repository.walletBalance < _downPayment) {
-      showAppToast(context, AppMessages.insufficientBalance, isError: true);
+      _reportInsufficientFunds(
+        available: _repository.walletBalance,
+        required: _downPayment,
+      );
       return;
     }
 
@@ -204,30 +286,52 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
     final typed = _notesController.text.trim();
     final notes = typed.isEmpty ? null : typed;
 
-    try {
-      await _repository.addWalletTransaction(
-        title: 'Appointment Downpayment',
-        subtitle: _serviceSummary,
-        amount: _downPayment,
-        type: TransactionType.debit,
-        icon: CupertinoIcons.calendar_badge_plus,
-        method: 'GCash',
-      );
+    // Stable for the life of this attempt, so a retry after a dropped
+    // connection settles onto the first booking instead of paying twice.
+    _checkoutReference ??= 'REF-${DateTime.now().millisecondsSinceEpoch}';
 
-      // The booking arrives pending whatever the patient paid: only the clinic
+    try {
+      // One transaction: balance check, debit, ledger entry and the booking
+      // itself. The booking arrives pending whatever was paid — only the clinic
       // may confirm a slot, so the app never asks for a confirmed one.
-      await _repository.addAppointment(
-        serviceName: _serviceSummary,
-        doctorName: _assignedDentist?.name ?? unassignedDoctor,
+      await _repository.checkoutWithWallet(
+        serviceIds: _selectedServices.map((s) => s.id).toList(),
         date: date,
         timeSlot: timeSlot,
-        notes: notes,
-        paymentMethod: 'GCash',
-        serviceIds: _selectedServices.map((s) => s.id).toList(),
         durationMinutes: _totalDuration,
         totalPrice: _totalPrice,
-        amountPaid: _downPayment,
+        amountToPay: _downPayment,
+        doctorId: _assignedDentist?.id,
+        notes: notes,
+        method: 'GCash',
+        referenceNo: _checkoutReference,
       );
+    } on InsufficientWalletBalanceException catch (e) {
+      if (!mounted) return;
+      setState(() => _isSubmitting = false);
+      // The wallet moved since this screen last read it, so show the figures the
+      // database refused on rather than the ones on screen.
+      _reportInsufficientFunds(
+        available: e.available,
+        required: e.required > 0 ? e.required : _downPayment,
+      );
+      return;
+    } on SlotTakenException {
+      if (!mounted) return;
+      setState(() {
+        _isSubmitting = false;
+        _selectedStartMinute = null;
+        _step = BookingStep.booking;
+        // Nothing was charged, but the next attempt is a new booking.
+        _checkoutReference = null;
+      });
+      showAppToast(context, AppMessages.slotUnavailable, isError: true);
+      return;
+    } on PatientNotApprovedException {
+      if (!mounted) return;
+      setState(() => _isSubmitting = false);
+      showAppToast(context, AppMessages.accountPendingApproval, isError: true);
+      return;
     } catch (e) {
       if (!mounted) return;
       setState(() => _isSubmitting = false);
@@ -244,6 +348,19 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
     showAppToast(context, AppMessages.appointmentScheduled);
 
     Navigator.pop(context);
+  }
+
+  /// Says how short the wallet is and offers the top-up screen, rather than only
+  /// refusing. Nothing has been charged at this point.
+  void _reportInsufficientFunds({required double available, required double required}) {
+    final shortfall = (required - available).clamp(0, double.infinity);
+    showAppToast(
+      context,
+      '${AppMessages.insufficientBalance} '
+      'Balance ${formatPeso(available)}, ${formatPeso(required)} due — '
+      'top up ${formatPeso(shortfall.toDouble())} to continue.',
+      isError: true,
+    );
   }
 
   // --- Build ---
@@ -292,6 +409,7 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
           selected: _selectedServices,
           onRemoveService: _removeService,
           onAddServices: _openServicePicker,
+          note: _noDentistNote,
         );
 
       case BookingStep.booking:
@@ -305,14 +423,11 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
               selectedStartMinute: _selectedStartMinute,
               firstDay: DateTime(now.year, now.month, now.day),
               lastDay: DateTime(now.year, now.month, now.day).add(const Duration(days: 180)),
-              hasOpenSlot: (day) => _repository.hasOpenSlotOn(
-                day: day,
-                durationMinutes: _totalDuration,
-              ),
-              slotsFor: (day) => _repository.slotOptionsFor(
-                day: day,
-                durationMinutes: _totalDuration,
-              ),
+              // A free chair is not enough: the day must also be one a dentist
+              // credentialed for every selected procedure holds clinic, or the
+              // summary would name nobody for a visit already paid on.
+              hasOpenSlot: (day) => _slotsWithDentist(day).any((slot) => slot.isAvailable),
+              slotsFor: _slotsWithDentist,
               onDateSelected: (day) => setState(() {
                 _selectedDate = day;
                 _selectedStartMinute = null;
@@ -536,10 +651,14 @@ class _ServiceStep extends StatelessWidget {
   final ValueChanged<DentalService> onRemoveService;
   final VoidCallback onAddServices;
 
+  /// Why nobody can take the selection (reason, then next step), or null.
+  final (String, String)? note;
+
   const _ServiceStep({
     required this.selected,
     required this.onRemoveService,
     required this.onAddServices,
+    this.note,
   });
 
   @override
@@ -553,6 +672,10 @@ class _ServiceStep extends StatelessWidget {
             onRemove: () => onRemoveService(service),
           ),
           const SizedBox(height: 10),
+        ],
+        if (note != null) ...[
+          _NoDentistNote(reason: note!.$1, next: note!.$2),
+          const SizedBox(height: 12),
         ],
         const SizedBox(height: 6),
         _ActionCard(
@@ -615,6 +738,15 @@ class _SelectedServiceCard extends StatelessWidget {
                     ),
                   ],
                 ),
+                const SizedBox(height: 5),
+                // The specialization this procedure carries, and how many of the
+                // clinic's dentists hold it. A zero here is why the calendar
+                // will offer nothing.
+                Text(
+                  '${specializationLabelFor(service.specializationCode)} · '
+                  '${_doctorCountLabel(doctorsForService(service).length)}',
+                  style: TextStyle(fontSize: 11.5, color: AppColors.textSecondary),
+                ),
               ],
             ),
           ),
@@ -627,6 +759,11 @@ class _SelectedServiceCard extends StatelessWidget {
       ),
     );
   }
+}
+
+String _doctorCountLabel(int count) {
+  if (count == 0) return 'no dentist available';
+  return count == 1 ? '1 dentist' : '$count dentists';
 }
 
 /// The ✕ circle on the trailing edge of every selected-item card.
@@ -731,6 +868,7 @@ class _ActionCard extends StatelessWidget {
     );
   }
 }
+
 
 /// The full service menu, opened from the "select more services" card.
 ///
@@ -920,20 +1058,34 @@ class _ServicePickerSheetState extends State<_ServicePickerSheet> {
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
       children: [
         for (final entry in groups.entries) ...[
-          _CategorySection(
-            group: entry.key,
-            services: entry.value,
-            selected: widget.selected,
-            // A search is already a filter, so its results open on their own —
-            // making the patient expand each group to see what matched would
-            // defeat the search.
-            isExpanded: _isSearching || _expanded.contains(entry.key.code),
-            canCollapse: !_isSearching,
-            onToggleExpanded: () => setState(() {
-              if (!_expanded.remove(entry.key.code)) _expanded.add(entry.key.code);
-            }),
-            onToggleService: (service) => setState(() => widget.onToggle(service)),
-          ),
+          // A group that books one procedure outright has no submenu to open:
+          // a patient who does not know what they need should not have to pick
+          // from a list to say so.
+          if (entry.key.isDirectPick)
+            Builder(builder: (context) {
+              final service = directPickService(entry.key, entry.value)!;
+              return _DirectPickSection(
+                group: entry.key,
+                service: service,
+                isSelected: widget.selected.contains(service),
+                onTap: () => setState(() => widget.onToggle(service)),
+              );
+            })
+          else
+            _CategorySection(
+              group: entry.key,
+              services: entry.value,
+              selected: widget.selected,
+              // A search is already a filter, so its results open on their own
+              // — making the patient expand each group to see what matched
+              // would defeat the search.
+              isExpanded: _isSearching || _expanded.contains(entry.key.code),
+              canCollapse: !_isSearching,
+              onToggleExpanded: () => setState(() {
+                if (!_expanded.remove(entry.key.code)) _expanded.add(entry.key.code);
+              }),
+              onToggleService: (service) => setState(() => widget.onToggle(service)),
+            ),
           const SizedBox(height: 10),
         ],
       ],
@@ -1067,6 +1219,99 @@ class _CategorySection extends StatelessWidget {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// A group that books one procedure outright: the heading *is* the choice.
+///
+/// Used by "Other / not sure", which books a dental checkup. The procedure it
+/// books is named on the card so the patient still knows what they committed
+/// to, and the chair time and price are the same ones a submenu tile shows.
+class _DirectPickSection extends StatelessWidget {
+  final ServiceGroup group;
+  final DentalService service;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  const _DirectPickSection({
+    required this.group,
+    required this.service,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(14, 13, 12, 13),
+          decoration: BoxDecoration(
+            color: isSelected ? AppColors.primary.withOpacity(0.08) : AppColors.surface,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: isSelected ? AppColors.primary : AppColors.border,
+              width: isSelected ? 1.5 : 1,
+            ),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      group.label,
+                      style: TextStyle(
+                        fontSize: 14.5,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    if (group.blurb.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        group.blurb,
+                        style: TextStyle(fontSize: 11.5, color: AppColors.textSecondary),
+                      ),
+                    ],
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Icon(CupertinoIcons.clock, size: 11, color: AppColors.textSecondary),
+                        const SizedBox(width: 4),
+                        Text(
+                          '${service.name} · ${service.durationLabel}',
+                          style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                        ),
+                        const SizedBox(width: 10),
+                        Text(
+                          service.priceLabel,
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.primary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              Icon(
+                isSelected ? CupertinoIcons.checkmark_circle : CupertinoIcons.circle,
+                size: 21,
+                color: isSelected ? AppColors.primary : AppColors.border,
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -1421,6 +1666,13 @@ class _PaymentStep extends StatelessWidget {
           ),
           child: assigned == null
               ? Icon(kDoctorIcon, size: 19, color: AppColors.primary)
+              : assigned.avatarUrl != null
+              // The dentist's own photo from their clinic profile.
+              ? CircleAvatar(
+                  radius: 21,
+                  backgroundColor: Colors.transparent,
+                  backgroundImage: NetworkImage(assigned.avatarUrl!),
+                )
               : Text(
                   assigned.initials,
                   style: TextStyle(
@@ -1435,22 +1687,16 @@ class _PaymentStep extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                children: [
-                  Icon(kDoctorIcon, size: 12, color: AppColors.textSecondary),
-                  const SizedBox(width: 5),
-                  Expanded(
-                    child: Text(
-                      doctorLabel(assigned?.name),
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 13.5,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.textPrimary,
-                      ),
-                    ),
-                  ),
-                ],
+              // No glyph before the name: the avatar beside it already says
+              // whose name this is.
+              Text(
+                doctorLabel(assigned?.name),
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.textPrimary,
+                ),
               ),
               const SizedBox(height: 5),
               if (assigned != null)
@@ -1683,6 +1929,38 @@ class _PaymentOptionTile extends StatelessWidget {
               ],
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The empty state for a selection no clinic dentist can take: the reason in
+/// bold, then what happens next, the way the website's booking wizard shows
+/// it. Never a made-up dentist.
+class _NoDentistNote extends StatelessWidget {
+  final String reason;
+  final String next;
+
+  const _NoDentistNote({required this.reason, required this.next});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.error.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.error.withOpacity(0.35)),
+      ),
+      child: RichText(
+        text: TextSpan(
+          style: TextStyle(fontSize: 12.5, height: 1.4, color: AppColors.textPrimary),
+          children: [
+            TextSpan(text: reason, style: const TextStyle(fontWeight: FontWeight.bold)),
+            TextSpan(text: ' $next'),
+          ],
         ),
       ),
     );

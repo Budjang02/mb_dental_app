@@ -7,6 +7,8 @@ import 'package:mb_dental_app/widgets/schedule_picker.dart';
 import 'package:mb_dental_app/widgets/appointment_detail_sheet.dart';
 import 'package:mb_dental_app/app/messages.dart';
 import 'package:mb_dental_app/data/clinic_catalog.dart';
+import 'package:mb_dental_app/models/dental_service.dart';
+import 'package:mb_dental_app/models/dentist.dart';
 
 /// Moves an existing appointment to a new date/time via
 /// [PatientRepository.rescheduleAppointment] instead of booking a new one.
@@ -31,6 +33,31 @@ class _RescheduleAppointmentScreenState extends State<RescheduleAppointmentScree
   /// The moved appointment keeps its original chair time, so the grid only
   /// offers starts that still fit the same block.
   int get _duration => widget.appointment.durationMinutes;
+
+  /// The dentist already on this booking, when the roster carries them. Their
+  /// clinic days bound the move: rescheduling onto a day they are not in would
+  /// silently hand the visit to someone else.
+  Dentist? get _assignedDentist => dentistByName(widget.appointment.doctorName.trim());
+
+  /// The procedures this visit was booked with, for the credential check on a
+  /// booking the roster does not name a dentist for. Empty for legacy records
+  /// that predate per-service tracking.
+  List<DentalService> get _bookedServices => [
+        for (final id in widget.appointment.serviceIds)
+          if (serviceById(id) != null) serviceById(id)!,
+      ];
+
+  /// Whether the visit can still be staffed on [day].
+  ///
+  /// Prefers the dentist already assigned; falls back to the credentials the
+  /// booked procedures demand. A legacy booking with neither is left on the
+  /// clinic's own opening days rather than blocked outright.
+  bool _isStaffedOn(DateTime day) {
+    final assigned = _assignedDentist;
+    if (assigned != null) return assigned.clinicDays.contains(day.weekday);
+    if (_bookedServices.isEmpty) return true;
+    return hasEligibleDentistOn(_bookedServices, day);
+  }
   late final TextEditingController _notesController =
       TextEditingController(text: widget.appointment.notes ?? '');
 
@@ -114,18 +141,10 @@ class _RescheduleAppointmentScreenState extends State<RescheduleAppointmentScree
                         Text(widget.appointment.serviceName,
                             style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppColors.textPrimary)),
                         const SizedBox(height: 4),
-                        Row(
-                          children: [
-                            Icon(kDoctorIcon, size: 13, color: AppColors.textSecondary),
-                            const SizedBox(width: 5),
-                            Expanded(
-                              child: Text(
-                                doctorLabel(widget.appointment.doctorName),
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
-                              ),
-                            ),
-                          ],
+                        Text(
+                          'Doctor: ${doctorLabel(widget.appointment.doctorName)}',
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
                         ),
                         const SizedBox(height: 8),
                         Text(
@@ -145,11 +164,13 @@ class _RescheduleAppointmentScreenState extends State<RescheduleAppointmentScree
                     firstDay: today,
                     lastDay: today.add(const Duration(days: 730)),
                     // The appointment being moved must not block itself.
-                    hasOpenSlot: (day) => _repository.hasOpenSlotOn(
-                      day: day,
-                      durationMinutes: _duration,
-                      excludeAppointmentId: widget.appointment.id,
-                    ),
+                    hasOpenSlot: (day) =>
+                        _isStaffedOn(day) &&
+                        _repository.hasOpenSlotOn(
+                          day: day,
+                          durationMinutes: _duration,
+                          excludeAppointmentId: widget.appointment.id,
+                        ),
                     slotsFor: (day) => _repository.slotOptionsFor(
                       day: day,
                       durationMinutes: _duration,

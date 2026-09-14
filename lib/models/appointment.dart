@@ -27,6 +27,35 @@ class Appointment {
   final double totalPrice;
   final double amountPaid;
 
+  /// `appointments.doctor_id`, for finding the dentist's roster entry (photo,
+  /// credentials). Null while the clinic has not assigned anyone.
+  final String? doctorId;
+
+  /// When the booking was made.
+  final DateTime? createdAt;
+
+  /// When it last moved to its current status (`confirmed_at`,
+  /// `cancelled_at`, `arrived_at`). What the notification feed dates a status
+  /// notice by.
+  final DateTime? statusChangedAt;
+
+  /// `appointments.appointment_date` exactly as the database returned it
+  /// (`2026-09-20`). Notification keys shared with the website are built from
+  /// this string rather than from [date], so both sides spell them the same.
+  final String rawDate;
+
+  /// `appointments.appointment_time` exactly as the database returned it
+  /// (`10:00:00`), for the same reason as [rawDate].
+  final String rawTime;
+
+  /// `appointments.status` as stored: `Pending`, `Confirmed`, `Ongoing`,
+  /// `Completed`, `Cancelled` or `No-Show`. [status] folds these onto four.
+  final String rawStatus;
+
+  /// True when the patient booked the visit themselves; false when the clinic
+  /// booked it for them.
+  final bool isSelfBooked;
+
   Appointment({
     required this.id,
     required this.serviceName,
@@ -41,7 +70,44 @@ class Appointment {
     this.durationMinutes = 60,
     this.totalPrice = 0,
     this.amountPaid = 0,
-  });
+    this.doctorId,
+    this.createdAt,
+    this.statusChangedAt,
+    String? rawDate,
+    String? rawTime,
+    String? rawStatus,
+    this.isSelfBooked = true,
+  })  : rawDate = rawDate ?? dbDate(date),
+        rawTime = rawTime ?? dbTime(timeSlot),
+        rawStatus = rawStatus ?? statusLiteral(status);
+
+  /// A date as Postgres `date` prints it: `2026-09-20`.
+  static String dbDate(DateTime date) =>
+      '${date.year.toString().padLeft(4, '0')}-'
+      '${date.month.toString().padLeft(2, '0')}-'
+      '${date.day.toString().padLeft(2, '0')}';
+
+  /// A slot label as Postgres `time` prints it: `10:00:00`.
+  static String dbTime(String timeSlot) {
+    final minute = parseMinuteOfDay(timeSlot);
+    if (minute == null) return timeSlot;
+    return '${(minute ~/ 60).toString().padLeft(2, '0')}:'
+        '${(minute % 60).toString().padLeft(2, '0')}:00';
+  }
+
+  /// The `appointment_status` enum value the app writes for [status].
+  static String statusLiteral(AppointmentStatus status) {
+    switch (status) {
+      case AppointmentStatus.pending:
+        return 'Pending';
+      case AppointmentStatus.confirmed:
+        return 'Confirmed';
+      case AppointmentStatus.cancelled:
+        return 'Cancelled';
+      case AppointmentStatus.completed:
+        return 'Completed';
+    }
+  }
 
   /// Start of the booked block as minutes from midnight, or null when the slot
   /// label predates the 15-minute grid and cannot be parsed.
@@ -78,6 +144,7 @@ class Appointment {
     String? cancellationReason,
     String? doctorName,
     double? amountPaid,
+    DateTime? statusChangedAt,
   }) {
     return Appointment(
       id: id,
@@ -93,6 +160,15 @@ class Appointment {
       durationMinutes: durationMinutes,
       totalPrice: totalPrice,
       amountPaid: amountPaid ?? this.amountPaid,
+      doctorId: doctorId,
+      createdAt: createdAt,
+      statusChangedAt: statusChangedAt ?? this.statusChangedAt,
+      // A local edit writes these columns exactly as the database will store
+      // them, so a key built before the next reload already matches.
+      rawDate: date != null ? dbDate(date) : rawDate,
+      rawTime: timeSlot != null ? dbTime(timeSlot) : rawTime,
+      rawStatus: status != null ? statusLiteral(status) : rawStatus,
+      isSelfBooked: isSelfBooked,
     );
   }
 }

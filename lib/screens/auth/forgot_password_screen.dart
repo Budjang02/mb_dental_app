@@ -1,5 +1,6 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:mb_dental_app/widgets/field_icons.dart';
 
 import '../../app/theme.dart';
 import '../../app/theme_controller.dart';
@@ -126,7 +127,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                     style: TextStyle(color: AppColors.textPrimary),
                     decoration: authInputDecoration(
                       label: 'Email Address',
-                      icon: CupertinoIcons.mail,
+                      icon: fieldIconFor(FieldKind.email),
                     ),
                     validator: (value) {
                       if (value == null || value.trim().isEmpty) {

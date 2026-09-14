@@ -1,9 +1,8 @@
 import 'package:flutter/widgets.dart';
 
-/// The tooth glyph used for the Records tab. Neither Material nor Cupertino
-/// ships a tooth, so it is drawn here as a path in the same house style as the
-/// rest of the navigation (see `app_icons.dart`): a clean linear outline with
-/// rounded caps and joins.
+/// A hand-drawn tooth glyph: a clean linear outline with rounded caps and
+/// joins. The Records tab itself now uses Tabler's `dental` icon (see
+/// `dashboard_screen.dart`), matching the website's sidebar.
 ///
 /// The silhouette is an incisor seen face-on — a broad crown with a squared,
 /// gently rounded biting edge that curves in at the shoulders, pulls into a

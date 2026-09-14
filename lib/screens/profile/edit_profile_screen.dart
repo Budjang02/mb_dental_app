@@ -1,5 +1,6 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:mb_dental_app/widgets/field_icons.dart';
 import 'package:mb_dental_app/app/theme.dart';
 import 'package:mb_dental_app/app/theme_controller.dart';
 import 'package:mb_dental_app/repositories/patient_repository.dart';
@@ -125,27 +126,27 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             children: [
               TextFormField(
                 controller: _firstNameController,
-                decoration: const InputDecoration(labelText: 'First Name'),
+                decoration: InputDecoration(labelText: 'First Name', prefixIcon: fieldIcon(FieldKind.firstName)),
                 validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
               ),
               const SizedBox(height: 16),
               TextFormField(
                 controller: _lastNameController,
-                decoration: const InputDecoration(labelText: 'Last Name'),
+                decoration: InputDecoration(labelText: 'Last Name', prefixIcon: fieldIcon(FieldKind.lastName)),
                 validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
               ),
               const SizedBox(height: 16),
               TextFormField(
                 controller: _phoneController,
                 keyboardType: TextInputType.phone,
-                decoration: const InputDecoration(labelText: 'Phone Number'),
+                decoration: InputDecoration(labelText: 'Phone Number', prefixIcon: fieldIcon(FieldKind.phone)),
                 validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
               ),
               const SizedBox(height: 16),
               AppDropdownField<String>(
                 value: _gender,
                 labelText: 'Gender',
-                prefixIcon: Icon(CupertinoIcons.person_2, color: AppColors.primary, size: 20),
+                prefixIcon: fieldIcon(FieldKind.gender),
                 options: const [
                   AppDropdownOption(value: 'Male', label: 'Male'),
                   AppDropdownOption(value: 'Female', label: 'Female'),
@@ -158,7 +159,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 borderRadius: BorderRadius.circular(12),
                 onTap: _pickDateOfBirth,
                 child: InputDecorator(
-                  decoration: const InputDecoration(labelText: 'Birthdate'),
+                  decoration: InputDecoration(labelText: 'Birthdate', prefixIcon: fieldIcon(FieldKind.birthdate)),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -172,7 +173,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                               : AppColors.textPrimary,
                         ),
                       ),
-                      Icon(CupertinoIcons.calendar, color: AppColors.primary, size: 18),
                     ],
                   ),
                 ),
@@ -186,7 +186,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
               AppDropdownField<String>(
                 value: _bloodType,
                 labelText: 'Blood Type',
-                prefixIcon: Icon(CupertinoIcons.drop, color: AppColors.primary, size: 20),
+                prefixIcon: fieldIcon(FieldKind.bloodType),
                 options: _bloodTypes.map((b) => AppDropdownOption(value: b, label: b)).toList(),
                 onChanged: (v) => setState(() => _bloodType = v),
               ),
@@ -194,7 +194,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
               AppDropdownField<String>(
                 value: _maritalStatus,
                 labelText: 'Marital Status',
-                prefixIcon: Icon(Icons.diversity_1, color: AppColors.primary, size: 20),
+                prefixIcon: fieldIcon(FieldKind.maritalStatus),
                 options: _maritalStatuses.map((m) => AppDropdownOption(value: m, label: m)).toList(),
                 onChanged: (v) => setState(() => _maritalStatus = v),
               ),
@@ -204,14 +204,15 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 maxLines: 2,
                 decoration: InputDecoration(
                   labelText: 'Address',
-                  prefixIcon: Icon(CupertinoIcons.map_pin_ellipse, color: AppColors.primary, size: 20),
+                  prefixIcon: fieldIcon(FieldKind.address),
                 ),
               ),
               const SizedBox(height: 16),
               TextFormField(
                 controller: _medicalHistoryController,
                 maxLines: 3,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
+                  prefixIcon: fieldIcon(FieldKind.medicalHistory),
                   labelText: 'Medical History',
                   hintText: 'Allergies, conditions, medications, etc.',
                 ),

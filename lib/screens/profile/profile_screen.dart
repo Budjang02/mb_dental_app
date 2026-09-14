@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:mb_dental_app/widgets/field_icons.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mb_dental_app/app/theme.dart';
 import 'package:mb_dental_app/repositories/clinic_api.dart';
@@ -41,7 +42,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 color: AppColors.error.withOpacity(0.16),
                 shape: BoxShape.circle,
               ),
-              child: Icon(CupertinoIcons.square_arrow_right, size: 26, color: AppColors.error),
+              child: Icon(TablerIcons.logout, size: 26, color: AppColors.error),
             ),
             const SizedBox(height: 18),
             Text(
@@ -113,7 +114,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: Icon(CupertinoIcons.camera, color: AppColors.primary),
+              leading: Icon(TablerIcons.camera, color: AppColors.primary),
               title: const Text('Take Photo'),
               onTap: () {
                 Navigator.pop(sheetContext);
@@ -121,7 +122,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               },
             ),
             ListTile(
-              leading: Icon(CupertinoIcons.photo, color: AppColors.primary),
+              leading: Icon(TablerIcons.photo, color: AppColors.primary),
               title: const Text('Choose from Gallery'),
               onTap: () {
                 Navigator.pop(sheetContext);
@@ -191,7 +192,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             // behind it used to dial an empty string.
             if (kClinicPhone.isNotEmpty) ...[
               _SupportRow(
-                icon: CupertinoIcons.phone,
+                icon: TablerIcons.phone,
                 label: 'Call the clinic',
                 value: kClinicPhone,
                 onTap: () {
@@ -206,7 +207,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ],
             if (kClinicEmail.isNotEmpty) ...[
               _SupportRow(
-                icon: CupertinoIcons.mail,
+                icon: TablerIcons.mail,
                 label: 'Email us',
                 value: kClinicEmail,
                 onTap: () {
@@ -221,7 +222,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ],
             if (kClinicAddress.isNotEmpty)
               _SupportRow(
-                icon: CupertinoIcons.map_pin_ellipse,
+                icon: TablerIcons.map_pin,
                 label: 'Visit us',
                 value: kClinicAddress,
                 onTap: () {
@@ -243,7 +244,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
               child: Row(
                 children: [
-                  Icon(CupertinoIcons.clock, size: 15, color: AppColors.primary),
+                  Icon(TablerIcons.clock, size: 15, color: AppColors.primary),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
@@ -317,7 +318,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         ),
                       ),
                       if (selected)
-                        Icon(CupertinoIcons.checkmark_alt_circle_fill, size: 20, color: AppColors.primary),
+                        Icon(TablerIcons.circle_check, size: 20, color: AppColors.primary),
                     ],
                   ),
                 ),
@@ -343,12 +344,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ],
                 ),
                 const SizedBox(height: 14),
-                option(ThemeMode.system, CupertinoIcons.circle_lefthalf_fill, 'System',
+                option(ThemeMode.system, TablerIcons.circle_half_2, 'System',
                     'Match the device light / dark setting.'),
                 const SizedBox(height: 10),
-                option(ThemeMode.light, CupertinoIcons.sun_max_fill, 'Light', 'Always use the light theme.'),
+                option(ThemeMode.light, TablerIcons.sun, 'Light', 'Always use the light theme.'),
                 const SizedBox(height: 10),
-                option(ThemeMode.dark, CupertinoIcons.moon_fill, 'Dark', 'Always use the dark theme.'),
+                option(ThemeMode.dark, TablerIcons.moon, 'Dark', 'Always use the dark theme.'),
               ],
             ),
           );
@@ -384,7 +385,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 _buildSectionLabel('Account'),
                 _buildGroup([
                   _SettingRow(
-                    icon: CupertinoIcons.person_crop_circle,
+                    icon: TablerIcons.user_circle,
                     title: 'Manage Profile',
                     onTap: () => Navigator.push(
                       context,
@@ -392,7 +393,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
                   ),
                   _SettingRow(
-                    icon: CupertinoIcons.lock,
+                    icon: TablerIcons.lock,
                     title: 'Password & Security',
                     onTap: () => Navigator.push(
                       context,
@@ -400,7 +401,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
                   ),
                   _SettingRow(
-                    icon: CupertinoIcons.bell,
+                    icon: TablerIcons.bell,
                     title: 'Notifications',
                     onTap: () => Navigator.push(
                       context,
@@ -412,7 +413,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 _buildSectionLabel('Preferences'),
                 _buildGroup([
                   _SettingRow(
-                    icon: CupertinoIcons.circle_lefthalf_fill,
+                    icon: TablerIcons.sun_moon,
                     title: 'Theme',
                     value: ThemeController().modeLabel,
                     onTap: _showThemePicker,
@@ -422,7 +423,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 _buildSectionLabel('Support'),
                 _buildGroup([
                   _SettingRow(
-                    icon: CupertinoIcons.chat_bubble_2,
+                    icon: TablerIcons.messages,
                     title: 'Contact the Clinic',
                     value: kClinicPhone,
                     onTap: _showSupportSheet,
@@ -431,7 +432,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 const SizedBox(height: 22),
                 _buildGroup([
                   _SettingRow(
-                    icon: CupertinoIcons.square_arrow_right,
+                    icon: TablerIcons.logout,
                     title: 'Log Out',
                     color: AppColors.error,
                     showChevron: false,
@@ -444,6 +445,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
         );
       },
     );
+  }
+
+  /// The stored photo is a URL (`profiles.avatar_url`, shared with the web
+  /// portal); a path is only the local preview shown while an upload runs.
+  /// Reading the URL as a file is what left the photo blank.
+  ImageProvider? _avatarImage(String? avatarPath) {
+    if (avatarPath == null || avatarPath.isEmpty) return null;
+    if (avatarPath.startsWith('http://') || avatarPath.startsWith('https://')) {
+      return NetworkImage(avatarPath);
+    }
+    final file = File(avatarPath);
+    return file.existsSync() ? FileImage(file) : null;
   }
 
   Widget _buildIdentityCard(String fullName, String email, String? avatarPath) {
@@ -466,9 +479,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 CircleAvatar(
                   radius: 32,
                   backgroundColor: AppColors.primary.withOpacity(0.12),
-                  backgroundImage: avatarPath != null ? FileImage(File(avatarPath)) : null,
-                  child: avatarPath == null
-                      ? Icon(CupertinoIcons.person_fill, size: 34, color: AppColors.primary)
+                  backgroundImage: _avatarImage(avatarPath),
+                  child: _avatarImage(avatarPath) == null
+                      ? Icon(TablerIcons.user, size: 34, color: AppColors.primary)
                       : null,
                 ),
                 Positioned(
@@ -481,7 +494,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       shape: BoxShape.circle,
                       border: Border.all(color: AppColors.surface, width: 2),
                     ),
-                    child: const Icon(CupertinoIcons.add, size: 12, color: Colors.white),
+                    child: const Icon(TablerIcons.plus, size: 12, color: Colors.white),
                   ),
                 ),
               ],
@@ -531,7 +544,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
           child: Row(
             children: [
-              Icon(CupertinoIcons.person_badge_plus, size: 18, color: AppColors.primary),
+              Icon(TablerIcons.user_plus, size: 18, color: AppColors.primary),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -549,7 +562,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ],
                 ),
               ),
-              Icon(CupertinoIcons.chevron_right, size: 15, color: AppColors.primary),
+              Icon(TablerIcons.chevron_right, size: 15, color: AppColors.primary),
             ],
           ),
         ),
@@ -633,7 +646,7 @@ class _SettingRow extends StatelessWidget {
                 const SizedBox(width: 8),
               ],
               if (showChevron)
-                Icon(CupertinoIcons.chevron_right, size: 16, color: AppColors.textSecondary),
+                Icon(TablerIcons.chevron_right, size: 16, color: AppColors.textSecondary),
             ],
           ),
         ),
@@ -694,7 +707,7 @@ class _SupportRow extends StatelessWidget {
                   ],
                 ),
               ),
-              Icon(CupertinoIcons.chevron_right, size: 14, color: AppColors.textSecondary),
+              Icon(TablerIcons.chevron_right, size: 14, color: AppColors.textSecondary),
             ],
           ),
         ),

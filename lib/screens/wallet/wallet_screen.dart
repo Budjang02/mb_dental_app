@@ -8,7 +8,6 @@ import 'package:mb_dental_app/app/messages.dart';
 import 'package:mb_dental_app/widgets/app_dialog.dart';
 import 'package:mb_dental_app/widgets/app_toast.dart';
 import 'package:mb_dental_app/widgets/transaction_detail_sheet.dart';
-import 'scan_pay_screen.dart';
 import 'transaction_history_screen.dart';
 
 enum _TxnFilter { all, moneyIn, moneyOut }
@@ -109,16 +108,21 @@ class _WalletScreenState extends State<WalletScreen> {
   /// from. Mock only: a real build hands off to the payment gateway here and
   /// credits the wallet on its callback.
   void _showTopUpSheet() {
-    const presets = <double>[200, 500, 1000, 2000, 5000];
+    // The website's quick amounts and its fixed method list, value for value.
+    // The first method, GCash, is the default.
+    const presets = <double>[500, 1000, 2000, 5000];
     const methods = <(String, IconData)>[
-      ('GCash', CupertinoIcons.creditcard),
-      ('Maya', CupertinoIcons.creditcard_fill),
+      ('GCash', CupertinoIcons.device_phone_portrait),
+      ('Maya', CupertinoIcons.device_phone_portrait),
+      ('Card', CupertinoIcons.creditcard),
       ('Bank Transfer', CupertinoIcons.building_2_fill),
+      ('Cash', CupertinoIcons.money_dollar),
     ];
 
     double? amount = 500;
     var method = methods.first.$1;
     final customController = TextEditingController();
+    final referenceController = TextEditingController();
 
     showAppDialog(
       context,
@@ -206,13 +210,25 @@ class _WalletScreenState extends State<WalletScreen> {
                   ),
                   const SizedBox(height: 8),
                 ],
-                const SizedBox(height: 8),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: referenceController,
+                  style: TextStyle(color: AppColors.textPrimary),
+                  decoration: InputDecoration(
+                    isDense: true,
+                    hintText: 'Reference no. (optional)',
+                    hintStyle: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                    fillColor: AppColors.background,
+                  ),
+                ),
+                const SizedBox(height: 14),
                 ElevatedButton(
                   onPressed: amount == null
                       ? null
                       : () async {
                           final credited = amount!;
                           final source = method;
+                          final typedReference = referenceController.text.trim();
                           Navigator.pop(dialogContext);
                           try {
                             await _repository.addWalletTransaction(
@@ -222,6 +238,7 @@ class _WalletScreenState extends State<WalletScreen> {
                               type: TransactionType.credit,
                               icon: CupertinoIcons.creditcard,
                               method: source,
+                              reference: typedReference.isEmpty ? null : typedReference,
                             );
                           } catch (e) {
                             if (!mounted) return;
@@ -239,7 +256,10 @@ class _WalletScreenState extends State<WalletScreen> {
           );
         },
       ),
-    ).whenComplete(customController.dispose);
+    ).whenComplete(() {
+      customController.dispose();
+      referenceController.dispose();
+    });
   }
 
   Widget _amountChip({
@@ -401,21 +421,7 @@ class _WalletScreenState extends State<WalletScreen> {
                           label: const Text('Add Money', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                         ),
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.white,
-                            side: const BorderSide(color: Colors.white70),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                            minimumSize: const Size(0, 44),
-                          ),
-                          onPressed: () =>
-                              Navigator.push(context, MaterialPageRoute(builder: (_) => const ScanPayScreen())),
-                          icon: const Icon(CupertinoIcons.qrcode_viewfinder, size: 18),
-                          label: const Text('Pay / Scan', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                        ),
-                      ),
+
                     ],
                   ),
                 ],
