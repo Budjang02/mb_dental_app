@@ -1459,6 +1459,67 @@ class PatientApi {
     String method = 'GCash',
     String? referenceNo,
   }) async {
+    // `appointments.payment_method` carries a check constraint whose allowed
+    // spellings are not the wallet ledger's ('GCash', 'Maya', …). When it
+    // refuses one, try the next spelling. Safe to repeat: a refused call rolls
+    // the whole transaction back, so nothing was booked or debited.
+    final methods = [
+      method,
+      for (final candidate in _bookingPaymentMethods)
+        if (candidate != method) candidate,
+    ];
+    for (var i = 0; i < methods.length; i++) {
+      try {
+        return await _bookAppointmentWithWalletOnce(
+          patientId: patientId,
+          procedureIds: procedureIds,
+          date: date,
+          timeSlot: timeSlot,
+          durationMinutes: durationMinutes,
+          totalAmount: totalAmount,
+          amountToPay: amountToPay,
+          doctorId: doctorId,
+          notes: notes,
+          method: methods[i],
+          referenceNo: referenceNo,
+        );
+      } on PostgrestException catch (e) {
+        final isMethodRefused =
+            pgCode(e) == '23514' && e.message.contains('payment_method_check');
+        if (!isMethodRefused || i == methods.length - 1) rethrow;
+        debugPrint('payment_method "${methods[i]}" refused; trying "${methods[i + 1]}"');
+      }
+    }
+    return null;
+  }
+
+  /// Spellings tried, in order, when the clinic's schema refuses the method
+  /// the caller asked for. See [bookAppointmentWithWallet].
+  static const List<String> _bookingPaymentMethods = [
+    'Wallet',
+    'E-Wallet',
+    'wallet',
+    'e-wallet',
+    'gcash',
+    'Online',
+    'online',
+    'Cash',
+    'cash',
+  ];
+
+  static Future<WalletCheckoutResult?> _bookAppointmentWithWalletOnce({
+    required String patientId,
+    required List<String> procedureIds,
+    required DateTime date,
+    required String timeSlot,
+    required int durationMinutes,
+    required double totalAmount,
+    required double amountToPay,
+    String? doctorId,
+    String? notes,
+    required String method,
+    String? referenceNo,
+  }) async {
     try {
       final result = await SupabaseService.client.rpc(
         'book_appointment_with_wallet',

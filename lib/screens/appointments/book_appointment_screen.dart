@@ -1,5 +1,6 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' show PostgrestException;
 
 import '../../app/messages.dart';
 import '../../app/theme.dart';
@@ -13,6 +14,7 @@ import '../../repositories/patient_api.dart';
 import '../../repositories/patient_repository.dart';
 import '../../widgets/app_toast.dart';
 import '../../widgets/schedule_picker.dart';
+import '../../widgets/skeleton.dart';
 
 /// Placeholder doctor value for bookings left to the clinic to staff. Aliases
 /// the app-wide constant so the booking summary and the appointment screens
@@ -211,9 +213,16 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
 
   /// Changing the service mix changes both the required credentials and the
   /// block length, so anything chosen downstream of it stops being valid.
+  ///
+  /// A visit books one procedure: picking a new one replaces the old choice,
+  /// and picking the current one again clears it.
   void _toggleService(DentalService service) {
     setState(() {
-      if (!_selectedServices.remove(service)) _selectedServices.add(service);
+      if (!_selectedServices.remove(service)) {
+        _selectedServices
+          ..clear()
+          ..add(service);
+      }
       _invalidateDownstream();
     });
   }
@@ -332,10 +341,16 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
       setState(() => _isSubmitting = false);
       showAppToast(context, AppMessages.accountPendingApproval, isError: true);
       return;
-    } catch (e) {
+    } catch (e, stack) {
+      debugPrint('Booking checkout failed: $e\n$stack');
       if (!mounted) return;
       setState(() => _isSubmitting = false);
-      showAppToast(context, 'We could not complete your booking. Please try again.',
+      // Name the database's reason when there is one: a bare "try again"
+      // hides a failure that retrying will never fix.
+      final reason = e is PostgrestException && e.message.trim().isNotEmpty
+          ? ' (${e.message.trim()})'
+          : '';
+      showAppToast(context, 'We could not complete your booking.$reason Please try again.',
           isError: true);
       return;
     }
@@ -679,7 +694,7 @@ class _ServiceStep extends StatelessWidget {
         ],
         const SizedBox(height: 6),
         _ActionCard(
-          title: selected.isEmpty ? 'Select services' : 'Select more services',
+          title: selected.isEmpty ? 'Select a service' : 'Change service',
           subtitle: 'From our provided dental procedures',
           onTap: onAddServices,
         ),
@@ -918,6 +933,14 @@ class _ServicePickerSheetState extends State<_ServicePickerSheet> {
         service.description.toLowerCase().contains(needle);
   }
 
+  /// Selects [service] (replacing any earlier choice) and closes the sheet, so
+  /// one tap finishes the pick. Tapping the chosen one again only clears it.
+  void _pick(DentalService service) {
+    final wasSelected = widget.selected.contains(service);
+    setState(() => widget.onToggle(service));
+    if (!wasSelected) Navigator.pop(context);
+  }
+
   /// The menu with the search applied, groups that match nothing dropped.
   Map<ServiceGroup, List<DentalService>> get _visibleGroups {
     final result = <ServiceGroup, List<DentalService>>{};
@@ -958,8 +981,11 @@ class _ServicePickerSheetState extends State<_ServicePickerSheet> {
             ),
             if (catalog.hasLoaded) _buildSearchField(),
             if (!catalog.hasLoaded && catalog.isLoading)
-              Expanded(
-                child: Center(child: CircularProgressIndicator(color: AppColors.primary)),
+              const Expanded(
+                child: SingleChildScrollView(
+                  padding: EdgeInsets.fromLTRB(20, 0, 20, 20),
+                  child: PageSkeleton(cardCount: 6, showHeader: false),
+                ),
               )
             else if (!catalog.hasLoaded)
               Expanded(child: _buildUnavailable(catalog))
@@ -1039,6 +1065,7 @@ class _ServicePickerSheetState extends State<_ServicePickerSheet> {
 
   Widget _buildGroupList(ScrollController scrollController) {
     final groups = _visibleGroups;
+    final fullMenu = servicesByCategory;
 
     if (groups.isEmpty) {
       return Center(
@@ -1059,16 +1086,15 @@ class _ServicePickerSheetState extends State<_ServicePickerSheet> {
       children: [
         for (final entry in groups.entries) ...[
           // A group that books one procedure outright has no submenu to open:
-          // a patient who does not know what they need should not have to pick
-          // from a list to say so.
-          if (entry.key.isDirectPick)
+          // "Other / Not sure", and any group holding a single procedure
+          // (Dental cleaning). Tapping the heading selects it.
+          if (entry.key.isDirectPick || (fullMenu[entry.key]?.length ?? 0) == 1)
             Builder(builder: (context) {
-              final service = directPickService(entry.key, entry.value)!;
+              final service = directPickService(entry.key, entry.value) ?? entry.value.first;
               return _DirectPickSection(
                 group: entry.key,
-                service: service,
                 isSelected: widget.selected.contains(service),
-                onTap: () => setState(() => widget.onToggle(service)),
+                onTap: () => _pick(service),
               );
             })
           else
@@ -1084,7 +1110,7 @@ class _ServicePickerSheetState extends State<_ServicePickerSheet> {
               onToggleExpanded: () => setState(() {
                 if (!_expanded.remove(entry.key.code)) _expanded.add(entry.key.code);
               }),
-              onToggleService: (service) => setState(() => widget.onToggle(service)),
+              onToggleService: _pick,
             ),
           const SizedBox(height: 10),
         ],
@@ -1138,25 +1164,13 @@ class _CategorySection extends StatelessWidget {
                 child: Row(
                   children: [
                     Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            group.label,
-                            style: TextStyle(
-                              fontSize: 14.5,
-                              fontWeight: FontWeight.bold,
-                              color: AppColors.textPrimary,
-                            ),
-                          ),
-                          if (group.blurb.isNotEmpty) ...[
-                            const SizedBox(height: 2),
-                            Text(
-                              group.blurb,
-                              style: TextStyle(fontSize: 11.5, color: AppColors.textSecondary),
-                            ),
-                          ],
-                        ],
+                      child: Text(
+                        group.label,
+                        style: TextStyle(
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.textPrimary,
+                        ),
                       ),
                     ),
                     const SizedBox(width: 10),
@@ -1226,18 +1240,16 @@ class _CategorySection extends StatelessWidget {
 
 /// A group that books one procedure outright: the heading *is* the choice.
 ///
-/// Used by "Other / not sure", which books a dental checkup. The procedure it
-/// books is named on the card so the patient still knows what they committed
-/// to, and the chair time and price are the same ones a submenu tile shows.
+/// Used by "Other / Not sure" (a dental checkup) and by any group holding a
+/// single procedure, such as Dental cleaning. Only the heading shows; the
+/// procedure, chair time and price appear once it is selected.
 class _DirectPickSection extends StatelessWidget {
   final ServiceGroup group;
-  final DentalService service;
   final bool isSelected;
   final VoidCallback onTap;
 
   const _DirectPickSection({
     required this.group,
-    required this.service,
     required this.isSelected,
     required this.onTap,
   });
@@ -1259,57 +1271,13 @@ class _DirectPickSection extends StatelessWidget {
               width: isSelected ? 1.5 : 1,
             ),
           ),
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      group.label,
-                      style: TextStyle(
-                        fontSize: 14.5,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.textPrimary,
-                      ),
-                    ),
-                    if (group.blurb.isNotEmpty) ...[
-                      const SizedBox(height: 2),
-                      Text(
-                        group.blurb,
-                        style: TextStyle(fontSize: 11.5, color: AppColors.textSecondary),
-                      ),
-                    ],
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        Icon(CupertinoIcons.clock, size: 11, color: AppColors.textSecondary),
-                        const SizedBox(width: 4),
-                        Text(
-                          '${service.name} · ${service.durationLabel}',
-                          style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
-                        ),
-                        const SizedBox(width: 10),
-                        Text(
-                          service.priceLabel,
-                          style: TextStyle(
-                            fontSize: 11.5,
-                            fontWeight: FontWeight.bold,
-                            color: AppColors.primary,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 10),
-              Icon(
-                isSelected ? CupertinoIcons.checkmark_circle : CupertinoIcons.circle,
-                size: 21,
-                color: isSelected ? AppColors.primary : AppColors.border,
-              ),
-            ],
+          child: Text(
+            group.label,
+            style: TextStyle(
+              fontSize: 14.5,
+              fontWeight: FontWeight.bold,
+              color: AppColors.textPrimary,
+            ),
           ),
         ),
       ),
@@ -1454,11 +1422,6 @@ class _ServiceTile extends StatelessWidget {
                         color: AppColors.textPrimary,
                       ),
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      service.description,
-                      style: TextStyle(fontSize: 11.5, color: AppColors.textSecondary),
-                    ),
                     const SizedBox(height: 5),
                     Row(
                       children: [
@@ -1481,12 +1444,6 @@ class _ServiceTile extends StatelessWidget {
                     ),
                   ],
                 ),
-              ),
-              const SizedBox(width: 8),
-              Icon(
-                isSelected ? CupertinoIcons.checkmark_circle : CupertinoIcons.circle,
-                size: 21,
-                color: isSelected ? AppColors.primary : AppColors.border,
               ),
             ],
           ),

@@ -115,13 +115,29 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
 
   Widget _buildAppointmentList(List<Appointment> appointments) {
     if (appointments.isEmpty) {
-      return Center(
-        child: Text('No appointments found.', style: TextStyle(color: AppColors.textSecondary)),
+      // A list, not a bare Center, so the empty tab still takes the
+      // pull-to-refresh gesture.
+      return LayoutBuilder(
+        builder: (context, constraints) => ListView(
+          children: [
+            SizedBox(
+              height: constraints.maxHeight * 0.7,
+              child: Center(
+                child: Text('No appointments found.', style: TextStyle(color: AppColors.textSecondary)),
+              ),
+            ),
+          ],
+        ),
       );
     }
 
-    // Oldest first, newest at the bottom — the same reading order as the chat.
-    final ordered = [...appointments]..sort((a, b) => a.startsAt.compareTo(b.startsAt));
+    // Most recent first on every tab, so a booking just made is the first
+    // thing the patient sees. Ties (and legacy rows without a creation time)
+    // fall back to the visit date, latest first.
+    final ordered = [...appointments]..sort((a, b) {
+        final byCreated = (b.createdAt ?? b.startsAt).compareTo(a.createdAt ?? a.startsAt);
+        return byCreated != 0 ? byCreated : b.startsAt.compareTo(a.startsAt);
+      });
 
     return ListView.builder(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 104),
