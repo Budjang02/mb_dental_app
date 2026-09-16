@@ -752,36 +752,6 @@ class PatientRepository extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<WalletTransaction?> addWalletTransaction({
-    required String title,
-    required String subtitle,
-    required double amount,
-    required TransactionType type,
-    required IconData icon,
-    required String method,
-    String? reference,
-  }) async {
-    final patientId = _patient?.id;
-    if (patientId == null || patientId.isEmpty) return null;
-
-    if (type == TransactionType.credit) {
-      // The website's own top-up path; `wallet_topup` writes the ledger row.
-      await PatientApi.topUpWallet(amount: amount, method: method, reference: reference);
-    } else {
-      await PatientApi.addWalletTransaction(
-        patientId: patientId,
-        amount: amount,
-        type: type,
-        method: method,
-        description: title,
-      );
-    }
-
-    // The ledger is the balance, so re-reading it is what keeps the two in step.
-    await load(force: true);
-    return _transactions.isEmpty ? null : _transactions.first;
-  }
-
   /// Marks everything on the bell read, each kind where it keeps its state:
   /// shared notices through `notif_mark_read`, app-only notices on the device,
   /// and `notifications` rows on that table. Messages are not on the bell.

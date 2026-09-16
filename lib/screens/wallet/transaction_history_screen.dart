@@ -6,11 +6,10 @@ import 'package:mb_dental_app/models/payment.dart';
 import 'package:mb_dental_app/models/wallet_transaction.dart';
 import 'package:mb_dental_app/repositories/patient_repository.dart';
 import 'package:mb_dental_app/widgets/app_dialog.dart';
-import 'package:mb_dental_app/widgets/transaction_detail_sheet.dart';
+import 'package:mb_dental_app/widgets/wallet_txn_widgets.dart';
+import 'transaction_detail_screen.dart';
 
-const List<String> _monthNames = [
-  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-];
+const List<String> _monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 String formatBillDate(DateTime date) => '${_monthNames[date.month - 1]} ${date.day}, ${date.year}';
 
@@ -45,12 +44,7 @@ class TransactionHistoryScreen extends StatelessWidget {
         body: ListenableBuilder(
           listenable: Listenable.merge([PatientRepository(), ThemeController()]),
           builder: (context, _) {
-            return const TabBarView(
-              children: [
-                _TransactionsTab(),
-                _BillingTab(),
-              ],
-            );
+            return const TabBarView(children: [_TransactionsTab(), _BillingTab()]);
           },
         ),
       ),
@@ -58,82 +52,229 @@ class TransactionHistoryScreen extends StatelessWidget {
   }
 }
 
-class _TransactionsTab extends StatelessWidget {
+enum _HistoryDateFilter { all, today, last7Days, last30Days, last60Days, last90Days }
+
+enum _HistoryTypeFilter { all, moneyIn, moneyOut }
+
+const _historyDateLabels = <_HistoryDateFilter, String>{
+  _HistoryDateFilter.all: 'All Dates',
+  _HistoryDateFilter.today: 'Today',
+  _HistoryDateFilter.last7Days: 'Last 7 days',
+  _HistoryDateFilter.last30Days: 'Last 30 Days',
+  _HistoryDateFilter.last60Days: 'Last 60 Days',
+  _HistoryDateFilter.last90Days: 'Last 90 Days',
+};
+
+const _historyTypeLabels = <_HistoryTypeFilter, String>{
+  _HistoryTypeFilter.all: 'All Types',
+  _HistoryTypeFilter.moneyIn: 'Money In',
+  _HistoryTypeFilter.moneyOut: 'Money Out',
+};
+
+class _TransactionsTab extends StatefulWidget {
   const _TransactionsTab();
+
+  @override
+  State<_TransactionsTab> createState() => _TransactionsTabState();
+}
+
+class _TransactionsTabState extends State<_TransactionsTab> {
+  _HistoryDateFilter _dateFilter = _HistoryDateFilter.all;
+  _HistoryTypeFilter _typeFilter = _HistoryTypeFilter.all;
+
+  bool _matchesDate(WalletTransaction transaction) {
+    if (_dateFilter == _HistoryDateFilter.all) return true;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final date = transaction.dateTime.toLocal();
+    final transactionDay = DateTime(date.year, date.month, date.day);
+    final days = today.difference(transactionDay).inDays;
+    return switch (_dateFilter) {
+      _HistoryDateFilter.all => true,
+      _HistoryDateFilter.today => days == 0,
+      _HistoryDateFilter.last7Days => days >= 0 && days < 7,
+      _HistoryDateFilter.last30Days => days >= 0 && days < 30,
+      _HistoryDateFilter.last60Days => days >= 0 && days < 60,
+      _HistoryDateFilter.last90Days => days >= 0 && days < 90,
+    };
+  }
+
+  List<WalletTransaction> _filtered(List<WalletTransaction> transactions) {
+    return transactions.where((transaction) {
+      if (!_matchesDate(transaction)) return false;
+      return switch (_typeFilter) {
+        _HistoryTypeFilter.all => true,
+        _HistoryTypeFilter.moneyIn => transaction.isCredit,
+        _HistoryTypeFilter.moneyOut => !transaction.isCredit,
+      };
+    }).toList();
+  }
+
+  Future<void> _selectDate() async {
+    final result = await _showSelector<_HistoryDateFilter>(
+      title: 'Select Date Range',
+      selected: _dateFilter,
+      labels: _historyDateLabels,
+    );
+    if (result != null && mounted) setState(() => _dateFilter = result);
+  }
+
+  Future<void> _selectType() async {
+    final result = await _showSelector<_HistoryTypeFilter>(
+      title: 'Select Type',
+      selected: _typeFilter,
+      labels: _historyTypeLabels,
+    );
+    if (result != null && mounted) setState(() => _typeFilter = result);
+  }
+
+  Future<T?> _showSelector<T>({required String title, required T selected, required Map<T, String> labels}) {
+    return showModalBottomSheet<T>(
+      context: context,
+      backgroundColor: AppColors.surface,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (sheetContext) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.only(bottom: 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 18, 8, 14),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(title, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+                    ),
+                    IconButton(
+                      tooltip: 'Close',
+                      onPressed: () => Navigator.pop(sheetContext),
+                      icon: Icon(Icons.close, color: AppColors.textSecondary),
+                    ),
+                  ],
+                ),
+              ),
+              Divider(height: 1, color: AppColors.border),
+              for (final entry in labels.entries)
+                ListTile(
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+                  title: Text(
+                    entry.value,
+                    style: TextStyle(
+                      fontSize: 16,
+                      color: entry.key == selected ? AppColors.primary : AppColors.textPrimary,
+                      fontWeight: entry.key == selected ? FontWeight.w600 : FontWeight.normal,
+                    ),
+                  ),
+                  trailing: entry.key == selected ? Icon(Icons.check, color: AppColors.primary) : null,
+                  onTap: () => Navigator.pop(sheetContext, entry.key),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final repository = PatientRepository();
-    final transactions = repository.transactions;
-    if (transactions.isEmpty) {
-      return Center(
-        child: Text('No transactions yet.', style: TextStyle(color: AppColors.textSecondary)),
-      );
-    }
+    final transactions = _filtered(repository.transactions);
 
     final grouped = <String, List<WalletTransaction>>{};
     for (final t in transactions) {
-      grouped.putIfAbsent(formatTxnDate(t.dateTime), () => []).add(t);
+      grouped.putIfAbsent(formatTxnMonth(t.dateTime.toLocal()), () => []).add(t);
     }
 
-    return ListView(
-      padding: const EdgeInsets.all(20),
+    return Column(
       children: [
-        for (final entry in grouped.entries) ...[
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8, top: 4),
-            child: Text(
-              entry.key,
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.primary),
-            ),
-          ),
-          for (final txn in entry.value) ...[
-            _buildTile(context, txn),
-            const SizedBox(height: 10),
-          ],
-          const SizedBox(height: 10),
-        ],
-      ],
-    );
-  }
-
-  Widget _buildTile(BuildContext context, WalletTransaction txn) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(16),
-      onTap: () => showTransactionDetailSheet(context, txn),
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: AppColors.border),
+        _FilterBar(
+          dateLabel: _historyDateLabels[_dateFilter]!,
+          typeLabel: _historyTypeLabels[_typeFilter]!,
+          onDateTap: _selectDate,
+          onTypeTap: _selectType,
         ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+        Expanded(
+          child: Container(
+            color: const Color(0xFF1E293B),
+            child: RefreshIndicator(
+              edgeOffset: 12,
+              onRefresh: () => repository.load(force: true),
+              child: ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.symmetric(vertical: 12),
                 children: [
-                  Text(txn.title,
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textPrimary)),
-                  const SizedBox(height: 2),
-                  Text(
-                    '${txn.subtitle} • ${formatTxnTime(txn.dateTime)}',
-                    style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
-                  ),
+                  if (grouped.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 36, 20, 48),
+                      child: Text(
+                        repository.transactions.isEmpty
+                            ? 'No transactions yet. Cash in to get started.'
+                            : 'No transactions match these filters.',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: Color(0xFF94A3B8)),
+                      ),
+                    )
+                  else
+                    for (final entry in grouped.entries) ...[
+                      TxnMonthHeader(entry.key, darkSurface: true),
+                      for (final txn in entry.value)
+                        WalletTxnRow(
+                          txn: txn,
+                          darkSurface: true,
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => TransactionDetailScreen(transaction: txn)),
+                          ),
+                        ),
+                    ],
                 ],
               ),
             ),
-            Text(
-              '${txn.isCredit ? '+' : '-'} ₱${txn.amount.toStringAsFixed(2)}',
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 13,
-                color: txn.isCredit ? AppColors.success : AppColors.error,
-              ),
-            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _FilterBar extends StatelessWidget {
+  final String dateLabel;
+  final String typeLabel;
+  final VoidCallback onDateTap;
+  final VoidCallback onTypeTap;
+
+  const _FilterBar({required this.dateLabel, required this.typeLabel, required this.onDateTap, required this.onTypeTap});
+
+  @override
+  Widget build(BuildContext context) {
+    Widget selector(String label, VoidCallback onTap) => InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(label, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+            const SizedBox(width: 3),
+            Icon(Icons.keyboard_arrow_down_rounded, size: 18, color: AppColors.textSecondary),
           ],
         ),
+      ),
+    );
+
+    return Container(
+      color: AppColors.surface,
+      child: Row(
+        children: [
+          const SizedBox(width: 16),
+          selector(dateLabel, onDateTap),
+          const SizedBox(width: 8),
+          selector(typeLabel, onTypeTap),
+        ],
       ),
     );
   }
@@ -179,8 +320,10 @@ class _BillingTab extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(bill.procedureName,
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textPrimary)),
+                  Text(
+                    bill.procedureName,
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textPrimary),
+                  ),
                   const SizedBox(height: 3),
                   Row(
                     children: [
@@ -265,9 +408,14 @@ void _showBillingDetailDialog(BuildContext context, Payment bill) {
                 Text('Status', style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-                  decoration: BoxDecoration(color: statusColor.withOpacity(0.12), borderRadius: BorderRadius.circular(8)),
-                  child: Text(bill.status,
-                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: statusColor)),
+                  decoration: BoxDecoration(
+                    color: statusColor.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    bill.status,
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: statusColor),
+                  ),
                 ),
               ],
             ),
@@ -275,7 +423,15 @@ void _showBillingDetailDialog(BuildContext context, Payment bill) {
           const SizedBox(height: 12),
           Divider(color: AppColors.border),
           const SizedBox(height: 4),
-          Text('RECEIPT', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.textSecondary, letterSpacing: 1)),
+          Text(
+            'RECEIPT',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
+              color: AppColors.textSecondary,
+              letterSpacing: 1,
+            ),
+          ),
           const SizedBox(height: 8),
           _kv('Reference No.', bill.referenceNo),
           _kv('Clinic', 'Mariano & Bolasoc Dental Center'),

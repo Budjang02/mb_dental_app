@@ -913,14 +913,31 @@ class PatientApi {
     return PushChannel.statusUpdate;
   }
 
-  static Future<List<WalletTransaction>> fetchTransactions(String patientId) async {
-    final rows = await SupabaseService.client
-        .from('wallet_transactions')
-        .select('id, amount, direction, method, reference_no, description, created_at')
-        .eq('patient_id', patientId)
-        .order('created_at', ascending: false);
+  /// True when the last wallet read found no ledger table or balance function
+  /// on this database yet. The wallet then shows as empty with a short note
+  /// instead of an error.
+  static bool walletUnavailable = false;
 
-    return rows.cast<Map<String, dynamic>>().map((row) {
+  static final RegExp _missingSchema =
+      RegExp(r'schema cache|does not exist|relationship|function', caseSensitive: false);
+
+  static Future<List<WalletTransaction>> fetchTransactions(String patientId) async {
+    final List<Map<String, dynamic>> rows;
+    try {
+      rows = await SupabaseService.client
+          .from('wallet_transactions')
+          .select('id, direction, amount, method, description, reference_no, billing_record_id, created_at')
+          .eq('patient_id', patientId)
+          .order('created_at', ascending: false)
+          .limit(50);
+      walletUnavailable = false;
+    } on PostgrestException catch (e) {
+      if (!_missingSchema.hasMatch(e.message)) rethrow;
+      walletUnavailable = true;
+      return const [];
+    }
+
+    return rows.map((row) {
       final type = _transactionTypeFrom(_str(row['direction']));
       final description = _str(row['description']);
       return WalletTransaction(
@@ -1616,48 +1633,6 @@ class PatientApi {
       available: numbers.isNotEmpty ? numbers.first : 0,
       required: numbers.length > 1 ? numbers[1] : 0,
     );
-  }
-
-  /// Credits the wallet through `wallet_topup(p_amount, p_method, p_reference)`,
-  /// the RPC the website's "Add money" button calls. The function writes the
-  /// ledger row; nothing is inserted from the app.
-  ///
-  /// [method] is one of the website's fixed values: 'GCash', 'Maya', 'Card',
-  /// 'Bank Transfer' or 'Cash'. [reference] is null when the patient left it
-  /// blank, never an empty string, matching the website.
-  static Future<void> topUpWallet({
-    required double amount,
-    required String method,
-    String? reference,
-  }) async {
-    final trimmed = reference?.trim() ?? '';
-    await SupabaseService.client.rpc(
-      'wallet_topup',
-      params: {
-        'p_amount': amount,
-        'p_method': method,
-        'p_reference': trimmed.isEmpty ? null : trimmed,
-      },
-    );
-  }
-
-  static Future<void> addWalletTransaction({
-    required String patientId,
-    required double amount,
-    required TransactionType type,
-    required String method,
-    required String description,
-  }) async {
-    await SupabaseService.client.from('wallet_transactions').insert({
-      'patient_id': patientId,
-      'amount': amount.abs(),
-      // The clinic's ledger records `in` / `out`, which is what the portal's
-      // wallet and `wallet_balance_of()` read.
-      'direction': type == TransactionType.credit ? 'in' : 'out',
-      'method': method,
-      'description': description,
-      'reference_no': 'REF-${DateTime.now().millisecondsSinceEpoch}',
-    });
   }
 
   /// Writes to both halves of the record: the clinic's chart and the patient's

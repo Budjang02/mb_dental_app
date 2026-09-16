@@ -26,6 +26,7 @@ dependencies:
   cloud_firestore: ^6.9.0
   font_awesome_flutter: ^11.0.0
   flutter_tabler_icons: ^1.43.0
+  flutter_svg: ^2.3.0
 
 dev_dependencies:
   flutter_test:
@@ -44,6 +45,9 @@ flutter:
     - assets/images/dark_mode_icon.png
     - assets/images/transparent_icon.png
     - assets/animations/logo_splash.json
+    # PayMongo rail logos for the wallet's Cash In window.
+    - assets/wallet/gcash-mark.svg
+    - assets/wallet/grab-logo.svg
 
 # 1. App Icon Configuration
 flutter_launcher_icons:
