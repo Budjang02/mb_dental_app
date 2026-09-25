@@ -17,11 +17,22 @@ class ToothIcon extends StatelessWidget {
   /// where the extra strokes only muddy the glyph.
   final bool showDetail;
 
+  /// Solid fills for the crown (above the neck) and the roots (below it).
+  /// Both null draws the outline alone, as the Records tab icon does.
+  final Color? crownFill;
+  final Color? rootFill;
+
+  /// Dashes the outline, for a tooth charted as missing.
+  final bool dashed;
+
   const ToothIcon({
     super.key,
     this.size = 22,
     required this.color,
     this.showDetail = true,
+    this.crownFill,
+    this.rootFill,
+    this.dashed = false,
   });
 
   @override
@@ -30,7 +41,13 @@ class ToothIcon extends StatelessWidget {
       height: size,
       width: size,
       child: CustomPaint(
-        painter: _ToothIconPainter(color: color, showDetail: showDetail),
+        painter: _ToothIconPainter(
+          color: color,
+          showDetail: showDetail,
+          crownFill: crownFill,
+          rootFill: rootFill,
+          dashed: dashed,
+        ),
       ),
     );
   }
@@ -39,8 +56,21 @@ class ToothIcon extends StatelessWidget {
 class _ToothIconPainter extends CustomPainter {
   final Color color;
   final bool showDetail;
+  final Color? crownFill;
+  final Color? rootFill;
+  final bool dashed;
 
-  _ToothIconPainter({required this.color, required this.showDetail});
+  /// Where the crown gives way to the roots, as a fraction of the height:
+  /// the cervical waist the outline pulls in to.
+  static const double _neck = 0.53;
+
+  _ToothIconPainter({
+    required this.color,
+    required this.showDetail,
+    this.crownFill,
+    this.rootFill,
+    this.dashed = false,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -71,15 +101,25 @@ class _ToothIconPainter extends CustomPainter {
       ..cubicTo(0.74 * w, 0.08 * h, 0.62 * w, 0.07 * h, 0.50 * w, 0.10 * h)
       ..close();
 
+    final crown = crownFill;
+    final root = rootFill ?? crownFill;
+    if (crown != null && root != null) {
+      canvas.save();
+      canvas.clipPath(path);
+      canvas.drawRect(Rect.fromLTWH(0, 0, w, h * _neck), Paint()..color = crown);
+      canvas.drawRect(Rect.fromLTWH(0, h * _neck, w, h * (1 - _neck)), Paint()..color = root);
+      canvas.restore();
+    }
+
     final paint = Paint()
       ..color = color
       ..isAntiAlias = true
       ..style = PaintingStyle.stroke
       ..strokeWidth = stroke
       ..strokeJoin = StrokeJoin.round
-      ..strokeCap = StrokeCap.round;
+      ..strokeCap = dashed ? StrokeCap.butt : StrokeCap.round;
 
-    canvas.drawPath(path, paint);
+    canvas.drawPath(dashed ? _dashed(path, stroke * 1.6, stroke * 1.1) : path, paint);
 
     if (showDetail) {
       // Two short cusp grooves dropping from the biting edge, at two thirds
@@ -96,7 +136,21 @@ class _ToothIconPainter extends CustomPainter {
     }
   }
 
+  static Path _dashed(Path source, double dash, double gap) {
+    final out = Path();
+    for (final metric in source.computeMetrics()) {
+      for (var d = 0.0; d < metric.length; d += dash + gap) {
+        out.addPath(metric.extractPath(d, d + dash), Offset.zero);
+      }
+    }
+    return out;
+  }
+
   @override
   bool shouldRepaint(_ToothIconPainter old) =>
-      old.color != color || old.showDetail != showDetail;
+      old.color != color ||
+      old.showDetail != showDetail ||
+      old.crownFill != crownFill ||
+      old.rootFill != rootFill ||
+      old.dashed != dashed;
 }

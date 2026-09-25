@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mb_dental_app/screens/records/dental_arch_chart.dart';
+import 'package:mb_dental_app/screens/records/tooth_geometry.dart';
 import 'package:mb_dental_app/screens/records/tooth_glyphs.dart';
 
 /// Canvas sizes the chart has to survive: a small phone, a large phone, and
@@ -25,7 +26,7 @@ List<Offset> _cornersOf(ToothPlacement placement) {
       Offset(halfW, halfH),
       Offset(-halfW, halfH),
     ])
-      placement.center +
+      placement.center.offset +
           Offset(
             corner.dx * cos - corner.dy * sin,
             corner.dx * sin + corner.dy * cos,
@@ -113,10 +114,10 @@ void main() {
       final size = _canvasFor(360);
       final layout = DentalArchLayout.build(size);
       for (final n in kUpperArchTeeth) {
-        expect(layout.placements[n]!.center.dy, lessThan(size.height / 2), reason: '#$n');
+        expect(layout.placements[n]!.center.y, lessThan(size.height / 2), reason: '#$n');
       }
       for (final n in kLowerArchTeeth) {
-        expect(layout.placements[n]!.center.dy, greaterThan(size.height / 2), reason: '#$n');
+        expect(layout.placements[n]!.center.y, greaterThan(size.height / 2), reason: '#$n');
       }
     });
 
@@ -124,15 +125,15 @@ void main() {
       final layout = DentalArchLayout.build(_canvasFor(360));
       for (var i = 0; i + 1 < kUpperArchTeeth.length; i++) {
         expect(
-          layout.placements[kUpperArchTeeth[i]]!.center.dx,
-          lessThan(layout.placements[kUpperArchTeeth[i + 1]]!.center.dx),
+          layout.placements[kUpperArchTeeth[i]]!.center.x,
+          lessThan(layout.placements[kUpperArchTeeth[i + 1]]!.center.x),
           reason: '#${kUpperArchTeeth[i]} should sit left of #${kUpperArchTeeth[i + 1]}',
         );
       }
       for (var i = 0; i + 1 < kLowerArchTeeth.length; i++) {
         expect(
-          layout.placements[kLowerArchTeeth[i]]!.center.dx,
-          greaterThan(layout.placements[kLowerArchTeeth[i + 1]]!.center.dx),
+          layout.placements[kLowerArchTeeth[i]]!.center.x,
+          greaterThan(layout.placements[kLowerArchTeeth[i + 1]]!.center.x),
           reason: '#${kLowerArchTeeth[i]} should sit right of #${kLowerArchTeeth[i + 1]}',
         );
       }
@@ -145,8 +146,8 @@ void main() {
       // right, which is the viewer's left; #25 is the lower right, likewise on
       // the viewer's left — the lower arch runs the other way round.
       for (final pair in [[8, 9], [25, 24]]) {
-        final left = layout.placements[pair[0]]!.center.dx;
-        final right = layout.placements[pair[1]]!.center.dx;
+        final left = layout.placements[pair[0]]!.center.x;
+        final right = layout.placements[pair[1]]!.center.x;
         expect(left, lessThan(size.width / 2), reason: '#${pair[0]}');
         expect(right, greaterThan(size.width / 2), reason: '#${pair[1]}');
         expect((size.width - left - right).abs(), lessThan(1), reason: 'not symmetrical');
@@ -167,7 +168,7 @@ void main() {
           final placement = layout.placements[n]!;
           final number = layout.numberCenterFor(n, extentFor(layout));
           expect(
-            (number - placement.center).distance,
+            (number - placement.center.offset).distance,
             greaterThan(placement.height / 2),
             reason: 'the number for #\$n overlaps its crown at \${width}px',
           );
@@ -202,7 +203,7 @@ void main() {
         final number = layout.numberCenterFor(n, extentFor(layout));
         expect(
           (number - mouthCentre).distance,
-          greaterThan((placement.center - mouthCentre).distance),
+          greaterThan((placement.center.offset - mouthCentre).distance),
           reason: 'the number for #\$n sits inside the arch',
         );
       }
@@ -237,7 +238,7 @@ void main() {
       for (final width in _widths) {
         final layout = DentalArchLayout.build(_canvasFor(width));
         for (final entry in layout.placements.entries) {
-          expect(layout.toothAt(entry.value.center), entry.key, reason: '#${entry.key} at ${width}px');
+          expect(layout.toothAt(entry.value.center.offset), entry.key, reason: '#${entry.key} at ${width}px');
         }
       }
     });
@@ -270,6 +271,90 @@ void main() {
           ),
         );
 
+    Widget wrapSurfaces(
+      ToothSurfaceTap onSurfaceSelect,
+      Map<int, Map<String, Color>> surfaceColors,
+    ) =>
+        MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: SizedBox(
+                width: 360,
+                child: DentalArchChart(
+                  conditionColors: const {},
+                  selectedTooth: null,
+                  onSelect: (_) {},
+                  onSurfaceSelect: onSurfaceSelect,
+                  surfaceColors: surfaceColors,
+                  idleFill: const Color(0xFFFFFFFF),
+                  outlineColor: const Color(0xFF2F3D4C),
+                  selectedFill: const Color(0xFFEE8172),
+                  selectedOutline: const Color(0xFFC2503F),
+                  labelColor: const Color(0xFF64748B),
+                ),
+              ),
+            ),
+          ),
+        );
+
+    testWidgets('reports the surface that was tapped, by its clinical name',
+        (tester) async {
+      tester.view.physicalSize = const Size(400, 1400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final tapped = <(int, String)>[];
+      await tester.pumpWidget(wrapSurfaces(
+        (tooth, surface) => tapped.add((tooth, surface)),
+        // A surface fill on the tooth being tapped, so the paint path that
+        // reads these colours runs in this test too.
+        const {3: {'mesial': Color(0xFFEF4444)}},
+      ));
+      await tester.pumpAndSettle();
+
+      final chart = tester.getTopLeft(find.byType(CustomPaint).last);
+      final layout = DentalArchLayout.build(_canvasFor(360));
+      final geometry = layout.geometry;
+
+      /// The middle of one surface, in chart coordinates — a point that is
+      /// unambiguously inside it rather than on a boundary.
+      Offset centroidOf(int tooth, ToothSurface surface) {
+        final points = geometry
+            .shapeFor(tooth)
+            .surfaces[surface]!
+            .flatten()
+            .map((point) => geometry.toChart(tooth, point))
+            .toList();
+        final sum = points.fold(const Pt(0, 0), (Pt total, Pt p) => total + p);
+        return (sum * (1 / points.length)).offset;
+      }
+
+      // #3 is a molar and #8 an incisor, so the same two surfaces are named
+      // differently on each — which is what the payload has to carry.
+      for (final (tooth, surface) in [
+        (3, ToothSurface.centre),
+        (3, ToothSurface.towardMidline),
+        (3, ToothSurface.awayFromMidline),
+        (3, ToothSurface.outer),
+        (3, ToothSurface.lingual),
+        (8, ToothSurface.centre),
+        (8, ToothSurface.outer),
+      ]) {
+        await tester.tapAt(chart + centroidOf(tooth, surface));
+        await tester.pump();
+      }
+
+      expect(tapped, const [
+        (3, 'occlusal'),
+        (3, 'mesial'),
+        (3, 'distal'),
+        (3, 'buccal'),
+        (3, 'lingual'),
+        (8, 'incisal'),
+        (8, 'facial'),
+      ]);
+    });
+
     testWidgets('reports the tooth that was tapped', (tester) async {
       tester.view.physicalSize = const Size(400, 1400);
       tester.view.devicePixelRatio = 1.0;
@@ -283,7 +368,7 @@ void main() {
       final layout = DentalArchLayout.build(_canvasFor(360));
 
       for (final tooth in [1, 8, 14, 24, 32]) {
-        await tester.tapAt(chart + layout.placements[tooth]!.center);
+        await tester.tapAt(chart + layout.placements[tooth]!.center.offset);
         await tester.pump();
       }
       expect(tapped, [1, 8, 14, 24, 32]);

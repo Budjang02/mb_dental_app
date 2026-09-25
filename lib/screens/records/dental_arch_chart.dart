@@ -3,52 +3,25 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import 'tooth_geometry.dart';
 import 'tooth_glyphs.dart';
 
-/// Universal numbers in the order they sit along each arch, read left to right
-/// across the chart. The patient faces the viewer, so the patient's right is
-/// the viewer's left: #1 (upper right third molar) opens the upper arch on the
-/// left, and #32 (lower right third molar) closes the lower arch on that same
-/// side.
-const List<int> kUpperArchTeeth = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
-const List<int> kLowerArchTeeth = [17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32];
-
-/// Width over height of the chart, taken off the reference drawing: there each
-/// arch measures 545x405 and the pair together spans 545x840.
-const double _chartAspect = 0.632;
+/// A tap on one surface of one crown, reported the way a chart row records it:
+/// the Universal tooth number, and the clinical surface name for that tooth
+/// ('occlusal' or 'incisal', 'mesial', 'distal', 'buccal' or 'facial',
+/// 'lingual'). The name is [surfaceName]'s, so what a tap reports and what a
+/// path in `assets/images/tooth_map.svg` is called are the same string.
+typedef ToothSurfaceTap = void Function(int toothNumber, String surfaceId);
 
 /// Widest the chart is allowed to get. Past this the arch stops reading as a
 /// mouth and starts reading as wallpaper, so on tablets and desktop it centres
 /// at this width instead of stretching.
 const double kDentalArchMaxWidth = 420;
 
-/// Slack between neighbouring crowns and at the ends of each arch, in cells.
-/// Crowns sit flush against each other the way they do in the reference and in
-/// a real mouth, so there is nothing between them but their two outlines.
-const double _gapUnits = 0.0;
-const double _padUnits = 0.08;
-
-/// Share of the chart's height left empty between the two arches — the wide
-/// separation the reference has.
-const double _archGapFraction = 0.065;
-
-/// Number height relative to a cell. Small enough to sit between neighbouring
-/// numbers at the crowded front of the arch, large enough to read.
-const double _numberFontUnits = 0.32;
-
-/// Room reserved outside each arch for a tooth's number, in cells: the gap
-/// between the crown and its number, then the number itself. The arch is
-/// pulled in by this much so the outermost numbers are never clipped.
-///
-/// The box is the *whole* width of a two-digit number, not half of it: the
-/// number is centred one half-extent out from the gap, so its far edge lands a
-/// full extent beyond the crown.
-const double _numberGapUnits = 0.16;
-const double _numberBoxUnits = _numberFontUnits * 2.0;
-
 /// The horseshoe odontogram: both dental arches laid out as they are in
-/// `assets/reference_ui/teeth_ui.png`, every tooth drawn and hit-tested on its
-/// own.
+/// `assets/reference_ui/ui_teeth.png`, every tooth drawn and hit-tested on its
+/// own. The same measurements build the exported vector asset
+/// `assets/images/tooth_map.svg`, so the two never drift apart.
 ///
 /// The chart renders whatever the caller passes it and reports taps back — it
 /// holds no state of its own, so the screen's existing selection and condition
@@ -85,9 +58,28 @@ class DentalArchChart extends StatefulWidget {
   /// Outline for a tooth with nothing recorded against it.
   final Color? idleStroke;
 
+  /// The darker shade of each tooth's colour, drawn toward the crown's rim so
+  /// the lighter biting area stands out from it — the chart's top-down take
+  /// on a light crown over a darker root. A tooth absent here falls back to
+  /// [idleRoot], then to a flat fill.
+  final Map<int, Color> rootColors;
+  final Color? idleRoot;
+
   /// Teeth outlined with a dashed line ([kToothDashPattern]) rather than a
   /// solid one.
   final Set<int> dashedTeeth;
+
+  /// Fill per surface, as `{toothNumber: {surfaceId: colour}}`, with the
+  /// surface ids [ToothSurfaceTap] reports. A surface listed here is painted
+  /// over its crown's own fill, so one tooth can carry caries on its mesial
+  /// and a restoration on its occlusal at once. Anything not listed keeps the
+  /// crown's colour.
+  final Map<int, Map<String, Color>> surfaceColors;
+
+  /// Called with the surface under the tap, when the caller records conditions
+  /// against single surfaces. [onSelect] still fires with the tooth either
+  /// way, so whole-tooth selection keeps working underneath.
+  final ToothSurfaceTap? onSurfaceSelect;
 
   const DentalArchChart({
     super.key,
@@ -101,7 +93,11 @@ class DentalArchChart extends StatefulWidget {
     required this.labelColor,
     this.conditionStrokes = const {},
     this.idleStroke,
+    this.rootColors = const {},
+    this.idleRoot,
     this.dashedTeeth = const {},
+    this.surfaceColors = const {},
+    this.onSurfaceSelect,
   });
 
   @override
@@ -124,7 +120,7 @@ class _DentalArchChartState extends State<DentalArchChart> {
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: kDentalArchMaxWidth),
         child: AspectRatio(
-          aspectRatio: _chartAspect,
+          aspectRatio: kChartAspect,
           child: LayoutBuilder(
             builder: (context, constraints) {
               final layout = _layoutFor(Size(constraints.maxWidth, constraints.maxHeight));
@@ -139,7 +135,12 @@ class _DentalArchChartState extends State<DentalArchChart> {
                   behavior: HitTestBehavior.opaque,
                   onTapUp: (details) {
                     final tooth = layout.toothAt(details.localPosition);
-                    if (tooth != null) widget.onSelect(tooth);
+                    if (tooth == null) return;
+                    widget.onSelect(tooth);
+                    final onSurface = widget.onSurfaceSelect;
+                    if (onSurface == null) return;
+                    final surface = layout.surfaceNearest(tooth, details.localPosition);
+                    onSurface(tooth, surfaceName(tooth, surface));
                   },
                   // A short lift on the tooth that was just picked: enough
                   // feedback to confirm the tap, not enough to be a flourish.
@@ -163,7 +164,10 @@ class _DentalArchChartState extends State<DentalArchChart> {
                         labelColor: widget.labelColor,
                         conditionStrokes: widget.conditionStrokes,
                         idleStroke: widget.idleStroke,
+                        rootColors: widget.rootColors,
+                        idleRoot: widget.idleRoot,
                         dashedTeeth: widget.dashedTeeth,
+                        surfaceColors: widget.surfaceColors,
                       ),
                     ),
                   ),
@@ -179,201 +183,43 @@ class _DentalArchChartState extends State<DentalArchChart> {
 
 // --- Geometry -------------------------------------------------------------
 
-/// Half an ellipse, sampled so crowns can be spaced along it by arc length
-/// rather than by angle: even angular steps would crowd the molars at the back
-/// and stretch the incisors across the front.
-class _EllipseArc {
-  final double cx, cy, a, b;
-
-  /// True for the maxillary arch, which sweeps over the top of its centre.
-  final bool upper;
-
-  final List<double> _u = <double>[];
-  final List<double> _s = <double>[];
-
-  _EllipseArc(this.cx, this.cy, this.a, this.b, this.upper) {
-    const samples = 360;
-    var previous = pointAt(0);
-    _u.add(0);
-    _s.add(0);
-    var travelled = 0.0;
-    for (var i = 1; i <= samples; i++) {
-      final u = i / samples;
-      final point = pointAt(u);
-      travelled += (point - previous).distance;
-      previous = point;
-      _u.add(u);
-      _s.add(travelled);
-    }
-  }
-
-  double get length => _s.last;
-
-  /// `u` runs 0 to 1 left to right along the upper arch and right to left
-  /// along the lower one — the order the Universal numbers run in.
-  double _phi(double u) => upper ? math.pi * (1 - u) : math.pi * u;
-
-  Offset pointAt(double u) {
-    final phi = _phi(u);
-    final dy = b * math.sin(phi);
-    return Offset(cx + a * math.cos(phi), upper ? cy - dy : cy + dy);
-  }
-
-  /// Unit vector pointing straight out of the arch at `u` — away from the
-  /// tongue, past the cheek. Where a tooth's number goes.
-  Offset outwardAt(double u) {
-    final phi = _phi(u);
-    // Same normal [angleAt] works from, negated: that one wants the inward
-    // direction, this one the outward.
-    final nx = -b * math.cos(phi);
-    final ny = (upper ? 1 : -1) * a * math.sin(phi);
-    final length = math.sqrt(nx * nx + ny * ny);
-    if (length == 0) return Offset(0, upper ? -1 : 1);
-    return Offset(-nx / length, -ny / length);
-  }
-
-  /// Turns a crown so the outer, cheek-facing edge of its cell points straight
-  /// out of the arch — the orientation every tooth has in the reference.
-  double angleAt(double u) {
-    final phi = _phi(u);
-    // Inward normal: the cell's top edge faces out, so its foot faces in.
-    final nx = -b * math.cos(phi);
-    final ny = (upper ? 1 : -1) * a * math.sin(phi);
-    final length = math.sqrt(nx * nx + ny * ny);
-    if (length == 0) return 0;
-    return math.atan2(-nx / length, ny / length);
-  }
-
-  double uAtDistance(double s) {
-    if (s <= 0) return 0;
-    if (s >= length) return 1;
-    var lo = 0;
-    var hi = _s.length - 1;
-    while (lo + 1 < hi) {
-      final mid = (lo + hi) ~/ 2;
-      if (_s[mid] <= s) {
-        lo = mid;
-      } else {
-        hi = mid;
-      }
-    }
-    final span = _s[hi] - _s[lo];
-    final t = span == 0 ? 0.0 : (s - _s[lo]) / span;
-    return _u[lo] + (_u[hi] - _u[lo]) * t;
-  }
-}
-
-/// Where one tooth ends up on the chart.
-class ToothPlacement {
-  final Offset center;
-  final double angle;
-  final double width;
-  final double height;
-
-  /// Unit vector away from the arch, used to sit this tooth's number outside
-  /// it the way the reference chart does.
-  final Offset outward;
-
-  const ToothPlacement(this.center, this.angle, this.width, this.height, this.outward);
-}
-
-/// The measured arch: where every crown sits, how big it is and which way it
-/// faces, for one canvas size.
+/// The measured arch for one canvas size: where every crown sits, how big it
+/// is and which way it faces.
+///
+/// The measuring itself lives in [ArchGeometry], which has no Flutter behind
+/// it; this wraps it in the `dart:ui` types the painter and the hit test want.
 class DentalArchLayout {
   final Size size;
-  final double cell;
-  final Map<int, ToothPlacement> placements;
+  final ArchGeometry geometry;
 
-  const DentalArchLayout({
-    required this.size,
-    required this.cell,
-    required this.placements,
-  });
+  const DentalArchLayout({required this.size, required this.geometry});
 
   static DentalArchLayout build(Size size) {
-    final archH = size.height * (1 - _archGapFraction) / 2;
-    final centerX = size.width / 2;
-
-    double demandOf(List<int> arch) =>
-        arch.fold<double>(0, (total, n) => total + toothWidthFactor(n)) +
-        (arch.length - 1) * _gapUnits +
-        2 * _padUnits;
-
-    // Both arches ride the same ellipse, so the fuller of the two sets the
-    // crown size and the other splits its slack between its ends. That keeps
-    // upper and lower teeth drawn to one scale, as the reference has them.
-    final demand = math.max(demandOf(kUpperArchTeeth), demandOf(kLowerArchTeeth));
-
-    // Crown size decides how far the ellipse must sit in from the canvas edge
-    // — a tooth reaches half its own extent past the arc — and that inset in
-    // turn decides how much arc there is to fill. A few passes settle it.
-    var cell = size.width * 0.11;
-    var a = 0.0;
-    var b = 0.0;
-    for (var pass = 0; pass < 16; pass++) {
-      // Half a crown, plus the strip its number sits in outside that.
-      final inset = cell * (maxToothExtent / 2 + _numberGapUnits + _numberBoxUnits);
-      a = centerX - inset;
-      b = archH - inset;
-      if (a <= 2 || b <= 2) break;
-      cell = (cell + _halfEllipsePerimeter(a, b) / demand) / 2;
-    }
-
-    final upperArc = _EllipseArc(centerX, archH, a, b, true);
-    final lowerArc = _EllipseArc(centerX, size.height - archH, a, b, false);
-
-    final placements = <int, ToothPlacement>{};
-    void layOut(List<int> arch, _EllipseArc arc) {
-      final used = arch.fold<double>(0, (total, n) => total + toothWidthFactor(n) * cell) +
-          (arch.length - 1) * _gapUnits * cell;
-      var cursor = math.max(0.0, (arc.length - used) / 2);
-      for (final n in arch) {
-        final width = toothWidthFactor(n) * cell;
-        cursor += width / 2;
-        final u = arc.uAtDistance(cursor);
-        placements[n] = ToothPlacement(
-          arc.pointAt(u),
-          arc.angleAt(u),
-          width,
-          toothHeightFactor(n) * cell,
-          arc.outwardAt(u),
-        );
-        cursor += width / 2 + _gapUnits * cell;
-      }
-    }
-
-    layOut(kUpperArchTeeth, upperArc);
-    layOut(kLowerArchTeeth, lowerArc);
-
-    return DentalArchLayout(size: size, cell: cell, placements: placements);
+    return DentalArchLayout(
+      size: size,
+      geometry: ArchGeometry.build(size.width, size.height),
+    );
   }
 
-  /// Ramanujan's approximation, halved. Accurate to a fraction of a pixel at
-  /// these eccentricities and far cheaper than sampling inside the fit loop.
-  static double _halfEllipsePerimeter(double a, double b) {
-    final h = math.pow((a - b) / (a + b), 2).toDouble();
-    return math.pi * (a + b) * (1 + 3 * h / (10 + math.sqrt(4 - 3 * h))) / 2;
-  }
+  double get cell => geometry.cell;
+
+  Map<int, ToothPlacement> get placements => geometry.placements;
 
   /// Font size for the tooth numbers at this canvas size.
-  double get numberFontSize => math.max(9.0, cell * _numberFontUnits);
+  double get numberFontSize => geometry.numberFontSize;
 
   /// Where a tooth's number is centred: straight out of the arch from the
-  /// crown, clear of it by [_numberGapUnits] plus half the text's own extent.
-  ///
-  /// Measured from the crown's half-height, so a long molar pushes its number
-  /// further out than a short incisor and the ring of numbers stays clear of
-  /// the teeth all the way round.
+  /// crown, clear of it by the reference's gap plus half the text's own
+  /// extent.
   Offset numberCenterFor(int tooth, double textExtent) {
-    final placement = placements[tooth]!;
-    final distance = placement.height / 2 + cell * _numberGapUnits + textExtent / 2;
-    return placement.center + placement.outward * distance;
+    final centre = geometry.numberCenterFor(tooth, textExtent);
+    return Offset(centre.x, centre.y);
   }
 
   Matrix4 transformFor(int tooth, {double scale = 1}) {
     final placement = placements[tooth]!;
     return Matrix4.identity()
-      ..translate(placement.center.dx, placement.center.dy)
+      ..translate(placement.center.x, placement.center.y)
       ..rotateZ(placement.angle)
       ..scale(scale, scale)
       ..translate(-placement.width / 2, -placement.height / 2);
@@ -393,13 +239,50 @@ class DentalArchLayout {
     for (final entry in placements.entries) {
       final path = glyphFor(entry.key).outline.transform(transformFor(entry.key).storage);
       if (path.contains(point)) return entry.key;
-      final distance = (entry.value.center - point).distance;
+      final centre = entry.value.center;
+      final distance = (Offset(centre.x, centre.y) - point).distance;
       if (distance < nearestDistance) {
         nearestDistance = distance;
         nearest = entry.key;
       }
     }
     return nearestDistance <= cell * 0.62 ? nearest : null;
+  }
+
+  /// Which surface of [tooth] [point] falls on, or null when it falls outside
+  /// the crown altogether. The whole-tooth hit test above is what selection
+  /// runs on; this is the finer one, for callers that record a condition
+  /// against a single surface rather than a whole tooth.
+  ToothSurface? surfaceAt(int tooth, Offset point) {
+    if (!placements.containsKey(tooth)) return null;
+    final transform = transformFor(tooth).storage;
+    for (final entry in glyphFor(tooth).surfaces.entries) {
+      if (entry.value.transform(transform).contains(point)) return entry.key;
+    }
+    return null;
+  }
+
+  /// The surface a tap on [tooth] belongs to, never null.
+  ///
+  /// [toothAt] already answers with a crown for a tap that landed in the
+  /// hairline beside one, so the surface hit test has to answer for those taps
+  /// too: it falls back to whichever surface of that crown the tap is nearest.
+  ToothSurface surfaceNearest(int tooth, Offset point) {
+    final inside = surfaceAt(tooth, point);
+    if (inside != null) return inside;
+
+    final transform = transformFor(tooth).storage;
+    var nearest = ToothSurface.centre;
+    var nearestDistance = double.infinity;
+    for (final entry in glyphFor(tooth).surfaces.entries) {
+      final centre = entry.value.transform(transform).getBounds().center;
+      final distance = (centre - point).distance;
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearest = entry.key;
+      }
+    }
+    return nearest;
   }
 }
 
@@ -443,7 +326,10 @@ class _ArchPainter extends CustomPainter {
   final Color labelColor;
   final Map<int, Color> conditionStrokes;
   final Color? idleStroke;
+  final Map<int, Color> rootColors;
+  final Color? idleRoot;
   final Set<int> dashedTeeth;
+  final Map<int, Map<String, Color>> surfaceColors;
 
   const _ArchPainter({
     required this.layout,
@@ -458,7 +344,10 @@ class _ArchPainter extends CustomPainter {
     required this.labelColor,
     required this.conditionStrokes,
     required this.idleStroke,
+    required this.rootColors,
+    required this.idleRoot,
     required this.dashedTeeth,
+    required this.surfaceColors,
   });
 
   @override
@@ -509,7 +398,7 @@ class _ArchPainter extends CustomPainter {
     final selected = tooth == selectedTooth;
     final hovered = tooth == hoveredTooth && !selected;
     final condition = conditionColors[tooth];
-    final strokeWidth = math.max(1.0, layout.cell * 0.042);
+    final strokeWidth = math.max(1.0, layout.cell * kToothStrokeUnits);
 
     // A tooth carrying a condition keeps that colour whether or not it is
     // picked — selection is called out by the ring instead, so no clinical
@@ -520,7 +409,34 @@ class _ArchPainter extends CustomPainter {
     canvas.transform(layout.transformFor(tooth, scale: selected ? selectionScale : 1).storage);
 
     final glyph = layout.glyphFor(tooth);
-    canvas.drawPath(glyph.outline, Paint()..color = fill);
+    final root = condition != null ? rootColors[tooth] : (selected ? null : idleRoot);
+    final fillPaint = Paint()..color = fill;
+    if (root != null) {
+      // Lighter at the centre of the crown, deepening to the root shade at
+      // its rim, in one colour family.
+      final bounds = glyph.outline.getBounds();
+      fillPaint.shader = RadialGradient(
+        colors: [fill, fill, root],
+        stops: const [0, 0.45, 1],
+      ).createShader(Rect.fromCircle(
+        center: bounds.center,
+        radius: math.max(bounds.width, bounds.height) / 2,
+      ));
+    }
+    canvas.drawPath(glyph.outline, fillPaint);
+
+    // Surface conditions sit on top of the crown's own colour: the five
+    // regions tile the crown exactly, so a surface fill covers its own ground
+    // and nothing else. Painted before the outline and the fissures, which
+    // then read over the top of it.
+    final surfaces = surfaceColors[tooth];
+    if (surfaces != null && surfaces.isNotEmpty) {
+      for (final entry in glyph.surfaces.entries) {
+        final color = surfaces[surfaceName(tooth, entry.key)];
+        if (color == null) continue;
+        canvas.drawPath(entry.value, Paint()..color = color);
+      }
+    }
 
     if (hovered) {
       canvas.drawPath(glyph.outline, Paint()..color = outlineColor.withOpacity(0.10));
@@ -555,7 +471,7 @@ class _ArchPainter extends CustomPainter {
     final groovePaint = Paint()
       ..color = stroke.withOpacity(0.7)
       ..style = PaintingStyle.stroke
-      ..strokeWidth = strokeWidth * 0.8
+      ..strokeWidth = strokeWidth * kGrooveStrokeFraction
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round;
     for (final groove in glyph.grooves) {
@@ -577,8 +493,24 @@ class _ArchPainter extends CustomPainter {
         old.selectedOutline != selectedOutline ||
         old.labelColor != labelColor ||
         old.idleStroke != idleStroke ||
+        old.idleRoot != idleRoot ||
+        !mapEquals(old.rootColors, rootColors) ||
         !mapEquals(old.conditionColors, conditionColors) ||
+        !_sameSurfaceColors(old.surfaceColors, surfaceColors) ||
         !mapEquals(old.conditionStrokes, conditionStrokes) ||
         !setEquals(old.dashedTeeth, dashedTeeth);
+  }
+
+  /// [mapEquals] compares the inner maps by identity, which would miss a
+  /// surface whose colour changed inside a map the caller rebuilt.
+  static bool _sameSurfaceColors(
+    Map<int, Map<String, Color>> a,
+    Map<int, Map<String, Color>> b,
+  ) {
+    if (a.length != b.length) return false;
+    for (final entry in a.entries) {
+      if (!mapEquals(entry.value, b[entry.key])) return false;
+    }
+    return true;
   }
 }

@@ -168,7 +168,7 @@ class _TreatmentNoteCard extends StatelessWidget {
                 const SizedBox(height: 10),
                 Row(
                   children: [
-                    Icon(kDoctorIcon, size: 13, color: AppColors.textSecondary),
+                    DoctorIcon(size: 13, color: AppColors.textSecondary),
                     const SizedBox(width: 5),
                     Expanded(
                       child: Text(

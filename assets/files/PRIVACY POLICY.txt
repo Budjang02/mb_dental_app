@@ -1,0 +1,107 @@
+﻿PRIVACY POLICY
+Last updated September 10, 2026
+
+
+This document outlines how Mariano and Bolasoc Dental Center ("we," "us," or "our") manages personal data when users interact with our platform ("Services"). This includes visiting our web app at https://mbdentalcenter.web.app, using our mobile application (M&B Dental), or communicating with us for related inquiries or events.
+Questions or concerns? Reviewing this notice clarifies your privacy rights and options. As the data controller, we determine how your personal details are handled. If you disagree with these policies, please refrain from using our Services. For further inquiries, contact us at raphaelgiron32@gmail.com.
+
+
+SUMMARY OF KEY POINTS
+This section provides a high-level overview of our privacy practices. Detailed explanations are available in the numbered sections below.
+* Information Processed: The personal details we collect depend on your specific interactions with our platform, account choices, and feature usage.
+* Sensitive Information: When permitted by applicable law or provided with explicit consent, we may handle sensitive categories such as dental/health records and creditworthiness data.
+* Third-Party Data: We do not acquire or collect data about you from external third parties.
+* Purpose of Processing: Your information is utilized to operate, improve, and secure our Services, facilitate patient communication, prevent fraud, and comply with legal requirements.
+* Data Sharing: Information is shared only in specific situations, such as business transfers or legal obligations.
+* Security Measures: We maintain technical and organizational safeguards to protect your personal data, though no internet transmission is guaranteed to be 100% secure.
+* User Rights: Depending on your jurisdiction, you hold specific rights regarding access, updates, and deletion of your personal data.
+* Exercising Rights: You may exercise your privacy rights by submitting a formal data subject access request or emailing us directly.
+
+
+
+
+TABLE OF CONTENTS
+1. WHAT INFORMATION DO WE COLLECT?
+2. HOW DO WE PROCESS YOUR INFORMATION?
+3. WHEN AND WITH WHOM DO WE SHARE YOUR PERSONAL INFORMATION?
+4. HOW LONG DO WE KEEP YOUR INFORMATION?
+5. HOW DO WE KEEP YOUR INFORMATION SAFE?
+6. WHAT ARE YOUR PRIVACY RIGHTS?
+7. CONTROLS FOR DO-NOT-TRACK FEATURES
+8. DO WE MAKE UPDATES TO THIS NOTICE?
+9. HOW CAN YOU CONTACT US ABOUT THIS NOTICE?
+10. HOW CAN YOU REVIEW, UPDATE, OR DELETE THE DATA WE COLLECT FROM YOU?
+
+
+1. WHAT INFORMATION DO WE COLLECT?
+Personal information you disclose to us
+In Short: We collect personal data that you voluntarily share with us.
+We collect personal information when you register an account, express interest in our dental services, participate in system features, or communicate with us. This may include:
+* Full names
+* Phone numbers
+* Email addresses
+* Account passwords
+* Contact preferences
+* Debit/credit card numbers
+Sensitive Information
+With your explicit consent or where legally authorized, we process sensitive information categories including:
+* Health and dental records
+* Creditworthiness information
+Application Data
+When using our mobile app, we may request specific device permissions:
+* Mobile Device Access: We may request access to features like SMS, reminders, and social media links. You can manage these permissions in your device settings.
+* Mobile Device Data: We automatically log technical data such as device ID, model, operating system, IP address, browser type, network carrier, and feature usage patterns for security and performance diagnostics.
+* Push Notifications: We may send notifications regarding account updates or appointments. You can opt out at any time via device settings.
+Google API Services
+Our utilization of data obtained via Google APIs strictly adheres to the Google API Services User Data Policy, including its Limited Use provisions.
+
+
+2. HOW DO WE PROCESS YOUR INFORMATION?
+In Short: We process data to deliver, manage, and protect our Services, meet legal standards, and fulfill user requests.
+We process your personal details for specific operational reasons, including:
+* Account Management: To create, authenticate, and maintain user profiles.
+* Service Delivery: To schedule appointments, process reservation down payments, and facilitate requested dental services.
+
+
+3. WHEN AND WITH WHOM DO WE SHARE YOUR PERSONAL INFORMATION?
+In Short: Data is shared only under specific circumstances or with designated service partners.
+We may disclose personal information in limited scenarios, such as:
+* Business Transfers: In connection with or during negotiations for any merger, asset sale, financing, or business acquisition.
+
+
+4. HOW LONG DO WE KEEP YOUR INFORMATION?
+In Short: Data is retained only as long as necessary for the purposes outlined in this policy or required by law.
+We keep personal details for the duration of your active account status or as needed for legitimate business and legal compliance (such as tax and accounting obligations). When data is no longer required, it is either permanently deleted, anonymized, or securely isolated until deletion is feasible.
+
+
+5. HOW DO WE KEEP YOUR INFORMATION SAFE?
+In Short: Technical and organizational safeguards are implemented to protect your data.
+We deploy administrative and technical safety protocols to guard your personal information. However, no online system or electronic storage method can guarantee absolute security against unauthorized access or breaches. Transmitting data to and from our Services is done at your own risk.
+
+
+6. WHAT ARE YOUR PRIVACY RIGHTS?
+In Short: You retain rights to review, modify, or close your account at any time.
+* Withdrawing Consent: If processing relies on your consent, you may withdraw it at any time by contacting us. Withdrawal will not affect prior lawful processing.
+* Account Modification & Deletion: You can review or modify account settings by logging in. Upon account termination requests, we deactivate profile data from active databases, retaining minimal records where required for fraud prevention or legal compliance.
+For privacy inquiries, contact raphaelgiron32@gmail.com.
+
+
+7. CONTROLS FOR DO-NOT-TRACK FEATURES
+Most web browsers and mobile operating systems offer a Do-Not-Track ("DNT") setting. Because no universal technical standard currently exists for responding to DNT signals, our systems do not currently alter operations upon receiving them.
+
+
+8. DO WE MAKE UPDATES TO THIS NOTICE?
+In Short: Yes, updates will occur as needed to maintain legal alignment.
+We may revise this notice periodically. The updated date at the top will reflect the latest revision. Material changes will be communicated via prominent site notices or direct user messages.
+
+
+9. HOW CAN YOU CONTACT US ABOUT THIS NOTICE?
+For questions regarding this policy, reach out via email at raphaelgiron32@gmail.com or by mail to:
+Mariano and Bolasoc Dental Center
+La Rosa Street, Corner Gil Carlos San Jose
+Baliuag, Bulacan 3006
+Philippines
+
+
+10. HOW CAN YOU REVIEW, UPDATE, OR DELETE YOUR DATA?
+Subject to local privacy laws (including the Philippine Data Privacy Act), you may submit a request to access, correct, or delete the personal information we maintain about you. To initiate a request, submit a formal data subject access request to the contact email listed above.

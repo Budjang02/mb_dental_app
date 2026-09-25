@@ -21,12 +21,16 @@ dependencies:
   shared_preferences: ^2.3.2
   flutter_native_splash: ^2.4.0
   supabase_flutter: ^2.17.2
+  http: ^1.2.2
   flutter_dotenv: ^6.0.1
   firebase_core: ^4.14.0
   cloud_firestore: ^6.9.0
   font_awesome_flutter: ^11.0.0
   flutter_tabler_icons: ^1.43.0
   flutter_svg: ^2.3.0
+  share_plus: ^13.3.0
+  qr: ^3.0.2
+  mobile_scanner: ^7.4.2
 
 dev_dependencies:
   flutter_test:
@@ -44,10 +48,16 @@ flutter:
     - assets/images/light_mode_icon.png
     - assets/images/dark_mode_icon.png
     - assets/images/transparent_icon.png
+    # The odontogram as a plain vector template, generated from the chart's own
+    # geometry by tool/generate_tooth_map_svg.dart.
+    - assets/images/tooth_map.svg
     - assets/animations/logo_splash.json
     # PayMongo rail logos for the wallet's Cash In window.
     - assets/wallet/gcash-mark.svg
     - assets/wallet/grab-logo.svg
+    # Booking consent text, shown before payment on Book Appointment.
+    - assets/files/TERMS AND CONDITIONS.txt
+    - assets/files/PRIVACY POLICY.txt
 
 # 1. App Icon Configuration
 flutter_launcher_icons:

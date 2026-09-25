@@ -41,6 +41,12 @@ class SchedulePicker extends StatefulWidget {
   /// Null when the patient taps the selected chip again to clear it.
   final ValueChanged<int?> onSlotSelected;
 
+  /// True while the chosen day's times are being fetched.
+  final bool isLoadingSlots;
+
+  /// Why the chosen day's times could not be read, or null.
+  final String? slotsError;
+
   const SchedulePicker({
     super.key,
     required this.durationMinutes,
@@ -52,6 +58,8 @@ class SchedulePicker extends StatefulWidget {
     required this.slotsFor,
     required this.onDateSelected,
     required this.onSlotSelected,
+    this.isLoadingSlots = false,
+    this.slotsError,
   });
 
   @override
@@ -134,6 +142,36 @@ class _SchedulePickerState extends State<SchedulePicker> {
             ),
           ],
         ),
+        // Until a date is picked the time card holds only this prompt — no
+        // band stepper and no empty slot grid to puzzle over.
+        if (widget.selectedDate == null) ...[
+          const SizedBox(height: 14),
+          _card(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 22, 16, 22),
+                child: Center(
+                  child: Column(
+                    children: [
+                      Icon(CupertinoIcons.clock, size: 22, color: AppColors.textSecondary),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Pick a date',
+                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        'Available start times appear here',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
         if (widget.selectedDate != null) ...[
           const SizedBox(height: 14),
           _card(
@@ -309,7 +347,7 @@ class _SchedulePickerState extends State<SchedulePicker> {
 
   Widget _dayCell(DateTime day) {
     final isSelected = widget.selectedDate != null && _isSameDay(day, widget.selectedDate!);
-    final isToday = _isSameDay(day, DateTime.now());
+    final isToday = _isSameDay(day, clinicToday());
 
     final inRange = !day.isBefore(_dateOnly(widget.firstDay)) &&
         !day.isAfter(_dateOnly(widget.lastDay));
@@ -373,6 +411,20 @@ class _SchedulePickerState extends State<SchedulePicker> {
   }
 
   Widget _slotSection() {
+    if (widget.isLoadingSlots) {
+      return Row(
+        children: [
+          SizedBox(
+            width: 14,
+            height: 14,
+            child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primary),
+          ),
+          const SizedBox(width: 10),
+          Text('Checking the calendar…', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+        ],
+      );
+    }
+    if (widget.slotsError != null) return _notice(widget.slotsError!);
     final starts = _availableStarts(_band);
     if (starts.isEmpty) {
       return _notice('Nothing free this ${_bandLower(_band)}.');

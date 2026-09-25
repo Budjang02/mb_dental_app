@@ -17,6 +17,7 @@ import '../models/treatment.dart';
 import '../models/wallet_transaction.dart';
 import '../services/push_notification_service.dart';
 import '../services/supabase_service.dart';
+import 'load_state.dart';
 import 'notification_feed.dart';
 
 /// Everything the signed-in patient owns, fetched in one pass so the screens
@@ -50,6 +51,16 @@ class PatientSnapshot {
   /// self-registered account yet, and the clinic's booking rules refuse it.
   final bool isApprovedForBooking;
 
+  /// True only when [walletBalance] came back from the server on this load.
+  /// False when the wallet read failed — the figure below is then stale or
+  /// zero, and showing it as the patient's balance would be a lie about money.
+  final bool isWalletBalanceKnown;
+
+  /// The sections whose read failed, and why. A section missing from this map
+  /// loaded successfully, so an empty list for it means the patient has no
+  /// rows — not that the request went wrong.
+  final Map<SyncSection, SectionStatus> failures;
+
   const PatientSnapshot({
     required this.patient,
     required this.appointments,
@@ -65,6 +76,8 @@ class PatientSnapshot {
     required this.messages,
     required this.walletBalance,
     required this.isApprovedForBooking,
+    required this.isWalletBalanceKnown,
+    this.failures = const {},
   });
 }
 
@@ -123,6 +136,26 @@ class SlotTakenException implements Exception {
   String toString() => 'That time slot is no longer available';
 }
 
+/// Raised when the server-side wallet checkout function is unavailable.
+///
+/// A paid booking must never silently fall back to a plain appointment insert:
+/// that would tell the patient payment succeeded when no wallet debit happened.
+class BookingPaymentServiceUnavailableException implements Exception {
+  const BookingPaymentServiceUnavailableException();
+
+  @override
+  String toString() => 'The appointment payment service is unavailable';
+}
+
+/// Raised when checkout returned without either identifier that proves the
+/// server created or found the booking.
+class InvalidWalletCheckoutResultException implements Exception {
+  const InvalidWalletCheckoutResultException();
+
+  @override
+  String toString() => 'The payment service returned no booking confirmation';
+}
+
 /// What a completed wallet checkout returns.
 class WalletCheckoutResult {
   final String appointmentId;
@@ -133,12 +166,46 @@ class WalletCheckoutResult {
   /// nothing — a retry after a dropped connection, not a second booking.
   final bool wasIdempotentReplay;
 
+  /// The status the database stored (`Confirmed` once the down payment is
+  /// paid, as `book_appointment_v5` / `v6` do). Empty when not returned.
+  final String status;
+
   const WalletCheckoutResult({
     required this.appointmentId,
     required this.walletBalance,
     required this.referenceNo,
     this.wasIdempotentReplay = false,
+    this.status = '',
   });
+
+  /// The RPC is authoritative only when it identifies the booking it created
+  /// (or replayed). Both are normally supplied; accepting either preserves
+  /// compatibility with the deployed function while refusing an empty result.
+  bool get hasBookingConfirmation =>
+      appointmentId.trim().isNotEmpty || referenceNo.trim().isNotEmpty;
+}
+
+/// What `reschedule_my_appointment()` reports: whether a paid deposit was
+/// involved (the visit is then confirmed at its new time straight away), the
+/// 5% fee taken from it, and how much of the deposit still counts toward the
+/// final bill.
+class RescheduleResult {
+  final bool paid;
+  final double fee;
+  final double depositCredit;
+
+  const RescheduleResult({required this.paid, required this.fee, required this.depositCredit});
+}
+
+/// Raised when the database refuses a cancel or reschedule for a reason the
+/// patient can act on ("Same-day online rescheduling is closed…"). [message]
+/// is the database's own sentence, safe to show.
+class AppointmentChangeRefusedException implements Exception {
+  final String message;
+  const AppointmentChangeRefusedException(this.message);
+
+  @override
+  String toString() => message;
 }
 
 /// The Supabase reads and writes behind [PatientRepository].
@@ -158,6 +225,16 @@ class PatientApi {
 
   // --- Load ---
 
+  /// Fetches the whole record, one section at a time and one failure at a time.
+  ///
+  /// Every section is read independently: a section that fails contributes its
+  /// reason to [PatientSnapshot.failures] and leaves its own data empty, and
+  /// every other section still arrives. A single refused table can therefore no
+  /// longer take the whole record — and with it every screen — down with it.
+  ///
+  /// The one thing that is still fatal is identity: without a patient chart
+  /// there is no id to query anything else by, so that throws
+  /// [NoPatientRecordException] as before.
   static Future<PatientSnapshot> loadAll() async {
     final client = SupabaseService.client;
     final userId = SupabaseService.currentUserId;
@@ -165,14 +242,44 @@ class PatientApi {
       throw const NoPatientRecordException('You are signed out. Please sign in again.');
     }
 
-    final profileRow = await client
-        .from('profiles')
-        .select('id, username, full_name, first_name, last_name, email, phone, gender, '
-            'birthdate, address, blood_type, marital_status, medical_history, avatar_url')
-        .eq('id', userId)
-        .maybeSingle();
+    final failures = <SyncSection, SectionStatus>{};
 
-    var patientRow = await _patientRowFor(userId);
+    /// Runs one section's read. A failure is recorded against the section and
+    /// [fallback] stands in, so the rest of the record still loads.
+    ///
+    /// Deliberately not a blanket "return empty on any error": the caller can
+    /// tell the two apart through [failures], and only a section absent from
+    /// that map is allowed to render an empty state.
+    Future<T> section<T>(
+      SyncSection which,
+      Future<T> Function() fetch,
+      T fallback,
+    ) async {
+      try {
+        return await runWithRetry(fetch, context: 'PatientApi.${which.name}');
+      } catch (e) {
+        failures[which] = classifyFailure(e, context: 'PatientApi.${which.name}');
+        return fallback;
+      }
+    }
+
+    // The profile row fills the gaps in the chart. It is not worth failing the
+    // load over on its own, so it is a section like any other.
+    final profileRow = await section<Map<String, dynamic>?>(
+      SyncSection.profile,
+      () => client
+          .from('profiles')
+          .select('id, username, full_name, first_name, last_name, email, phone, gender, '
+              'birthdate, address, blood_type, marital_status, medical_history, avatar_url')
+          .eq('id', userId)
+          .maybeSingle(),
+      null,
+    );
+
+    var patientRow = await runWithRetry(
+      () => _patientRowFor(userId),
+      context: 'PatientApi.patientRow',
+    );
 
     // The clinic creates the chart on the admin web platform, and it only
     // reaches this app once `patients.profile_id` points at the account. A
@@ -195,17 +302,27 @@ class PatientApi {
     final patientId = patientRow['id'] as String;
 
     // Fetched together: none of these depend on each other, so one round trip
-    // beats eight sequential ones on a phone connection.
+    // beats eight sequential ones on a phone connection. Each is wrapped on its
+    // own, so `Future.wait` can no longer be failed by any one of them.
     final results = await Future.wait([
-      fetchAppointments(patientId),
-      fetchTreatmentPlan(patientId),
-      fetchBilling(patientId),
-      fetchNotifications(userId),
-      fetchTransactions(patientId),
-      fetchDocuments(patientId),
-      fetchToothRecords(patientId),
-      fetchMessages(patientId),
-      fetchTreatmentNotes(patientId),
+      section(SyncSection.appointments, () => fetchAppointments(patientId), const <Appointment>[]),
+      section(SyncSection.treatmentPlan, () => fetchTreatmentPlan(patientId),
+          const TreatmentPlanData(items: [], plans: [])),
+      section(SyncSection.billing, () => fetchBilling(patientId), const <Payment>[]),
+      section(SyncSection.notifications, () => fetchNotifications(userId),
+          const <NotificationItem>[]),
+      section(SyncSection.wallet, () => fetchTransactions(patientId),
+          const <WalletTransaction>[]),
+      section(SyncSection.documents, () => fetchDocuments(patientId),
+          const <PatientDocument>[]),
+      section(SyncSection.chart, () => fetchToothRecords(patientId),
+          const <Map<String, String>>[]),
+      section(SyncSection.messages, () => fetchMessages(patientId),
+          const <PatientMessage>[]),
+      // The treatment history shares the chart's section: both feed the same
+      // two screens, and either one failing makes that section unreliable.
+      section(SyncSection.chart, () => fetchTreatmentNotes(patientId),
+          const <Map<String, String>>[]),
     ]);
 
     final appointments = results[0] as List<Appointment>;
@@ -218,6 +335,13 @@ class PatientApi {
     final toothRecords = results[6] as List<Map<String, String>>;
     final messages = results[7] as List<PatientMessage>;
     final treatmentNotes = results[8] as List<Map<String, String>>;
+
+    // The stored column, where the schema has one, is authoritative even if the
+    // ledger could not be read. Otherwise the ledger is the balance, so the
+    // balance is only known when the wallet section came back.
+    final storedBalance = _double(patientRow['wallet_balance']);
+    final isWalletBalanceKnown =
+        storedBalance != null || !failures.containsKey(SyncSection.wallet);
 
     return PatientSnapshot(
       patient: _patientFrom(patientRow, profileRow),
@@ -237,8 +361,10 @@ class PatientApi {
       // A stored column wins where one exists; the live schema has none, so the
       // ledger is the balance — the same sum `wallet_balance_of()` checks
       // checkout against.
-      walletBalance: _double(patientRow['wallet_balance']) ?? balanceFrom(transactions),
+      walletBalance: storedBalance ?? balanceFrom(transactions),
       isApprovedForBooking: patientRow['approved_at'] != null,
+      isWalletBalanceKnown: isWalletBalanceKnown,
+      failures: failures,
     );
   }
 
@@ -354,27 +480,57 @@ class PatientApi {
     return _str(profile?['medical_history']);
   }
 
+  /// Every column [_appointmentFrom] reads, shared by the list and the
+  /// single-appointment fetch so the two can never map a booking differently.
+  static const String _appointmentColumns =
+      'id, appointment_date, appointment_time, status, notes, payment_method, '
+      'cancellation_reason, cancelled_by, cancelled_by_id, reschedule_fee_total, '
+      'procedure_id, doctor_id, confirmation_code, qr_token, '
+      'estimated_total, downpayment_amount, downpayment_paid_at, '
+      'created_at, confirmed_at, cancelled_at, arrived_at, booked_by, '
+      'procedure:procedures!appointments_procedure_id_fkey(name, duration_min, base_price), '
+      // `doctor_id` points at `members` (clinic staff); `created_by`
+      // is the one that points at `profiles`. Embedding plain
+      // `profiles` here silently resolved to whoever booked the visit
+      // instead of the dentist seeing the patient.
+      'doctor:members!appointments_doctor_id_fkey(full_name), '
+      'appointment_services(procedure_id, procedures(name, duration_min, base_price))';
+
   static Future<List<Appointment>> fetchAppointments(String patientId) async {
     final rows = await SupabaseService.client
         .from('appointments')
-        .select('id, appointment_date, appointment_time, status, notes, payment_method, '
-            'cancellation_reason, procedure_id, doctor_id, '
-            'estimated_total, downpayment_amount, downpayment_paid_at, '
-            'created_at, confirmed_at, cancelled_at, arrived_at, booked_by, '
-            'procedure:procedures!appointments_procedure_id_fkey(name, duration_min, base_price), '
-            // `doctor_id` points at `members` (clinic staff); `created_by`
-            // is the one that points at `profiles`. Embedding plain
-            // `profiles` here silently resolved to whoever booked the visit
-            // instead of the dentist seeing the patient.
-            'doctor:members!appointments_doctor_id_fkey(full_name), '
-            'appointment_services(procedure_id, procedures(name, duration_min, base_price))')
+        .select(_appointmentColumns)
         .eq('patient_id', patientId)
         // The clinic archives a booking to take it off every list; the web
         // portal hides those, so the app does too.
         .isFilter('archived_at', null)
-        .order('appointment_date', ascending: false);
+        .order('appointment_date', ascending: false)
+        .order('appointment_time', ascending: false);
 
     return rows.map<Appointment>(_appointmentFrom).toList();
+  }
+
+  /// One of the patient's appointments, looked up by its id or by the
+  /// confirmation code printed on it. Null when neither matches a row this
+  /// session may read — row-level security answers a stranger's id with no
+  /// rows, not an error.
+  static Future<Appointment?> fetchAppointment(String patientId, String idOrCode) async {
+    final key = idOrCode.trim();
+    if (key.isEmpty) return null;
+    final looksLikeId = RegExp(
+      r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+      caseSensitive: false,
+    ).hasMatch(key);
+
+    final row = await SupabaseService.client
+        .from('appointments')
+        .select(_appointmentColumns)
+        .eq('patient_id', patientId)
+        .eq(looksLikeId ? 'id' : 'confirmation_code', key)
+        .limit(1)
+        .maybeSingle();
+
+    return row == null ? null : _appointmentFrom(row);
   }
 
   static Appointment _appointmentFrom(Map<String, dynamic> row) {
@@ -426,6 +582,13 @@ class PatientApi {
       durationMinutes: duration > 0 ? duration : 60,
       totalPrice: total,
       amountPaid: paid,
+      confirmationCode: _nullableStr(_str(row['confirmation_code'])),
+      qrToken: Appointment.normaliseQrToken(_str(row['qr_token'])),
+      cancelledBy: _nullableStr(_str(row['cancelled_by'])),
+      cancelledById: _nullableStr(_str(row['cancelled_by_id'])),
+      rescheduleFeeTotal: _double(row['reschedule_fee_total']) ?? 0,
+      downpaymentAmount: _double(row['downpayment_amount']) ?? 0,
+      downpaymentPaidAt: _date(row['downpayment_paid_at']),
       doctorId: _nullableStr(_str(row['doctor_id'])),
       createdAt: _date(row['created_at']),
       statusChangedAt: _statusChangedAt(row),
@@ -722,7 +885,7 @@ class PatientApi {
         title: _str(row['title']),
         body: _str(row['body']),
         createdAt: _date(row['created_at']) ?? DateTime.now(),
-        isRead: row['is_read'] == true,
+        isRead: _notificationIsRead(row),
         readAt: _date(row['read_at']),
       );
     }).toList();
@@ -743,17 +906,39 @@ class PatientApi {
       title: _str(row['title']),
       body: _str(row['body']),
       createdAt: _date(row['created_at']) ?? DateTime.now(),
-      isRead: row['is_read'] == true,
+      isRead: _notificationIsRead(row),
       readAt: _date(row['read_at']),
     );
   }
 
-  /// True once `notifications.read_at` has been seen on this connection.
+  /// The `notifications` columns every deployment is known to have.
+  static const String _notificationBase = 'id, title, body, created_at';
+
+  /// Columns some deployments have and others do not.
   ///
-  /// The column arrives with `docs/realtime_data_sync_migration.sql`. Until that has run the
-  /// app must not fail to read or mark alerts, so the first request that hits
-  /// `42703 undefined_column` drops the column and every later one skips it.
-  static bool _hasReadAtColumn = true;
+  /// `read_at` and `type` arrive with `docs/realtime_data_sync_migration.sql`,
+  /// and the live schema has neither `type` nor `is_read`. Asking for a column
+  /// that is not there is a `42703` that fails the whole request — which is
+  /// what used to take the entire record down and put a connection error in
+  /// front of a patient whose connection was fine.
+  ///
+  /// So the set is narrowed as the server answers: each `42703` names the
+  /// column it did not recognise, that one is dropped, and the request is made
+  /// again. After the first load the app is asking for exactly what this
+  /// project has.
+  static const Set<String> _notificationColumnCandidates = {'type', 'is_read', 'read_at'};
+
+  /// The candidates still believed to exist. Narrowed, never widened.
+  static final Set<String> _notificationOptionalColumns = {..._notificationColumnCandidates};
+
+  /// The column named in a `42703`, e.g. `column notifications.type does not
+  /// exist`. Null when the message does not name one.
+  static String? _undefinedColumnName(PostgrestException e) {
+    final match = RegExp(r'column\s+(?:\w+\.)?"?(\w+)"?\s+does not exist',
+            caseSensitive: false)
+        .firstMatch(e.message);
+    return match?.group(1);
+  }
 
   static Future<List<Map<String, dynamic>>> _selectNotifications(
     String userId, {
@@ -769,16 +954,37 @@ class PatientApi {
       return rows.cast<Map<String, dynamic>>();
     }
 
-    const base = 'id, title, body, type, is_read, created_at';
-    if (_hasReadAtColumn) {
+    // One attempt per optional column, plus the request that finally succeeds.
+    // The bound is fixed rather than read off the set, which shrinks as the
+    // server answers.
+    for (var attempt = 0; attempt <= _notificationColumnCandidates.length; attempt++) {
+      final columns = [_notificationBase, ..._notificationOptionalColumns].join(', ');
       try {
-        return await run('$base, read_at');
+        return await run(columns);
       } on PostgrestException catch (e) {
         if (pgCode(e) != _undefinedColumn) rethrow;
-        _hasReadAtColumn = false;
+        final missing = _undefinedColumnName(e);
+        // A 42703 naming a column outside the optional set is a real bug in
+        // the query, not a schema difference to absorb.
+        if (missing == null || !_notificationColumnCandidates.contains(missing)) rethrow;
+        // `remove` returning false means a request running alongside this one
+        // already learned the column is absent. That is not an error — this
+        // one simply retries with what the set now holds.
+        if (_notificationOptionalColumns.remove(missing)) {
+          debugPrint('notifications has no "$missing" column; continuing without it');
+        }
       }
     }
-    return run(base);
+    return run(_notificationBase);
+  }
+
+  /// Whether an alert row counts as read.
+  ///
+  /// `is_read` where the schema has it. Where it does not, `read_at` is the
+  /// only record of a read, so a stamped row is a read one.
+  static bool _notificationIsRead(Map<String, dynamic> row) {
+    if (row.containsKey('is_read')) return row['is_read'] == true;
+    return row['read_at'] != null;
   }
 
   /// Postgres `undefined_column`.
@@ -961,12 +1167,42 @@ class PatientApi {
   /// The per-tooth chart entries behind the odontogram and the Treatment Notes
   /// page. Shaped as the string maps those screens already read, so the chart's
   /// rendering did not have to change to take real data.
+  ///
+  /// `dental_records` is the chart the website draws: one row per tooth,
+  /// holding its condition now. `tooth_records` is the older per-entry log, and
+  /// reading it painted teeth with conditions the clinic had since changed or
+  /// cleared. The log is only used when the current chart cannot be read or has
+  /// nothing for this patient.
   static Future<List<Map<String, String>>> fetchToothRecords(String patientId) async {
+    final current = await _optionalRows(() => SupabaseService.client
+        .from('dental_records')
+        .select('id, tooth_id, condition, notes, updated_at, updated_by, '
+            'doctor:profiles!dental_records_updated_by_fkey(full_name, first_name, last_name)')
+        .eq('patient_id', patientId)
+        .order('updated_at', ascending: false, nullsFirst: false));
+    if (current.isNotEmpty) {
+      return current.map((row) {
+        final recordedOn = _date(row['updated_at']);
+        final condition = _str(row['condition']);
+        return <String, String>{
+          'date': recordedOn == null ? '' : _dateLabel(recordedOn),
+          'tooth': _toothLabelFrom(_str(row['tooth_id'])),
+          'condition': condition,
+          'procedure': condition,
+          'notes': _str(row['notes']),
+          'doctor': _doctorOf(row),
+        };
+      }).toList();
+    }
+
     final rows = await SupabaseService.client
         .from('tooth_records')
         .select('id, tooth_id, condition, notes, doctor_id, created_at, updated_at, '
             'doctor:members!tooth_records_doctor_id_fkey(full_name)')
         .eq('patient_id', patientId)
+        // Newest edit first: the chart keeps the first row it meets per tooth,
+        // and a row the clinic re-edited is the current one.
+        .order('updated_at', ascending: false, nullsFirst: false)
         .order('created_at', ascending: false);
 
     return rows.cast<Map<String, dynamic>>().map((row) {
@@ -1306,39 +1542,61 @@ class PatientApi {
   /// has not had `docs/realtime_data_sync_migration.sql` applied yet.
   static Future<void> _updateReadState(
     PostgrestFilterBuilder<dynamic> Function(Map<String, dynamic> payload) update,
-  ) async {
+  ) {
     final now = DateTime.now().toUtc().toIso8601String();
-    if (_hasReadAtColumn) {
+    return _writeNotificationFlags(update, isRead: true, readAt: now);
+  }
+
+  /// Writes the read flags this deployment actually has.
+  ///
+  /// Reads and writes share [_notificationOptionalColumns], so the first read
+  /// of the session teaches the writes which columns exist. Where they are
+  /// still unknown, a `42703` names the offending column, it is dropped, and
+  /// the write is made again with what is left — the same self-narrowing the
+  /// read does, because a schema that has `read_at` but no `is_read` used to
+  /// fail both of the old fixed payloads.
+  static Future<void> _writeNotificationFlags(
+    PostgrestFilterBuilder<dynamic> Function(Map<String, dynamic> payload) update, {
+    required bool isRead,
+    required String? readAt,
+  }) async {
+    for (var attempt = 0; attempt <= _notificationColumnCandidates.length; attempt++) {
+      final payload = <String, dynamic>{
+        if (_notificationOptionalColumns.contains('is_read')) 'is_read': isRead,
+        if (_notificationOptionalColumns.contains('read_at')) 'read_at': readAt,
+      };
+      // Nothing on this row records a read. Saying so beats a silent no-op
+      // update that would report success without changing anything.
+      if (payload.isEmpty) {
+        debugPrint('notifications has no read-state column; read state stays device-local');
+        return;
+      }
       try {
-        await update({'is_read': true, 'read_at': now});
+        await update(payload);
         return;
       } on PostgrestException catch (e) {
         if (pgCode(e) != _undefinedColumn) rethrow;
-        _hasReadAtColumn = false;
+        final missing = _undefinedColumnName(e);
+        if (missing == null || !_notificationColumnCandidates.contains(missing)) rethrow;
+        if (_notificationOptionalColumns.remove(missing)) {
+          debugPrint('notifications has no "$missing" column; continuing without it');
+        }
       }
     }
-    await update({'is_read': true});
   }
 
   /// Marks one alert unread again, so an "unread" toggle on either platform is
   /// also a row change rather than device-local state.
   static Future<void> markNotificationUnread(String id, {required String userId}) async {
-    Future<void> run(Map<String, dynamic> payload) => SupabaseService.client
-        .from('notifications')
-        .update(payload)
-        .eq('id', id)
-        .eq('recipient_id', userId);
-
-    if (_hasReadAtColumn) {
-      try {
-        await run({'is_read': false, 'read_at': null});
-        return;
-      } on PostgrestException catch (e) {
-        if (pgCode(e) != _undefinedColumn) rethrow;
-        _hasReadAtColumn = false;
-      }
-    }
-    await run({'is_read': false});
+    await _writeNotificationFlags(
+      (payload) => SupabaseService.client
+          .from('notifications')
+          .update(payload)
+          .eq('id', id)
+          .eq('recipient_id', userId),
+      isRead: false,
+      readAt: null,
+    );
   }
 
   // `appointments.status` is the Postgres enum `appointment_status`, whose
@@ -1346,39 +1604,71 @@ class PatientApi {
   // `Cancelled`, `No-Show`). A lowercase literal is rejected outright, which is
   // what made every booking, cancellation and reschedule from the app fail.
   static const String _statusPending = 'Pending';
-  static const String _statusCancelled = 'Cancelled';
 
+  /// Cancels one of the patient's own bookings through
+  /// `cancel_my_appointment()`, the function the website's Cancel dialog
+  /// calls. It checks the booking is theirs and still cancellable, records
+  /// the reason, stamps who cancelled and when, releases the slot, and applies
+  /// the clinic's deposit policy — all on the server, so the app never writes
+  /// the row directly (which RLS refuses, silently, as zero rows changed).
   static Future<void> cancelAppointment(String id, {required String reason}) async {
-    final client = SupabaseService.client;
-    final base = <String, dynamic>{
-      'status': _statusCancelled,
-      'cancellation_reason': reason,
-      'cancelled_at': DateTime.now().toUtc().toIso8601String(),
-    };
     try {
-      // Tells the front desk who cancelled, the way the portal records it.
-      await client.from('appointments').update({...base, 'cancelled_by': 'patient'}).eq('id', id);
+      await SupabaseService.client.rpc('cancel_my_appointment', params: {
+        'p_appointment_id': id,
+        'p_reason': reason.trim().isEmpty ? null : reason.trim(),
+      });
     } on PostgrestException catch (e) {
-      // `cancelled_by` is descriptive only; a constraint on its values must not
-      // stop the cancellation itself.
-      if (!const {'23514', '22P02', '42703'}.contains(pgCode(e))) rethrow;
-      await client.from('appointments').update(base).eq('id', id);
+      throw _changeRefused(e) ?? e;
     }
   }
 
-  static Future<void> rescheduleAppointment(
+  /// Moves one of the patient's own bookings through
+  /// `reschedule_my_appointment()`, as the website does. The server checks the
+  /// clinic hours, the dentist's diary, capacity, the one-day lead time and the
+  /// same-day cutoff; for a booking with a paid deposit it takes the 5% fee
+  /// off the deposit and confirms the new time in the same transaction.
+  static Future<RescheduleResult> rescheduleMyAppointment(
     String id, {
     required DateTime date,
     required String timeSlot,
-    String? notes,
   }) async {
-    await SupabaseService.client.from('appointments').update({
-      'appointment_date': _dateOnly(date),
-      'appointment_time': _timeValue(timeSlot),
-      'status': _statusPending,
-      'confirmed_at': null,
-      if (notes != null) 'notes': notes,
-    }).eq('id', id);
+    try {
+      final result = await SupabaseService.client.rpc('reschedule_my_appointment', params: {
+        'p_appointment_id': id,
+        'p_date': _dateOnly(date),
+        'p_time': _timeValue(timeSlot),
+      });
+      final payload = result is Map ? result.cast<String, dynamic>() : const <String, dynamic>{};
+      return RescheduleResult(
+        paid: payload['paid'] == true,
+        fee: _double(payload['fee']) ?? 0,
+        depositCredit: _double(payload['deposit_credit']) ?? 0,
+      );
+    } on PostgrestException catch (e) {
+      throw _changeRefused(e) ?? e;
+    }
+  }
+
+  /// The database's own refusal, when it is one the patient can act on — the
+  /// same messages the website passes through. Null for anything else.
+  static AppointmentChangeRefusedException? _changeRefused(PostgrestException e) {
+    final m = e.message;
+    if (pgCode(e) == 'PGRST202' || RegExp('could not find the function', caseSensitive: false).hasMatch(m)) {
+      return const AppointmentChangeRefusedException(
+          "This is not set up on the clinic's system yet. Please contact the clinic.");
+    }
+    if (RegExp('clinic is closed', caseSensitive: false).hasMatch(m)) {
+      return const AppointmentChangeRefusedException(
+          'The clinic is closed at that date and time. Please pick another slot.');
+    }
+    if (RegExp(
+      'same-day|in advance|different date|no longer available|fully booked|only a pending|'
+      'cannot be cancelled|cannot be rescheduled|already',
+      caseSensitive: false,
+    ).hasMatch(m)) {
+      return AppointmentChangeRefusedException(m);
+    }
+    return null;
   }
 
   static Future<String> createAppointment({
@@ -1461,9 +1751,11 @@ class PatientApi {
   ///
   /// Throws [InsufficientWalletBalanceException] when the balance will not cover
   /// [amountToPay], and [SlotTakenException] when the slot went in the meantime.
-  /// Returns null when `book_appointment_with_wallet` is not installed, which
-  /// tells the caller to use the unpaid booking path instead.
-  static Future<WalletCheckoutResult?> bookAppointmentWithWallet({
+  ///
+  /// There is intentionally no direct-insert fallback. A failed or unavailable
+  /// wallet checkout has not verified payment, so it cannot create a booking
+  /// from the patient paid-booking flow.
+  static Future<WalletCheckoutResult> bookAppointmentWithWallet({
     required String patientId,
     required List<String> procedureIds,
     required DateTime date,
@@ -1473,58 +1765,27 @@ class PatientApi {
     required double amountToPay,
     String? doctorId,
     String? notes,
-    String method = 'GCash',
     String? referenceNo,
+    String? paymentRequestId,
+    String paymentMethod = 'Wallet',
   }) async {
-    // `appointments.payment_method` carries a check constraint whose allowed
-    // spellings are not the wallet ledger's ('GCash', 'Maya', …). When it
-    // refuses one, try the next spelling. Safe to repeat: a refused call rolls
-    // the whole transaction back, so nothing was booked or debited.
-    final methods = [
-      method,
-      for (final candidate in _bookingPaymentMethods)
-        if (candidate != method) candidate,
-    ];
-    for (var i = 0; i < methods.length; i++) {
-      try {
-        return await _bookAppointmentWithWalletOnce(
-          patientId: patientId,
-          procedureIds: procedureIds,
-          date: date,
-          timeSlot: timeSlot,
-          durationMinutes: durationMinutes,
-          totalAmount: totalAmount,
-          amountToPay: amountToPay,
-          doctorId: doctorId,
-          notes: notes,
-          method: methods[i],
-          referenceNo: referenceNo,
-        );
-      } on PostgrestException catch (e) {
-        final isMethodRefused =
-            pgCode(e) == '23514' && e.message.contains('payment_method_check');
-        if (!isMethodRefused || i == methods.length - 1) rethrow;
-        debugPrint('payment_method "${methods[i]}" refused; trying "${methods[i + 1]}"');
-      }
-    }
-    return null;
+    return _bookAppointmentWithWalletOnce(
+      paymentRequestId: paymentRequestId,
+      paymentMethod: paymentMethod,
+      patientId: patientId,
+      procedureIds: procedureIds,
+      date: date,
+      timeSlot: timeSlot,
+      durationMinutes: durationMinutes,
+      totalAmount: totalAmount,
+      amountToPay: amountToPay,
+      doctorId: doctorId,
+      notes: notes,
+      referenceNo: referenceNo,
+    );
   }
 
-  /// Spellings tried, in order, when the clinic's schema refuses the method
-  /// the caller asked for. See [bookAppointmentWithWallet].
-  static const List<String> _bookingPaymentMethods = [
-    'Wallet',
-    'E-Wallet',
-    'wallet',
-    'e-wallet',
-    'gcash',
-    'Online',
-    'online',
-    'Cash',
-    'cash',
-  ];
-
-  static Future<WalletCheckoutResult?> _bookAppointmentWithWalletOnce({
+  static Future<WalletCheckoutResult> _bookAppointmentWithWalletOnce({
     required String patientId,
     required List<String> procedureIds,
     required DateTime date,
@@ -1534,52 +1795,61 @@ class PatientApi {
     required double amountToPay,
     String? doctorId,
     String? notes,
-    required String method,
     String? referenceNo,
+    String? paymentRequestId,
+    String paymentMethod = 'Wallet',
   }) async {
-    try {
-      final result = await SupabaseService.client.rpc(
-        'book_appointment_with_wallet',
-        params: {
-          'p_patient_id': patientId,
-          'p_procedure_ids': procedureIds,
-          'p_appointment_date': _dateOnly(date),
-          'p_appointment_time': _timeValue(timeSlot),
-          'p_duration_minutes': durationMinutes,
-          'p_total_amount': totalAmount,
-          'p_amount_to_pay': amountToPay,
-          'p_doctor_id': _uuidOrNull(doctorId),
-          'p_notes': notes,
-          'p_method': method,
-          'p_reference_no': referenceNo,
-        },
-      );
+    // The website's two booking functions, so a booking made in the app is
+    // the same booking the website makes: the server prices the services,
+    // takes the 20% down payment, stamps the confirmation code and QR token,
+    // confirms the visit once paid, and sends the confirmation notice.
+    //   * Wallet → book_appointment_v5 deducts the deposit from the ledger.
+    //   * GCash / GrabPay → book_appointment_v6 settles against the PayMongo
+    //     payment request the patient already paid; the wallet is not touched.
+    final params = <String, dynamic>{
+      'p_procedure_ids': procedureIds,
+      'p_date': _dateOnly(date),
+      'p_time': _timeValue(timeSlot),
+      'p_doctor_id': _uuidOrNull(doctorId),
+      'p_payment_method': paymentMethod,
+      'p_notes': (notes ?? '').trim().isEmpty ? null : notes!.trim(),
+      'p_group_id': null,
+    };
+    final fn = paymentRequestId == null ? 'book_appointment_v5' : 'book_appointment_v6';
+    if (paymentRequestId != null) params['p_payment_request_id'] = paymentRequestId;
 
-      final payload = (result as Map).cast<String, dynamic>();
-      return WalletCheckoutResult(
+    try {
+      final result = await SupabaseService.client.rpc(fn, params: params);
+      if (result is! Map) throw const InvalidWalletCheckoutResultException();
+      final payload = result.cast<String, dynamic>();
+      final checkout = WalletCheckoutResult(
         appointmentId: _str(payload['appointment_id']),
         walletBalance: _double(payload['wallet_balance']) ?? 0,
         referenceNo: _str(payload['reference_no']),
-        wasIdempotentReplay: payload['idempotent'] == true,
+        status: _str(payload['status']),
       );
-    } on PostgrestException catch (e) {
-      switch (pgCode(e)) {
-        case _insufficientFunds:
-          throw _insufficientFrom(e);
-        case _slotTaken:
-          throw const SlotTakenException();
-        case _notApproved:
-          throw const PatientNotApprovedException();
-        // Not installed yet: the caller falls back to booking without payment
-        // rather than failing the patient's checkout outright.
-        case '42883':
-        case 'PGRST202':
-          debugPrint('book_appointment_with_wallet is not installed; '
-              'see docs/realtime_data_sync_migration.sql');
-          return null;
-        default:
-          rethrow;
+      if (!checkout.hasBookingConfirmation) {
+        throw const InvalidWalletCheckoutResultException();
       }
+      return checkout;
+    } on PostgrestException catch (e) {
+      final m = e.message;
+      if (pgCode(e) == '42883' || pgCode(e) == 'PGRST202') {
+        debugPrint('$fn is not installed on this database');
+        throw const BookingPaymentServiceUnavailableException();
+      }
+      // The same messages the website's booking wizard reads (_bwBookError).
+      if (pgCode(e) == _insufficientFunds || RegExp('wallet balance', caseSensitive: false).hasMatch(m)) {
+        throw _insufficientFrom(e);
+      }
+      if (pgCode(e) == _slotTaken ||
+          RegExp('no longer available|fully booked', caseSensitive: false).hasMatch(m)) {
+        throw const SlotTakenException();
+      }
+      if (pgCode(e) == _notApproved || RegExp('approval', caseSensitive: false).hasMatch(m)) {
+        throw const PatientNotApprovedException();
+      }
+      rethrow;
     }
   }
 
@@ -1587,7 +1857,7 @@ class PatientApi {
   static Future<WalletCheckoutResult?> payAppointmentFromWallet({
     required String appointmentId,
     required double amount,
-    String method = 'GCash',
+    String method = 'Wallet',
     String? referenceNo,
   }) async {
     try {

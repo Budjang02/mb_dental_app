@@ -312,6 +312,27 @@ Set<int> get clinicOperatingDays =>
 int get clinicOpenMinute => ClinicCatalog().schedule?.openMinute ?? kClinicOpenMinute;
 int get clinicCloseMinute => ClinicCatalog().schedule?.closeMinute ?? kClinicCloseMinute;
 
+/// Today on the clinic's own calendar: Asia/Manila (UTC+8, no daylight
+/// saving), whatever the phone's time zone is set to. The website and the
+/// database's `appointment_date > today` rule both count days in Manila, so a
+/// phone left on UTC used to offer today as bookable for the first eight hours
+/// of the Manila day.
+DateTime clinicToday() {
+  final manila = DateTime.now().toUtc().add(const Duration(hours: 8));
+  return DateTime(manila.year, manila.month, manila.day);
+}
+
+/// Minutes past midnight right now, on the clinic's clock.
+int clinicMinuteNow() {
+  final manila = DateTime.now().toUtc().add(const Duration(hours: 8));
+  return manila.hour * 60 + manila.minute;
+}
+
+/// The earliest date a patient may book or move a visit to: tomorrow, in
+/// Manila. Twin of the website's `ClinicHours.earliestPatientDate()` and the
+/// database's `enforce_patient_booking_lead_time`.
+DateTime get firstPatientBookableDay => clinicToday().add(const Duration(days: 1));
+
 /// Open on [day]: an operating weekday that is not a dated all-day closure
 /// (a holiday the clinic entered in `clinic_closures`).
 bool isClinicOpenOn(DateTime day) {

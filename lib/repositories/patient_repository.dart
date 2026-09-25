@@ -18,9 +18,14 @@ import 'package:mb_dental_app/repositories/patient_api.dart';
 import 'package:mb_dental_app/services/push_notification_service.dart';
 import 'package:mb_dental_app/services/supabase_service.dart';
 
-/// The parts of the record a realtime change can refresh on their own, so an
-/// edit on one table does not pull the whole chart down again.
-enum SyncSection { appointments, billing, wallet, chart, treatmentPlan, documents, messages }
+import 'load_state.dart';
+
+// `SyncSection` and the per-section load states live in `load_state.dart` so
+// `PatientApi` can report against them without importing this file back. Every
+// screen already imports this one, so they are re-exported rather than made a
+// second import everywhere.
+export 'load_state.dart'
+    show SyncSection, LoadPhase, LoadFailure, SectionStatus, kRequestTimeout;
 
 /// The signed-in patient's record, held in memory and backed by Supabase.
 ///
@@ -92,6 +97,25 @@ class PatientRepository extends ChangeNotifier {
   String? _loadError;
   Future<void>? _inFlight;
 
+  /// Where each part of the record has got to, independently of the others.
+  ///
+  /// This is what the screens read. A section is only allowed to draw an empty
+  /// state once its status is [LoadPhase.ready]; while it is pending it shows a
+  /// skeleton, and when it has failed it shows its own inline message — never a
+  /// blank list the patient would read as "you have none".
+  final Map<SyncSection, SectionStatus> _sections = {
+    for (final section in SyncSection.values) section: SectionStatus.idle,
+  };
+
+  /// Retries already running, keyed by section, so pressing a retry button
+  /// repeatedly joins the request in flight instead of starting another.
+  final Map<SyncSection, Future<void>> _sectionRetries = {};
+
+  /// Why identity resolution failed, or null. Identity is the one thing the
+  /// rest of the record cannot be fetched without: no chart means no patient id
+  /// to query by. It still never blanks a page — the screens show it inline.
+  SectionStatus _identity = SectionStatus.idle;
+
   /// Alert ids already shown to this patient in this session. A refresh that
   /// brings the same rows back must not re-raise banners for them.
   final Set<String> _announcedNotificationIds = {};
@@ -104,9 +128,49 @@ class PatientRepository extends ChangeNotifier {
 
   /// Why the last load failed, or null. Set when the account has no linked
   /// patient record as well as on network failures.
+  ///
+  /// Kept for the sign-in and unlinked-account cases only. No screen may blank
+  /// itself on this — read [statusOf] for the section being drawn instead.
   String? get loadError => _loadError;
 
   bool get hasLoaded => _patient != null;
+
+  /// How [section] last fared. The single call every screen makes to decide
+  /// between a skeleton, the data, an empty state and an inline error.
+  SectionStatus statusOf(SyncSection section) =>
+      _sections[section] ?? SectionStatus.idle;
+
+  /// How the account-to-chart lookup fared. Failing here leaves every section
+  /// unfetchable, so the screens show this message in place of their own.
+  SectionStatus get identityStatus => _identity;
+
+  /// The status a screen should honour for [section]: the identity failure when
+  /// there is one, since nothing could be fetched, otherwise the section's own.
+  SectionStatus effectiveStatusOf(SyncSection section) =>
+      _identity.hasFailed ? _identity : statusOf(section);
+
+  /// True once a chart has actually been resolved for this account.
+  bool get hasPatientRecord => _patient != null;
+
+  /// False when the wallet figure below could not be confirmed on the last
+  /// load. A zero that means "we could not check" must never be printed as a
+  /// balance, so the wallet card reads this before showing a number.
+  bool get isWalletBalanceKnown => _isWalletBalanceKnown;
+  bool _isWalletBalanceKnown = false;
+
+  /// True when nobody is signed in. The only state that still justifies sending
+  /// the patient somewhere else rather than showing the page.
+  bool get isSignedOut => !SupabaseService.isSignedIn;
+
+  void _setSection(SyncSection section, SectionStatus status) {
+    _sections[section] = status;
+  }
+
+  void _setAllSections(SectionStatus status) {
+    for (final section in SyncSection.values) {
+      _sections[section] = status;
+    }
+  }
 
   /// Pulls the whole record from Supabase. Concurrent calls share one request,
   /// so several screens appearing at once do not each hit the network.
@@ -120,6 +184,8 @@ class PatientRepository extends ChangeNotifier {
   Future<void> _load() async {
     _isLoading = true;
     _loadError = null;
+    _identity = SectionStatus.loading;
+    _setAllSections(SectionStatus.loading);
     notifyListeners();
 
     // Read before anything is assigned: nothing announced yet means this is
@@ -159,21 +225,76 @@ class PatientRepository extends ChangeNotifier {
       _treatmentNotes = snapshot.treatmentNotes;
       _messages = snapshot.messages;
       _walletBalance = snapshot.walletBalance;
+      _isWalletBalanceKnown = snapshot.isWalletBalanceKnown;
       _isApprovedForBooking = snapshot.isApprovedForBooking;
+
+      // The chart resolved, so identity is good even where sections did not.
+      _identity = SectionStatus.ready;
+      _setAllSections(SectionStatus.ready);
+      // Only the sections that actually failed are marked failed. Everything
+      // else is ready, which is what lets an empty list mean "no rows" rather
+      // than "we could not tell".
+      snapshot.failures.forEach(_setSection);
+
       _rebuildNotifications(isFirstLoad: isFirstLoad);
       // Deliberately after the record is in place: thumbnails are a nicety and
       // must never hold up the rest of the chart, nor fail the load.
       unawaited(_refreshDocumentUrls());
     } on NoPatientRecordException catch (e) {
+      // Either nobody is signed in, or the account has no chart behind it.
+      // Both are real states with their own explanation, and neither is worth
+      // retrying — but neither blanks a page any more.
       _loadError = e.message;
+      _identity = SectionStatus.failed(
+        SupabaseService.isSignedIn
+            ? LoadFailure.noPatientRecord
+            : LoadFailure.unauthenticated,
+        e.message,
+      );
+      _setAllSections(_identity);
+      _isWalletBalanceKnown = false;
     } catch (e) {
-      _loadError = 'We could not load your records. Check your connection and try again.';
-      debugPrint('PatientRepository.load failed: $e');
+      final status = classifyFailure(e, context: 'PatientRepository.load');
+      _loadError = status.message;
+      _identity = status;
+      _setAllSections(status);
+      _isWalletBalanceKnown = false;
     } finally {
       _isLoading = false;
       notifyListeners();
     }
   }
+
+  /// Re-runs one section's read and nothing else.
+  ///
+  /// This is what every inline retry button calls. It does not restart the app,
+  /// does not sign the patient out, does not touch the page they are on, and
+  /// does not disturb the sections that loaded. Pressing it again while it is
+  /// running joins the request already out rather than starting a second.
+  Future<void> retrySection(SyncSection section) {
+    final running = _sectionRetries[section];
+    if (running != null) return running;
+
+    // Identity is what everything else is keyed on. When that is what failed,
+    // the only thing worth retrying is the whole resolution.
+    if (_identity.hasFailed || _patient == null) {
+      final request = load(force: true);
+      _sectionRetries[section] = request;
+      return request.whenComplete(() => _sectionRetries.remove(section));
+    }
+
+    _setSection(section, SectionStatus.loading);
+    notifyListeners();
+
+    final request = refreshSection(section, reportFailure: true)
+        .whenComplete(() => _sectionRetries.remove(section));
+    _sectionRetries[section] = request;
+    return request;
+  }
+
+  /// True while [section] has a retry in flight, so its button can show a
+  /// spinner and refuse further presses.
+  bool isRetrying(SyncSection section) => _sectionRetries.containsKey(section);
 
   /// Recomposes the bell from the table rows and the record, then raises a
   /// banner for anything new since the last composition.
@@ -209,28 +330,54 @@ class PatientRepository extends ChangeNotifier {
 
   /// Re-reads the alerts and the read state, so a banner can appear without
   /// pulling the whole record down again.
-  Future<void> refreshNotifications() async {
+  Future<void> refreshNotifications() => _refreshNotifications();
+
+  Future<void> _refreshNotifications({bool reportFailure = false}) async {
     final userId = SupabaseService.currentUserId;
     if (userId == null || _patient == null) return;
     try {
-      final results = await Future.wait([
-        PatientApi.fetchNotifications(userId),
-        PatientApi.fetchNotificationState(userId),
-      ]);
+      final results = await runWithRetry(
+        () => Future.wait([
+          PatientApi.fetchNotifications(userId),
+          PatientApi.fetchNotificationState(userId),
+        ]),
+        context: 'PatientRepository.refreshNotifications',
+      );
       if (_patient == null) return;
       _tableNotifications = results[0] as List<NotificationItem>;
       _notificationState = results[1] as Map<String, NotificationState>;
+      _setSection(SyncSection.notifications, SectionStatus.ready);
       _rebuildNotifications(isFirstLoad: false);
       notifyListeners();
     } catch (e) {
-      debugPrint('PatientRepository.refreshNotifications failed: $e');
+      final status =
+          classifyFailure(e, context: 'PatientRepository.refreshNotifications');
+      if (!reportFailure) return;
+      _setSection(SyncSection.notifications, status);
+      notifyListeners();
     }
   }
 
   /// Re-reads one part of the record after a realtime change to the tables
-  /// behind it. Failures are logged and leave the current copy on screen: the
-  /// next change, resume or full load brings it back in step.
-  Future<void> refreshSection(SyncSection section) async {
+  /// behind it.
+  ///
+  /// A realtime refresh that fails is logged and leaves the copy already on
+  /// screen alone: the next change, resume or full load brings it back in step,
+  /// and a dropped socket must not turn a loaded page into an error. A refresh
+  /// the patient asked for passes [reportFailure], so their retry either
+  /// succeeds visibly or says why it did not.
+  Future<void> refreshSection(SyncSection section, {bool reportFailure = false}) async {
+    // Neither of these is a narrower read of a table: the chart header comes
+    // back only with a full resolution, and the bell has its own refresh.
+    if (section == SyncSection.profile) {
+      await load(force: true);
+      return;
+    }
+    if (section == SyncSection.notifications) {
+      await _refreshNotifications(reportFailure: reportFailure);
+      return;
+    }
+
     final patientId = _patient?.id;
     final userId = SupabaseService.currentUserId;
     if (patientId == null || patientId.isEmpty || userId == null) return;
@@ -240,46 +387,63 @@ class PatientRepository extends ChangeNotifier {
     bool stillCurrent() => _patient?.id == patientId;
 
     try {
-      switch (section) {
-        case SyncSection.appointments:
-          final appointments = await PatientApi.fetchAppointments(patientId);
-          if (!stillCurrent()) return;
-          _appointments = appointments;
-          _treatments = PatientApi.treatmentsFrom(appointments);
-        case SyncSection.billing:
-          final billing = await PatientApi.fetchBilling(patientId);
-          if (!stillCurrent()) return;
-          _billing = billing;
-        case SyncSection.wallet:
-          final transactions = await PatientApi.fetchTransactions(patientId);
-          final balance =
-              await PatientApi.walletBalanceFor(userId: userId, transactions: transactions);
-          if (!stillCurrent()) return;
-          _transactions = transactions;
-          _walletBalance = balance;
-        case SyncSection.chart:
-          final results = await Future.wait([
-            PatientApi.fetchToothRecords(patientId),
-            PatientApi.fetchTreatmentNotes(patientId),
-          ]);
-          if (!stillCurrent()) return;
-          _toothRecords = results[0];
-          _treatmentNotes = results[1];
-        case SyncSection.treatmentPlan:
-          final plan = await PatientApi.fetchTreatmentPlan(patientId);
-          if (!stillCurrent()) return;
-          _treatmentPlan = plan.items;
-          _treatmentPlans = plan.plans;
-        case SyncSection.documents:
-          final documents = await PatientApi.fetchDocuments(patientId);
-          if (!stillCurrent()) return;
-          _documents = documents;
-          unawaited(_refreshDocumentUrls());
-        case SyncSection.messages:
-          final messages = await PatientApi.fetchMessages(patientId);
-          if (!stillCurrent()) return;
-          _messages = messages;
-      }
+      // Returns false when the account changed under the request, so the rows
+      // are dropped rather than written over the patient now signed in — and
+      // the section is left as it was rather than marked freshly loaded.
+      final applied = await runWithRetry<bool>(
+        () async {
+          switch (section) {
+            case SyncSection.appointments:
+              final appointments = await PatientApi.fetchAppointments(patientId);
+              if (!stillCurrent()) return false;
+              _appointments = appointments;
+              _treatments = PatientApi.treatmentsFrom(appointments);
+            case SyncSection.billing:
+              final billing = await PatientApi.fetchBilling(patientId);
+              if (!stillCurrent()) return false;
+              _billing = billing;
+            case SyncSection.wallet:
+              final transactions = await PatientApi.fetchTransactions(patientId);
+              final balance =
+                  await PatientApi.walletBalanceFor(userId: userId, transactions: transactions);
+              if (!stillCurrent()) return false;
+              _transactions = transactions;
+              _walletBalance = balance;
+              _isWalletBalanceKnown = true;
+            case SyncSection.chart:
+              final results = await Future.wait([
+                PatientApi.fetchToothRecords(patientId),
+                PatientApi.fetchTreatmentNotes(patientId),
+              ]);
+              if (!stillCurrent()) return false;
+              _toothRecords = results[0];
+              _treatmentNotes = results[1];
+            case SyncSection.treatmentPlan:
+              final plan = await PatientApi.fetchTreatmentPlan(patientId);
+              if (!stillCurrent()) return false;
+              _treatmentPlan = plan.items;
+              _treatmentPlans = plan.plans;
+            case SyncSection.documents:
+              final documents = await PatientApi.fetchDocuments(patientId);
+              if (!stillCurrent()) return false;
+              _documents = documents;
+              unawaited(_refreshDocumentUrls());
+            case SyncSection.messages:
+              final messages = await PatientApi.fetchMessages(patientId);
+              if (!stillCurrent()) return false;
+              _messages = messages;
+            case SyncSection.profile:
+            case SyncSection.notifications:
+              // Handled above, before the patient id was even read.
+              return false;
+          }
+          return true;
+        },
+        context: 'PatientRepository.refreshSection($section)',
+      );
+      if (!applied) return;
+
+      _setSection(section, SectionStatus.ready);
       // Appointments, messages, charges and wallet movements are what the
       // notification feed is built from.
       if (section == SyncSection.appointments ||
@@ -290,7 +454,13 @@ class PatientRepository extends ChangeNotifier {
       }
       notifyListeners();
     } catch (e) {
-      debugPrint('PatientRepository.refreshSection($section) failed: $e');
+      final status = classifyFailure(e, context: 'PatientRepository.refreshSection($section)');
+      // A realtime refresh leaves what is on screen alone; only a refresh the
+      // patient asked for is allowed to turn the section into an error.
+      if (!reportFailure) return;
+      _setSection(section, status);
+      if (section == SyncSection.wallet) _isWalletBalanceKnown = false;
+      notifyListeners();
     }
   }
 
@@ -317,6 +487,10 @@ class PatientRepository extends ChangeNotifier {
     _announcedNotificationIds.clear();
     _loadError = null;
     _isLoading = false;
+    _isWalletBalanceKnown = false;
+    _identity = SectionStatus.idle;
+    _setAllSections(SectionStatus.idle);
+    _sectionRetries.clear();
     notifyListeners();
   }
 
@@ -351,6 +525,9 @@ class PatientRepository extends ChangeNotifier {
     _isApprovedForBooking = isApprovedForBooking;
     _isLoading = false;
     _loadError = null;
+    _identity = SectionStatus.ready;
+    _setAllSections(SectionStatus.ready);
+    _isWalletBalanceKnown = true;
     _rebuildNotifications(isFirstLoad: true);
     notifyListeners();
   }
@@ -535,9 +712,12 @@ class PatientRepository extends ChangeNotifier {
     required int durationMinutes,
     String? excludeAppointmentId,
   }) {
-    final now = DateTime.now();
+    // The clinic's clock, not the phone's: a phone on another time zone must
+    // not treat a Manila morning slot as still ahead (or already gone).
+    final today = clinicToday();
+    final nowMinute = clinicMinuteNow();
     return slotStartsFor(day, durationMinutes).map((startMinute) {
-      final isPast = _isSameDay(day, now) && startMinute <= now.hour * 60 + now.minute;
+      final isPast = day.isBefore(today) || (_isSameDay(day, today) && startMinute <= nowMinute);
       final available = !isPast &&
           isSlotAvailable(
             day: day,
@@ -635,7 +815,7 @@ class PatientRepository extends ChangeNotifier {
   /// the slot went while the patient was on the summary step, and
   /// [PatientNotApprovedException] while the clinic has not approved the
   /// account.
-  Future<Appointment?> checkoutWithWallet({
+  Future<WalletCheckoutResult?> checkoutWithWallet({
     required List<String> serviceIds,
     required DateTime date,
     required String timeSlot,
@@ -644,14 +824,17 @@ class PatientRepository extends ChangeNotifier {
     required double amountToPay,
     String? doctorId,
     String? notes,
-    String method = 'GCash',
     String? referenceNo,
+    String? paymentRequestId,
+    String paymentMethod = 'Wallet',
   }) async {
     final patientId = _patient?.id;
     if (patientId == null || patientId.isEmpty) return null;
     if (!_isApprovedForBooking) throw const PatientNotApprovedException();
 
     final result = await PatientApi.bookAppointmentWithWallet(
+      paymentRequestId: paymentRequestId,
+      paymentMethod: paymentMethod,
       patientId: patientId,
       procedureIds: serviceIds,
       date: date,
@@ -661,38 +844,18 @@ class PatientRepository extends ChangeNotifier {
       amountToPay: amountToPay,
       doctorId: doctorId,
       notes: notes,
-      method: method,
       referenceNo: referenceNo,
     );
 
-    // The function is not installed yet. Book it unpaid rather than charging
-    // through a non-atomic path: an unpaid booking the clinic can settle is
-    // recoverable, a debit with no booking is not.
-    if (result == null) {
-      return addAppointment(
-        serviceName: '',
-        doctorName: '',
-        date: date,
-        timeSlot: timeSlot,
-        doctorId: doctorId,
-        notes: notes,
-        paymentMethod: method,
-        serviceIds: serviceIds,
-        durationMinutes: durationMinutes,
-        totalPrice: totalPrice,
-      );
+    // book_appointment_v5 does not report the balance; the reload below reads
+    // it. When it does, show it at once so the wallet never reads high.
+    if (result.walletBalance > 0) {
+      _walletBalance = result.walletBalance;
+      notifyListeners();
     }
-
-    // The balance the database now holds, before the reload lands, so the
-    // wallet on screen never reads high for a frame.
-    _walletBalance = result.walletBalance;
-    notifyListeners();
 
     await load(force: true);
-    for (final appointment in _appointments) {
-      if (appointment.id == result.appointmentId) return appointment;
-    }
-    return null;
+    return result;
   }
 
   /// Settles an existing booking from the wallet. Same guarantees as
@@ -700,7 +863,7 @@ class PatientRepository extends ChangeNotifier {
   Future<bool> payAppointmentFromWallet({
     required String appointmentId,
     required double amount,
-    String method = 'GCash',
+    String method = 'Wallet',
   }) async {
     final result = await PatientApi.payAppointmentFromWallet(
       appointmentId: appointmentId,
@@ -714,42 +877,61 @@ class PatientRepository extends ChangeNotifier {
     return true;
   }
 
-  Future<void> cancelAppointment(String id, {required String reason}) async {
-    await PatientApi.cancelAppointment(id, reason: reason);
-    _appointments = _appointments
-        .map((a) => a.id == id
-            ? a.copyWith(
-                status: AppointmentStatus.cancelled,
-                cancellationReason: reason,
-                statusChangedAt: DateTime.now(),
-              )
-            : a)
-        .toList();
-    _rebuildNotifications(isFirstLoad: false);
-    notifyListeners();
+  /// Reads one appointment fresh from Supabase, by id or confirmation code,
+  /// for the details page. The copy in [appointments] is replaced with it so
+  /// the lists behind the page agree with what it shows. Null when no booking
+  /// of this patient's matches.
+  Future<Appointment?> fetchAppointment(String idOrCode) async {
+    if (_patient == null) await load();
+    final patientId = _patient?.id;
+    if (patientId == null || patientId.isEmpty) {
+      throw StateError('No patient record is loaded');
+    }
+
+    final fresh = await runWithRetry(
+      () => PatientApi.fetchAppointment(patientId, idOrCode),
+      context: 'appointment',
+    );
+    if (fresh == null || _patient?.id != patientId) return fresh;
+
+    final index = _appointments.indexWhere((a) => a.id == fresh.id);
+    if (index >= 0) {
+      _appointments = [..._appointments]..[index] = fresh;
+      notifyListeners();
+    }
+    return fresh;
   }
 
-  /// Moves an existing appointment to a new date/time in place (does not
-  /// create a new appointment) and resets it to pending re-confirmation.
-  Future<void> rescheduleAppointment(
+  /// Cancels through `cancel_my_appointment()` on the server, then reads the
+  /// row back, so the app shows exactly what the database (and so the
+  /// website) now holds — status, reason, who cancelled and when.
+  Future<void> cancelAppointment(String id, {required String reason}) async {
+    await PatientApi.cancelAppointment(id, reason: reason);
+    await _rereadAppointment(id);
+  }
+
+  /// Moves a visit through `reschedule_my_appointment()`, then reads the row
+  /// back: a paid booking comes back confirmed at its new time, less the fee.
+  Future<RescheduleResult> rescheduleAppointment(
     String id, {
     required DateTime date,
     required String timeSlot,
-    String? notes,
   }) async {
-    await PatientApi.rescheduleAppointment(id, date: date, timeSlot: timeSlot, notes: notes);
-    _appointments = _appointments
-        .map((a) => a.id == id
-            ? a.copyWith(
-                date: date,
-                timeSlot: timeSlot,
-                status: AppointmentStatus.pending,
-                notes: notes,
-              )
-            : a)
-        .toList();
-    _rebuildNotifications(isFirstLoad: false);
-    notifyListeners();
+    final result = await PatientApi.rescheduleMyAppointment(id, date: date, timeSlot: timeSlot);
+    await _rereadAppointment(id);
+    return result;
+  }
+
+  /// Replaces this appointment with a fresh read and refreshes the bell, or
+  /// reloads the whole list if the single read fails.
+  Future<void> _rereadAppointment(String id) async {
+    try {
+      await fetchAppointment(id);
+      _rebuildNotifications(isFirstLoad: false);
+      notifyListeners();
+    } catch (_) {
+      await refreshSection(SyncSection.appointments);
+    }
   }
 
   /// Marks everything on the bell read, each kind where it keeps its state:

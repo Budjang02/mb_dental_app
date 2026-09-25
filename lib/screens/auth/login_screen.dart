@@ -4,7 +4,6 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:mb_dental_app/widgets/field_icons.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:mb_dental_app/app/routes.dart';
 import 'package:mb_dental_app/app/theme.dart';
 import 'package:mb_dental_app/app/theme_controller.dart';
 import 'package:mb_dental_app/screens/auth/forgot_password_screen.dart';
@@ -27,6 +26,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   bool _isPasswordVisible = false;
   bool _isLoading = false;
+  String? _networkMessage;
 
   @override
   void dispose() {
@@ -47,19 +47,28 @@ class _LoginScreenState extends State<LoginScreen> {
   void _handleLogin() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
 
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _networkMessage = null;
+    });
     final result = await AuthService.signIn(
       email: _emailController.text,
       password: _passwordController.text,
     );
     if (!mounted) return;
-    setState(() => _isLoading = false);
+    setState(() {
+      _isLoading = false;
+      _networkMessage = result.isRetryable ? result.message : null;
+    });
 
     if (!result.success) {
       showAppToast(context, result.message ?? 'Sign in failed.', isError: true);
       return;
     }
-    Navigator.pushReplacementNamed(context, AppRoutes.dashboard);
+    // No push to the dashboard: `AuthGate` is watching the auth stream and
+    // swaps this screen for the dashboard the moment the session opens. Only
+    // anything stacked above the gate has to go.
+    Navigator.of(context).popUntil((route) => route.isFirst);
   }
 
   void _openForgotPassword() {
@@ -224,6 +233,19 @@ class _LoginScreenState extends State<LoginScreen> {
                                   ),
                           ),
                         ),
+                        if (_networkMessage != null) ...[
+                          const SizedBox(height: 12),
+                          Text(
+                            _networkMessage!,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(fontSize: 13, height: 1.35, color: AppColors.textSecondary),
+                          ),
+                          TextButton.icon(
+                            onPressed: _isLoading ? null : _handleLogin,
+                            icon: const Icon(CupertinoIcons.arrow_clockwise, size: 17),
+                            label: const Text('Retry'),
+                          ),
+                        ],
                         const SizedBox(height: 24),
 
                         // Direct Navigation Register Button

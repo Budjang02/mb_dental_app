@@ -1,20 +1,27 @@
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart' show PostgrestException;
+import 'package:flutter/services.dart';
+import 'package:flutter_svg/flutter_svg.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/messages.dart';
 import '../../app/theme.dart';
 import '../../app/theme_controller.dart';
 import '../../data/clinic_catalog.dart';
 import '../../data/service_categories.dart';
+import '../../models/appointment.dart';
 import '../../models/dental_service.dart';
 import '../../models/dentist.dart';
 import '../../repositories/clinic_api.dart';
 import '../../repositories/patient_api.dart';
 import '../../repositories/patient_repository.dart';
+import '../../repositories/wallet_topup_api.dart';
 import '../../widgets/app_toast.dart';
 import '../../widgets/schedule_picker.dart';
 import '../../widgets/skeleton.dart';
+import 'appointment_confirmed_screen.dart';
 
 /// Placeholder doctor value for bookings left to the clinic to staff. Aliases
 /// the app-wide constant so the booking summary and the appointment screens
@@ -61,7 +68,27 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
 
   DateTime? _selectedDate;
   int? _selectedStartMinute;
+  String _paymentMethod = _BookingPaymentMethod.wallet;
   bool _isSubmitting = false;
+
+  /// Free starts for [_selectedDate] from the server's scheduling engine —
+  /// the same `available_slots_for_services` call the website makes. Null
+  /// while the request is out; empty when the day has nothing free.
+  List<ServerSlot>? _serverSlots;
+
+  /// Set when that request failed, so the time card can say so.
+  String? _serverSlotsError;
+
+  /// Which request is current: a late reply for a day the patient has left,
+  /// or a service mix they have changed, must not repaint the times.
+  int _slotRequest = 0;
+
+  /// A GCash/GrabPay booking payment PayMongo has confirmed paid but no
+  /// booking has used yet — the slot went while the patient was paying, say.
+  /// PAY then books against it again instead of charging a second time, as
+  /// the website's wizard does.
+  String? _paidRequestId;
+  String? _paidWith;
 
   /// Idempotency key for this checkout. Held on the state, not generated per
   /// call, so a retry after a timeout cannot debit the wallet a second time.
@@ -78,17 +105,55 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
 
   double get _downPayment => downPaymentFor(_totalPrice);
 
-  /// Who the clinic would put in the chair, resolved from the procedures and
-  /// the chosen day. Null until a date is picked, or when nobody credentialed
-  /// holds clinic that weekday.
-  Dentist? get _assignedDentist => _selectedDate == null
-      ? null
-      : assignedDentistFor(
-          _selectedServices,
-          _selectedDate!,
-          startMinute: _selectedStartMinute,
-          durationMinutes: _totalDuration,
-        );
+  /// Who the clinic would put in the chair. Once a time is picked this is the
+  /// dentist the server's engine named for it; before that, and if the
+  /// engine named someone outside the loaded roster, it falls back to the
+  /// app's own match on credentials and hours.
+  Dentist? get _assignedDentist {
+    if (_selectedDate == null) return null;
+    final start = _selectedStartMinute;
+    if (start != null) {
+      for (final slot in _serverSlots ?? const <ServerSlot>[]) {
+        if (slot.startMinute == start) {
+          final named = dentistById(slot.doctorId);
+          if (named != null) return named;
+          break;
+        }
+      }
+    }
+    return assignedDentistFor(
+      _selectedServices,
+      _selectedDate!,
+      startMinute: start,
+      durationMinutes: _totalDuration,
+    );
+  }
+
+  /// Asks the server which starts are free on [day]. The website does the
+  /// same: the app alone only sees this patient's own bookings, so it would
+  /// offer times other patients have already taken.
+  Future<void> _loadServerSlots(DateTime day) async {
+    final request = ++_slotRequest;
+    setState(() {
+      _serverSlots = null;
+      _serverSlotsError = null;
+    });
+    try {
+      final slots = await ClinicApi.availableSlotsForServices(
+        procedureIds: _selectedServices.map((s) => s.id).toList(),
+        date: day,
+      );
+      if (!mounted || request != _slotRequest) return;
+      setState(() => _serverSlots = slots);
+    } catch (e) {
+      debugPrint('available_slots_for_services failed: $e');
+      if (!mounted || request != _slotRequest) return;
+      setState(() {
+        _serverSlots = const [];
+        _serverSlotsError = 'Could not read the calendar for that day. Pick the date again to retry.';
+      });
+    }
+  }
 
   /// The day's start times, with every time no clinic dentist credentialed for
   /// all the selected procedures is working for the whole visit marked taken.
@@ -96,6 +161,21 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
   /// specialization and the time.
   List<SlotOption> _slotsWithDentist(DateTime day) {
     if (!hasClinicRoster || !hasEligibleDentistOn(_selectedServices, day)) return const [];
+    // The chosen day's times are the server's: only a start its engine lists
+    // as free is offered. Other days keep the app's own quick check, which
+    // is only used to grey out dates on the calendar.
+    final selected = _selectedDate;
+    if (selected != null && _isSameDay(day, selected)) {
+      final free = {for (final slot in _serverSlots ?? const <ServerSlot>[]) slot.startMinute};
+      return [
+        for (final slot in _repository.slotOptionsFor(day: day, durationMinutes: _totalDuration))
+          SlotOption(
+            startMinute: slot.startMinute,
+            durationMinutes: slot.durationMinutes,
+            isAvailable: slot.isAvailable && free.contains(slot.startMinute),
+          ),
+      ];
+    }
     return [
       for (final slot in _repository.slotOptionsFor(day: day, durationMinutes: _totalDuration))
         slot.isAvailable &&
@@ -167,6 +247,8 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
             hasClinicRoster &&
             _assignedDentist != null;
       case BookingStep.summary:
+        // The Terms and Conditions are agreed to on their own screen, opened
+        // by PAY before any money moves — see [_startPayment].
         return true;
     }
   }
@@ -198,7 +280,7 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
       return;
     }
     if (_step == BookingStep.summary) {
-      _confirmBooking();
+      _startPayment();
       return;
     }
     setState(() => _step = BookingStep.values[_step.index + 1]);
@@ -211,24 +293,17 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
     setState(() => _step = BookingStep.values[_step.index - 1]);
   }
 
-  /// Changing the service mix changes both the required credentials and the
-  /// block length, so anything chosen downstream of it stops being valid.
-  ///
-  /// A visit books one procedure: picking a new one replaces the old choice,
-  /// and picking the current one again clears it.
-  void _toggleService(DentalService service) {
+  /// Adds one procedure to the visit. A visit can hold several, but they are
+  /// added one per trip to the picker, which leaves out anything already in
+  /// the visit. Changing the mix changes both the credentials required and
+  /// the block length, so anything chosen downstream stops being valid.
+  void _addService(DentalService service) {
     setState(() {
-      if (!_selectedServices.remove(service)) {
-        _selectedServices
-          ..clear()
-          ..add(service);
-      }
-      _invalidateDownstream();
+      if (_selectedServices.add(service)) _invalidateDownstream();
     });
   }
 
-  /// The ✕ on a selected-service card. Separate from [_toggleService] so the
-  /// card's remove button never accidentally re-adds a service.
+  /// The ✕ on a selected-service card.
   void _removeService(DentalService service) {
     setState(() {
       _selectedServices.remove(service);
@@ -237,10 +312,21 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
   }
 
   /// The visit's block length changes with the service mix, so a start time
-  /// chosen against the old length may no longer have room behind it.
+  /// chosen against the old length may no longer have room behind it — and
+  /// the server's free times were worked out for the old mix.
   void _invalidateDownstream() {
     _selectedStartMinute = null;
+    final day = _selectedDate;
+    if (day != null && _selectedServices.isNotEmpty) {
+      _loadServerSlots(day);
+    } else {
+      _slotRequest++;
+      _serverSlots = null;
+    }
   }
+
+  static bool _isSameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
 
   // --- Service & attachment pickers ---
 
@@ -251,36 +337,166 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
       backgroundColor: Colors.transparent,
       builder: (_) => _ServicePickerSheet(
         selected: _selectedServices,
-        onToggle: _toggleService,
+        onPick: _addService,
       ),
     );
   }
 
   // --- Confirmation ---
 
+  /// PAY: check the booking still stands, have the patient read and accept
+  /// the Terms and Conditions and Privacy Policy, then take the down payment
+  /// the way they chose.
+  Future<void> _startPayment() async {
+    // The button is disabled during checkout, and this guard also protects
+    // against a second invocation before Flutter rebuilds the button.
+    if (_isSubmitting) return;
+    if (!_bookingStillValid()) return;
+
+    // Already paid through PayMongo (and already agreed to the terms): book
+    // against that payment.
+    if (_paidRequestId != null) {
+      await _confirmBooking();
+      return;
+    }
+
+    // A short wallet is reported before the terms, so the patient is not
+    // asked to agree to a payment that cannot go through.
+    final rail = _BookingPaymentMethod.railFor(_paymentMethod);
+    if (rail == null && _repository.walletBalance < _downPayment) {
+      _reportInsufficientFunds(available: _repository.walletBalance, required: _downPayment);
+      return;
+    }
+
+    final agreed = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(fullscreenDialog: true, builder: (_) => const BookingTermsScreen()),
+    );
+    if (agreed != true || !mounted) return;
+
+    if (rail == null || _downPayment <= 0) {
+      await _confirmBooking();
+    } else {
+      await _payWithPayMongo(rail);
+    }
+  }
+
+  /// The date and slot checks run before anything is charged. False (with a
+  /// toast, and the patient sent back to the calendar) when the booking no
+  /// longer stands.
+  bool _bookingStillValid({bool quiet = false}) {
+    final date = _selectedDate!;
+    final startMinute = _selectedStartMinute!;
+    final firstBookableDay = firstPatientBookableDay;
+
+    // The calendar prevents same-day booking, but retain the rule at checkout
+    // so a stale selection can never turn into a same-day request.
+    if (DateTime(date.year, date.month, date.day).isBefore(firstBookableDay)) {
+      if (!quiet) {
+        showAppToast(context, 'Appointments must be booked at least one day in advance.',
+            isError: true);
+      }
+      setState(() => _step = BookingStep.booking);
+      return false;
+    }
+
+    // Re-check the slot: it may have been taken while the patient was working
+    // through the wizard. The database makes the final call at checkout.
+    if (!_repository.isSlotAvailable(
+          day: date,
+          startMinute: startMinute,
+          durationMinutes: _totalDuration,
+        ) ||
+        !(_serverSlots ?? const <ServerSlot>[]).any((slot) => slot.startMinute == startMinute)) {
+      if (!quiet) showAppToast(context, AppMessages.slotUnavailable, isError: true);
+      setState(() => _step = BookingStep.booking);
+      return false;
+    }
+    return true;
+  }
+
+  /// GCash or GrabPay, through PayMongo — the website's flow. The app opens a
+  /// PayMongo checkout for the down payment, marked as a booking payment (the
+  /// webhook records it paid without crediting the wallet). Once the server
+  /// says PayMongo authorized it, `book_appointment_v6` books the visit
+  /// against that payment request and confirms it.
+  ///
+  /// Nothing is booked on the app's word: if the payment fails, times out or
+  /// the patient gives up waiting, no appointment is made.
+  Future<void> _payWithPayMongo(CashInRail rail) async {
+    setState(() => _isSubmitting = true);
+    final amountCentavos = (_downPayment * 100).round().clamp(WalletTopupApi.minCentavos, WalletTopupApi.maxCentavos);
+
+    String requestId;
+    try {
+      final (url, id) = await WalletTopupApi.createBookingCheckout(
+        amountCentavos: amountCentavos,
+        paymentMethod: rail.id,
+      );
+      requestId = id;
+      final launched = await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+      if (!launched) throw const CashInException('The payment page could not be opened.');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isSubmitting = false);
+      showAppToast(
+        context,
+        e is CashInException ? e.message : 'The payment page could not be opened. Please try again.',
+        isError: true,
+      );
+      return;
+    }
+    if (!mounted) return;
+
+    final outcome = await showDialog<_PayMongoOutcome>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _PayMongoWaitDialog(requestId: requestId, railLabel: rail.label),
+    );
+    if (!mounted) return;
+    setState(() => _isSubmitting = false);
+
+    switch (outcome) {
+      case _PayMongoOutcome.paid:
+        _paidRequestId = requestId;
+        _paidWith = rail.id == 'grab_pay' ? _BookingPaymentMethod.grabPay : _BookingPaymentMethod.gcash;
+        await _confirmBooking();
+      case _PayMongoOutcome.failed:
+        showAppToast(context, 'The ${rail.label} payment did not go through. You were not booked.',
+            isError: true);
+      case _PayMongoOutcome.stillPending:
+      case null:
+        showAppToast(
+          context,
+          'We have not heard back from ${rail.label} yet, so you were not booked. '
+          'If you were charged, please contact the clinic with your payment reference.',
+          isError: true,
+        );
+    }
+  }
+
+  /// Books the visit through the website's own functions: `book_appointment_v5`
+  /// takes the down payment from the wallet; `book_appointment_v6` settles it
+  /// against a GCash/GrabPay payment already made ([_paidRequestId]). Either
+  /// way the server prices the visit, stamps the confirmation code and QR,
+  /// confirms it once paid and sends the confirmation — in one transaction.
   Future<void> _confirmBooking() async {
+    if (_isSubmitting) return;
+    final paidThroughPayMongo = _paidRequestId != null;
+
     final date = _selectedDate!;
     final startMinute = _selectedStartMinute!;
 
-    // Re-check the slot at submit time: it may have been taken while the
-    // patient was working through the wizard.
-    if (!_repository.isSlotAvailable(
-      day: date,
-      startMinute: startMinute,
-      durationMinutes: _totalDuration,
-    )) {
-      showAppToast(context, AppMessages.slotUnavailable, isError: true);
-      setState(() {
-        _selectedStartMinute = null;
-        _step = BookingStep.booking;
-      });
+    // After a PayMongo payment the one message that matters is where the
+    // money went, so the usual slot toast is held back.
+    if (!_bookingStillValid(quiet: paidThroughPayMongo)) {
+      if (paidThroughPayMongo) _reportPaidButNotBooked();
       return;
     }
 
     // A local check first, so an obviously short wallet never leaves the screen.
     // It is not the one that protects the balance — the database re-checks it
     // under a row lock, because this figure can be stale by the time it is read.
-    if (_repository.walletBalance < _downPayment) {
+    if (!paidThroughPayMongo && _repository.walletBalance < _downPayment) {
       _reportInsufficientFunds(
         available: _repository.walletBalance,
         required: _downPayment,
@@ -299,11 +515,14 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
     // connection settles onto the first booking instead of paying twice.
     _checkoutReference ??= 'REF-${DateTime.now().millisecondsSinceEpoch}';
 
+    String? bookedId;
     try {
-      // One transaction: balance check, debit, ledger entry and the booking
-      // itself. The booking arrives pending whatever was paid — only the clinic
-      // may confirm a slot, so the app never asks for a confirmed one.
-      await _repository.checkoutWithWallet(
+      // One transaction on the server. The app never sets the status: the
+      // booking function confirms a paid visit, and the reload that follows
+      // reads back whatever the database stored.
+      final checkout = await _repository.checkoutWithWallet(
+        paymentRequestId: _paidRequestId,
+        paymentMethod: _paidWith ?? _BookingPaymentMethod.wallet,
         serviceIds: _selectedServices.map((s) => s.id).toList(),
         date: date,
         timeSlot: timeSlot,
@@ -312,9 +531,15 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
         amountToPay: _downPayment,
         doctorId: _assignedDentist?.id,
         notes: notes,
-        method: 'GCash',
         referenceNo: _checkoutReference,
       );
+      if (checkout == null || !checkout.hasBookingConfirmation) {
+        throw const InvalidWalletCheckoutResultException();
+      }
+      bookedId = checkout.appointmentId;
+      // Used: the payment now belongs to this booking.
+      _paidRequestId = null;
+      _paidWith = null;
     } on InsufficientWalletBalanceException catch (e) {
       if (!mounted) return;
       setState(() => _isSubmitting = false);
@@ -329,12 +554,22 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
       if (!mounted) return;
       setState(() {
         _isSubmitting = false;
-        _selectedStartMinute = null;
         _step = BookingStep.booking;
-        // Nothing was charged, but the next attempt is a new booking.
-        _checkoutReference = null;
       });
-      showAppToast(context, AppMessages.slotUnavailable, isError: true);
+      if (paidThroughPayMongo) {
+        _reportPaidButNotBooked();
+      } else {
+        showAppToast(context, AppMessages.slotUnavailable, isError: true);
+      }
+      return;
+    } on BookingPaymentServiceUnavailableException {
+      if (!mounted) return;
+      setState(() => _isSubmitting = false);
+      showAppToast(
+        context,
+        'Payment service is unavailable. Your appointment was not booked. Please try again later.',
+        isError: true,
+      );
       return;
     } on PatientNotApprovedException {
       if (!mounted) return;
@@ -345,12 +580,7 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
       debugPrint('Booking checkout failed: $e\n$stack');
       if (!mounted) return;
       setState(() => _isSubmitting = false);
-      // Name the database's reason when there is one: a bare "try again"
-      // hides a failure that retrying will never fix.
-      final reason = e is PostgrestException && e.message.trim().isNotEmpty
-          ? ' (${e.message.trim()})'
-          : '';
-      showAppToast(context, 'We could not complete your booking.$reason Please try again.',
+      showAppToast(context, 'Booking could not be completed. Please try again.',
           isError: true);
       return;
     }
@@ -358,11 +588,37 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
     if (!mounted) return;
     setState(() => _isSubmitting = false);
 
-    // The wallet debit above already raised its own receipt alert, so this
-    // only reports the booking itself.
+    // The status Supabase gave the booking decides what comes next. A visit
+    // the server confirmed on a paid deposit gets the Appointment Confirmed
+    // screen, in place of this one so Back cannot re-run the checkout. A
+    // booking still waiting on the clinic only gets a note.
+    Appointment? booked;
+    for (final a in _repository.appointments) {
+      if (a.id == bookedId) booked = a;
+    }
+    final confirmedAndPaid = booked != null &&
+        booked.status == AppointmentStatus.confirmed &&
+        booked.downpaymentPaidAt != null;
+    if (confirmedAndPaid) {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => AppointmentConfirmedScreen(appointmentId: booked!.id)),
+      );
+      return;
+    }
     showAppToast(context, AppMessages.appointmentScheduled);
-
     Navigator.pop(context);
+  }
+
+  /// The GCash/GrabPay payment went through but the slot went in the meantime.
+  /// The payment is kept for this booking, so picking another time and
+  /// pressing PAY books against it without charging again.
+  void _reportPaidButNotBooked() {
+    showAppToast(
+      context,
+      'Your payment was received, but that time was just taken. Pick another time and press '
+      'PAY — you will not be charged again.',
+      isError: true,
+    );
   }
 
   /// Says how short the wallet is and offers the top-up screen, rather than only
@@ -405,14 +661,13 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
               // of its own, so the bottom padding here reserves the room it
               // covers — the last card can still be scrolled clear of it.
               child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(20, 4, 20, 96),
+                padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
                 child: _buildStepBody(),
               ),
             ),
           ],
         ),
-        floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
-        floatingActionButton: _buildFloatingCta(),
+        bottomNavigationBar: _buildActionBar(),
       ),
     );
   }
@@ -428,7 +683,9 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
         );
 
       case BookingStep.booking:
-        final now = DateTime.now();
+        // Tomorrow in Manila, not on the phone's clock: the website and the
+        // database both count the clinic's days.
+        final tomorrow = firstPatientBookableDay;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -436,17 +693,24 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
               durationMinutes: _totalDuration,
               selectedDate: _selectedDate,
               selectedStartMinute: _selectedStartMinute,
-              firstDay: DateTime(now.year, now.month, now.day),
-              lastDay: DateTime(now.year, now.month, now.day).add(const Duration(days: 180)),
+              // Appointments need a full day's notice. Starting at tomorrow
+              // also keeps today from looking selectable on the calendar.
+              firstDay: tomorrow,
+              lastDay: tomorrow.add(const Duration(days: 179)),
               // A free chair is not enough: the day must also be one a dentist
               // credentialed for every selected procedure holds clinic, or the
               // summary would name nobody for a visit already paid on.
               hasOpenSlot: (day) => _slotsWithDentist(day).any((slot) => slot.isAvailable),
               slotsFor: _slotsWithDentist,
-              onDateSelected: (day) => setState(() {
-                _selectedDate = day;
-                _selectedStartMinute = null;
-              }),
+              isLoadingSlots: _selectedDate != null && _serverSlots == null,
+              slotsError: _serverSlotsError,
+              onDateSelected: (day) {
+                setState(() {
+                  _selectedDate = day;
+                  _selectedStartMinute = null;
+                });
+                _loadServerSlots(day);
+              },
               onSlotSelected: (minute) => setState(() => _selectedStartMinute = minute),
             ),
           ],
@@ -463,17 +727,19 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
           downPayment: _downPayment,
           walletBalance: _repository.walletBalance,
           notesController: _notesController,
+          selectedPaymentMethod: _paymentMethod,
+          onPaymentMethodSelected: (method) => setState(() => _paymentMethod = method),
         );
     }
   }
 
-  // --- Floating action button ---
+  // --- Booking action bar ---
 
   /// Height of every action button in the wizard, footer and sheets alike.
   /// At the 44pt floor for a comfortable touch target — no lower.
   static const double _actionButtonHeight = 44;
 
-  Widget _buildFloatingCta() {
+  Widget _buildActionBar() {
     final isSummary = _step == BookingStep.summary;
     final label = isSummary ? 'PAY' : 'CONTINUE';
     // Nothing to go back to on the first stage, so Back only appears from the
@@ -483,13 +749,12 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
     final primary = SizedBox(
       height: _actionButtonHeight,
       child: ElevatedButton(
+        // On the summary this opens the Terms and Conditions first; nothing
+        // is charged until the patient has agreed to them.
         onPressed: _isSubmitting ? null : _next,
         style: ElevatedButton.styleFrom(
           minimumSize: const Size(0, _actionButtonHeight),
-          // A floating button needs its own lift: there is no bar behind it
-          // separating it from whatever it happens to be sitting over.
-          elevation: 6,
-          shadowColor: AppColors.primary.withOpacity(0.45),
+          elevation: 0,
         ),
         child: _isSubmitting
             ? const SizedBox(
@@ -510,45 +775,48 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
       ),
     );
 
-    return Padding(
-      // Clears the screen edges on the sides; the FAB location handles the
-      // bottom inset for us.
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: showBack
-          ? Row(
-              children: [
-                // Filled surface, not transparent: this floats over the page,
-                // and an outline alone would let the content show through it.
-                SizedBox(
-                  height: _actionButtonHeight,
-                  child: ElevatedButton(
-                    onPressed: _isSubmitting ? null : _back,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.surface,
-                      foregroundColor: AppColors.textPrimary,
-                      minimumSize: const Size(0, _actionButtonHeight),
-                      padding: const EdgeInsets.symmetric(horizontal: 18),
-                      elevation: 6,
-                      shadowColor: Colors.black.withOpacity(0.25),
-                      side: BorderSide(color: AppColors.border),
-                    ),
-                    child: const Text(
-                      'BACK',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 0.9,
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        border: Border(top: BorderSide(color: AppColors.border)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
+          child: showBack
+              ? Row(
+                  children: [
+                    Expanded(
+                      child: SizedBox(
+                        height: _actionButtonHeight,
+                        child: ElevatedButton(
+                          onPressed: _isSubmitting ? null : _back,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.surface,
+                            foregroundColor: AppColors.textPrimary,
+                            minimumSize: const Size(0, _actionButtonHeight),
+                            elevation: 0,
+                            side: BorderSide(color: AppColors.border),
+                          ),
+                          child: const Text(
+                            'BACK',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 0.9,
+                            ),
+                          ),
+                        ),
                       ),
                     ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                // The primary action keeps the remaining width, so Back never
-                // grows to rival it.
-                Expanded(child: primary),
-              ],
-            )
-          : SizedBox(width: double.infinity, child: primary),
+                    const SizedBox(width: 12),
+                    Expanded(child: primary),
+                  ],
+                )
+              : SizedBox(width: double.infinity, child: primary),
+        ),
+      ),
     );
   }
 }
@@ -694,8 +962,10 @@ class _ServiceStep extends StatelessWidget {
         ],
         const SizedBox(height: 6),
         _ActionCard(
-          title: selected.isEmpty ? 'Select a service' : 'Change service',
-          subtitle: 'From our provided dental procedures',
+          title: selected.isEmpty ? 'Select a service' : 'Add another service',
+          subtitle: selected.isEmpty
+              ? 'From our provided dental procedures'
+              : 'Add one more procedure to this visit',
           onTap: onAddServices,
         ),
       ],
@@ -885,15 +1155,14 @@ class _ActionCard extends StatelessWidget {
 }
 
 
-/// The full service menu, opened from the "select more services" card.
-///
-/// It toggles the caller's live selection as the patient taps, so closing the
-/// sheet is never a commit step — what they see behind it is already current.
+/// The full service menu, opened from the "Select a service" / "Add another
+/// service" card. One tap adds one procedure and closes the sheet; anything
+/// already in the visit is left off the list, so it cannot be added twice.
 class _ServicePickerSheet extends StatefulWidget {
   final Set<DentalService> selected;
-  final ValueChanged<DentalService> onToggle;
+  final ValueChanged<DentalService> onPick;
 
-  const _ServicePickerSheet({required this.selected, required this.onToggle});
+  const _ServicePickerSheet({required this.selected, required this.onPick});
 
   @override
   State<_ServicePickerSheet> createState() => _ServicePickerSheetState();
@@ -927,18 +1196,18 @@ class _ServicePickerSheetState extends State<_ServicePickerSheet> {
   /// Matches on the procedure name and its description, so "whitening" and
   /// "enamel" both find the same row.
   bool _matches(DentalService service) {
+    if (widget.selected.contains(service)) return false;
     if (!_isSearching) return true;
     final needle = _query.trim().toLowerCase();
     return service.name.toLowerCase().contains(needle) ||
         service.description.toLowerCase().contains(needle);
   }
 
-  /// Selects [service] (replacing any earlier choice) and closes the sheet, so
-  /// one tap finishes the pick. Tapping the chosen one again only clears it.
+  /// Adds [service] to the visit and closes the sheet, so one tap finishes
+  /// the pick. The next service is added with another trip to the sheet.
   void _pick(DentalService service) {
-    final wasSelected = widget.selected.contains(service);
-    setState(() => widget.onToggle(service));
-    if (!wasSelected) Navigator.pop(context);
+    widget.onPick(service);
+    Navigator.pop(context);
   }
 
   /// The menu with the search applied, groups that match nothing dropped.
@@ -977,7 +1246,9 @@ class _ServicePickerSheetState extends State<_ServicePickerSheet> {
           children: [
             _SheetHandle(
               title: 'Dental Procedures',
-              subtitle: '${widget.selected.length} selected',
+              subtitle: widget.selected.isEmpty
+                  ? 'Tap a procedure to add it'
+                  : '${widget.selected.length} in this visit · tap one more to add it',
             ),
             if (catalog.hasLoaded) _buildSearchField(),
             if (!catalog.hasLoaded && catalog.isLoading)
@@ -1072,7 +1343,9 @@ class _ServicePickerSheetState extends State<_ServicePickerSheet> {
         child: Padding(
           padding: const EdgeInsets.all(32),
           child: Text(
-            'No procedure matches that search.',
+            _isSearching
+                ? 'No procedure matches that search.'
+                : 'Every procedure is already in this visit.',
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 13.5, color: AppColors.textSecondary),
           ),
@@ -1455,6 +1728,31 @@ class _ServiceTile extends StatelessWidget {
 
 // --- Step 3: Summary & payment ---
 
+/// How the down payment is paid. Wallet debits the balance directly; GCash
+/// and GrabPay go through PayMongo's checkout (see
+/// [_BookAppointmentScreenState._payWithPayMongo]).
+abstract final class _BookingPaymentMethod {
+  static const wallet = 'Wallet';
+  static const gcash = 'GCash';
+  static const grabPay = 'GrabPay';
+
+  static const all = [wallet, gcash, grabPay];
+
+  /// The PayMongo rail behind [method], or null for the wallet.
+  static CashInRail? railFor(String method) {
+    final id = switch (method) {
+      gcash => 'gcash',
+      grabPay => 'grab_pay',
+      _ => null,
+    };
+    if (id == null) return null;
+    for (final rail in kCashInRails) {
+      if (rail.id == id) return rail;
+    }
+    return null;
+  }
+}
+
 class _PaymentStep extends StatelessWidget {
   final Set<DentalService> services;
 
@@ -1469,6 +1767,8 @@ class _PaymentStep extends StatelessWidget {
   final double downPayment;
   final double walletBalance;
   final TextEditingController notesController;
+  final String selectedPaymentMethod;
+  final ValueChanged<String> onPaymentMethodSelected;
 
   const _PaymentStep({
     required this.services,
@@ -1480,6 +1780,8 @@ class _PaymentStep extends StatelessWidget {
     required this.downPayment,
     required this.walletBalance,
     required this.notesController,
+    required this.selectedPaymentMethod,
+    required this.onPaymentMethodSelected,
   });
 
   @override
@@ -1498,15 +1800,19 @@ class _PaymentStep extends StatelessWidget {
           style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
         ),
         const SizedBox(height: 10),
-        _PaymentOptionTile(
-          title: 'E-Wallet — GCash',
-          subtitle: 'Balance: ${formatPeso(walletBalance)}',
-          // The only note left is the one that stops the patient submitting:
-          // everything else the tile used to spell out is on the card above.
-          note: canAffordDownPayment ? null : AppMessages.insufficientBalance,
-          isSelected: true,
-          onTap: () {},
+        _PaymentOptionList(
+          selectedMethod: selectedPaymentMethod,
+          onSelected: onPaymentMethodSelected,
+          walletBalance: walletBalance,
+          downPayment: downPayment,
         ),
+        if (selectedPaymentMethod == _BookingPaymentMethod.wallet && !canAffordDownPayment) ...[
+          const SizedBox(height: 8),
+          Text(
+            AppMessages.insufficientBalance,
+            style: const TextStyle(fontSize: 11.5, height: 1.35, color: AppColors.error),
+          ),
+        ],
         const SizedBox(height: 22),
         Text(
           'Additional Notes (Optional)',
@@ -1622,7 +1928,7 @@ class _PaymentStep extends StatelessWidget {
             color: AppColors.primary.withOpacity(0.12),
           ),
           child: assigned == null
-              ? Icon(kDoctorIcon, size: 19, color: AppColors.primary)
+              ? DoctorIcon(size: 19, color: AppColors.primary)
               : assigned.avatarUrl != null
               // The dentist's own photo from their clinic profile.
               ? CircleAvatar(
@@ -1657,19 +1963,15 @@ class _PaymentStep extends StatelessWidget {
               ),
               const SizedBox(height: 5),
               if (assigned != null)
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: AppColors.primary.withOpacity(0.12),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    assigned.title,
-                    style: TextStyle(
-                      fontSize: 10.5,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.primary,
-                    ),
+                Text(
+                  // This is driven by the selected procedure, rather than the
+                  // doctor's wider title. A cleaning therefore reads as
+                  // "General Dentistry" directly below the doctor's name.
+                  _serviceSpecializations,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.primary,
                   ),
                 )
               else
@@ -1801,8 +2103,449 @@ class _PaymentStep extends StatelessWidget {
 
   static String _dateLabel(DateTime date) =>
       '${weekdayLabel(date.weekday)}, ${_monthNames[date.month - 1]} ${date.day}, ${date.year}';
+
+  String get _serviceSpecializations {
+    final labels = <String>{
+      for (final service in services) specializationLabelFor(service.specializationCode),
+    };
+    return labels.join(' • ');
+  }
 }
 
+/// Wallet, GCash and GrabPay. GCash and GrabPay are paid through PayMongo's
+/// own checkout and confirmed by the server before anything is booked.
+class _PaymentOptionList extends StatelessWidget {
+  final String selectedMethod;
+  final ValueChanged<String> onSelected;
+  final double walletBalance;
+  final double downPayment;
+
+  const _PaymentOptionList({
+    required this.selectedMethod,
+    required this.onSelected,
+    required this.walletBalance,
+    required this.downPayment,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    const methods = _BookingPaymentMethod.all;
+    return Column(
+      children: [
+        for (var i = 0; i < methods.length; i++) ...[
+          _PaymentOptionRow(
+            method: methods[i],
+            subtitle: methods[i] == _BookingPaymentMethod.wallet ? 'Balance ${formatPeso(walletBalance)}' : null,
+            logo: _BookingPaymentMethod.railFor(methods[i])?.logo,
+            isSelected: selectedMethod == methods[i],
+            onTap: () => onSelected(methods[i]),
+          ),
+          if (i != methods.length - 1) Divider(height: 1, color: AppColors.border),
+        ],
+      ],
+    );
+  }
+}
+
+class _PaymentOptionRow extends StatelessWidget {
+  final String method;
+
+  /// A second line under the name — the wallet's balance. Null for GCash and
+  /// GrabPay, which show their name alone.
+  final String? subtitle;
+
+  /// The rail's brand mark, or null for the wallet's card icon.
+  final String? logo;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  const _PaymentOptionRow({
+    required this.method,
+    required this.subtitle,
+    required this.logo,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      inMutuallyExclusiveGroup: true,
+      checked: isSelected,
+      label: method,
+      child: Material(
+        color: isSelected ? AppColors.primary.withOpacity(0.06) : Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 13),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 30,
+                  child: logo == null
+                      ? Icon(CupertinoIcons.creditcard, size: 20, color: AppColors.primary)
+                      : SvgPicture.asset(logo!, height: 22),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        method,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                      if (subtitle != null) ...[
+                        const SizedBox(height: 2),
+                        Text(subtitle!, style: TextStyle(fontSize: 11.5, color: AppColors.textSecondary)),
+                      ],
+                    ],
+                  ),
+                ),
+                Icon(
+                  isSelected ? CupertinoIcons.checkmark_circle_fill : CupertinoIcons.circle,
+                  size: 20,
+                  color: isSelected ? AppColors.primary : AppColors.border,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+}
+
+/// The Terms and Conditions and the Privacy Policy, opened by PAY before any
+/// money moves. Both are shown as one continuous text, Terms first. AGREE &
+/// CONTINUE stays locked until the patient has scrolled to the very end, and
+/// the screen pops `true` only when they press it.
+class BookingTermsScreen extends StatefulWidget {
+  const BookingTermsScreen({super.key});
+
+  @override
+  State<BookingTermsScreen> createState() => _BookingTermsScreenState();
+}
+
+class _BookingTermsScreenState extends State<BookingTermsScreen> {
+  static const _documents = [
+    'assets/files/TERMS AND CONDITIONS.txt',
+    'assets/files/PRIVACY POLICY.txt',
+  ];
+
+  final ScrollController _scroll = ScrollController();
+  late final Future<List<String>> _text = _load();
+
+  bool _reachedEnd = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _scroll.addListener(_checkEnd);
+  }
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  /// Both documents as one list of paragraphs, Terms first. Each line of the
+  /// files is a paragraph (blank lines only space them), so the title, the
+  /// "Last updated" line and every heading stand on their own. The files'
+  /// byte-order mark and Windows line endings are dropped.
+  static Future<List<String>> _load() async {
+    final paragraphs = <String>[];
+    for (final path in _documents) {
+      final raw = await rootBundle.loadString(path);
+      final text = raw.replaceAll('\uFEFF', '').replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+      if (paragraphs.isNotEmpty) paragraphs.add(_divider);
+      for (final line in text.split('\n')) {
+        final trimmed = line.trim();
+        if (trimmed.isNotEmpty) paragraphs.add(trimmed);
+      }
+    }
+    return paragraphs;
+  }
+
+  static const _divider = '\u0000divider';
+
+  /// Once reached, the end stays reached — scrolling back up to re-read a
+  /// clause does not lock the box again.
+  void _checkEnd() {
+    if (_reachedEnd || !_scroll.hasClients) return;
+    final position = _scroll.position;
+    if (position.pixels >= position.maxScrollExtent - 24) {
+      setState(() => _reachedEnd = true);
+    }
+  }
+
+  /// A line the documents write in capitals ("AGREEMENT TO OUR LEGAL TERMS")
+  /// is a heading.
+  static bool _isHeading(String paragraph) {
+    if (paragraph.length > 90 || paragraph.contains('\n')) return false;
+    final letters = paragraph.replaceAll(RegExp(r'[^A-Za-z]'), '');
+    return letters.length >= 3 && letters == letters.toUpperCase();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      appBar: AppBar(
+        title: const Text('Legal Terms & Privacy Policy'),
+        leading: IconButton(
+          tooltip: 'Close',
+          icon: const Icon(CupertinoIcons.xmark),
+          onPressed: () => Navigator.pop(context, false),
+        ),
+      ),
+      body: Column(
+        children: [
+          Expanded(
+            child: FutureBuilder<List<String>>(
+              future: _text,
+              builder: (context, snapshot) {
+                if (snapshot.hasError) {
+                  return Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Text(
+                        'The Terms and Conditions could not be opened. Please try again.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: AppColors.textSecondary),
+                      ),
+                    ),
+                  );
+                }
+                final paragraphs = snapshot.data;
+                if (paragraphs == null) {
+                  return Center(child: CircularProgressIndicator(color: AppColors.primary));
+                }
+                // A text short enough to fit has no bottom to scroll to.
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (mounted && _scroll.hasClients && _scroll.position.maxScrollExtent <= 0) {
+                    _checkEnd();
+                  }
+                });
+                return Scrollbar(
+                  controller: _scroll,
+                  child: ListView.builder(
+                    controller: _scroll,
+                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+                    itemCount: paragraphs.length,
+                    itemBuilder: (context, i) => _paragraph(paragraphs[i], isFirst: i == 0),
+                  ),
+                );
+              },
+            ),
+          ),
+          SafeArea(
+            top: false,
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                border: Border(top: BorderSide(color: AppColors.border)),
+              ),
+              child: Column(
+                children: [
+                  SizedBox(
+                    width: double.infinity,
+                    height: 44,
+                    child: ElevatedButton(
+                      // Unlocks once the patient has scrolled to the end.
+                      onPressed: _reachedEnd ? () => Navigator.pop(context, true) : null,
+                      child: const Text(
+                        'AGREE & CONTINUE',
+                        style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 0.6),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _paragraph(String text, {required bool isFirst}) {
+    if (text == _divider) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 20),
+        child: Divider(color: AppColors.border, thickness: 1),
+      );
+    }
+    if (_isHeading(text)) {
+      return Padding(
+        padding: EdgeInsets.only(top: isFirst ? 0 : 10, bottom: 6),
+        child: Text(
+          text,
+          style: TextStyle(
+            fontSize: isFirst ? 17 : 13.5,
+            fontWeight: FontWeight.bold,
+            height: 1.35,
+            color: AppColors.textPrimary,
+          ),
+        ),
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Text(text, style: TextStyle(fontSize: 13, height: 1.5, color: AppColors.textPrimary)),
+    );
+  }
+}
+
+enum _PayMongoOutcome { paid, failed, stillPending }
+
+/// Waits for PayMongo to authorize a GCash/GrabPay payment the patient is
+/// completing in their browser or wallet app.
+///
+/// Reads `wallet_topup_requests` every 3 s — and at once whenever the app
+/// comes back to the foreground — and asks `reconcile-topup` to check PayMongo
+/// directly on tries 1, 4, 10, 20 and 40, in case the webhook is late. Gives
+/// up after 3 minutes, or when the patient closes it; the payment is then
+/// still confirmed in the background and lands in the wallet.
+class _PayMongoWaitDialog extends StatefulWidget {
+  final String requestId;
+  final String railLabel;
+
+  const _PayMongoWaitDialog({required this.requestId, required this.railLabel});
+
+  @override
+  State<_PayMongoWaitDialog> createState() => _PayMongoWaitDialogState();
+}
+
+class _PayMongoWaitDialogState extends State<_PayMongoWaitDialog> with WidgetsBindingObserver {
+  static const _maxTries = 60;
+  static const _reconcileOn = {1, 4, 10, 20, 40};
+
+  Timer? _timer;
+  int _attempt = 0;
+  bool _checking = false;
+  bool _done = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _timer = Timer(const Duration(seconds: 3), _check);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _check();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _check() async {
+    if (_checking || _done || !mounted) return;
+    _checking = true;
+    _timer?.cancel();
+    _attempt++;
+    if (_reconcileOn.contains(_attempt)) await WalletTopupApi.reconcile(widget.requestId);
+
+    TopupState? state;
+    try {
+      state = await WalletTopupApi.fetchState(widget.requestId);
+    } catch (_) {
+      state = null;
+    }
+    _checking = false;
+    if (!mounted || _done) return;
+
+    switch (state?.status) {
+      case 'paid':
+        // Settled here, so the Wallet tab does not announce it again.
+        await _forgetIfOurs();
+        _finish(_PayMongoOutcome.paid);
+        return;
+      case 'failed':
+      case 'expired':
+        await _forgetIfOurs();
+        _finish(_PayMongoOutcome.failed);
+        return;
+    }
+    if (_attempt >= _maxTries) {
+      _finish(_PayMongoOutcome.stillPending);
+      return;
+    }
+    _timer = Timer(const Duration(seconds: 3), _check);
+  }
+
+  /// Clears the Wallet tab's remembered top-up only when it is this request,
+  /// so a separate cash-in still waiting to be confirmed is left alone.
+  Future<void> _forgetIfOurs() async {
+    if (await WalletTopupApi.pendingRequestId() == widget.requestId) {
+      await WalletTopupApi.savePending(null);
+    }
+  }
+
+  void _finish(_PayMongoOutcome outcome) {
+    if (_done) return;
+    _done = true;
+    _timer?.cancel();
+    Navigator.pop(context, outcome);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: false,
+      child: AlertDialog(
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            CircularProgressIndicator(color: AppColors.primary),
+            const SizedBox(height: 18),
+            Text(
+              'Waiting for ${widget.railLabel}',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Finish the payment in the PayMongo page, then come back here. '
+              'Your appointment is booked as soon as PayMongo confirms it.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12.5, height: 1.4, color: AppColors.textSecondary),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => _finish(_PayMongoOutcome.stillPending),
+            child: const Text('Stop waiting'),
+          ),
+          TextButton(
+            onPressed: _check,
+            child: const Text('I have paid'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// Retained as an internal component for any older booking surface that still
+// renders the previous card treatment. This booking screen uses the flat list
+// above.
 class _PaymentOptionTile extends StatelessWidget {
   final String title;
   final String subtitle;

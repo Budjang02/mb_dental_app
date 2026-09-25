@@ -7,9 +7,11 @@ import 'package:mb_dental_app/app/messages.dart';
 import 'package:mb_dental_app/models/wallet_transaction.dart';
 import 'package:mb_dental_app/repositories/patient_api.dart';
 import 'package:mb_dental_app/repositories/patient_repository.dart';
+import 'package:mb_dental_app/widgets/section_states.dart';
 import 'package:mb_dental_app/widgets/wallet_txn_widgets.dart';
 import 'cash_in_dialog.dart';
 import 'transaction_detail_screen.dart';
+import 'scan_to_pay_screen.dart';
 import 'transaction_history_screen.dart';
 import 'wallet_topup_return.dart';
 
@@ -257,24 +259,75 @@ class _WalletScreenState extends State<WalletScreen> with WidgetsBindingObserver
                     ],
                   ),
                   const SizedBox(height: 10),
-                  Text(
-                    _balanceHidden ? '₱ ••••••' : formatPeso(_repository.walletBalance),
-                    style: const TextStyle(color: Colors.white, fontSize: 30, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 22),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.white,
-                        foregroundColor: const Color(0xFF0C4A43),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                        minimumSize: const Size(0, 44),
-                      ),
-                      onPressed: _openCashIn,
-                      icon: const Icon(TablerIcons.plus, size: 18),
-                      label: const Text('Cash In', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                  // A balance is only printed when the server confirmed it on
+                  // this load. A zero that actually means "we could not check"
+                  // would be a lie about the patient's money, so the figure is
+                  // withheld and the reason is given instead.
+                  if (!_repository.isWalletBalanceKnown)
+                    const Text(
+                      '₱ —',
+                      style: TextStyle(color: Colors.white, fontSize: 30, fontWeight: FontWeight.bold),
+                    )
+                  else
+                    Text(
+                      _balanceHidden ? '₱ ••••••' : formatPeso(_repository.walletBalance),
+                      style: const TextStyle(color: Colors.white, fontSize: 30, fontWeight: FontWeight.bold),
                     ),
+                  if (!_repository.isWalletBalanceKnown) ...[
+                    const SizedBox(height: 10),
+                    if (_historyStatus.hasFailed)
+                      SectionErrorLine(
+                        status: _historyStatus,
+                        foreground: Colors.white70,
+                        isRetrying: _repository.isRetrying(SyncSection.wallet),
+                        onRetry: () => _repository.retrySection(SyncSection.wallet),
+                      )
+                    else
+                      const Text(
+                        'Checking your balance…',
+                        style: TextStyle(color: Colors.white70, fontSize: 11.5),
+                      ),
+                  ],
+                  const SizedBox(height: 22),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.white,
+                            foregroundColor: const Color(0xFF0C4A43),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            minimumSize: const Size(0, 44),
+                          ),
+                          onPressed: _openCashIn,
+                          icon: const Icon(TablerIcons.plus, size: 18),
+                          label: const Text('Cash In', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      // Same white fill as Cash In: two equal actions on the card.
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.white,
+                            foregroundColor: const Color(0xFF0C4A43),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            minimumSize: const Size(0, 44),
+                          ),
+                          onPressed: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => const ScanToPayScreen()),
+                          ),
+                          icon: const Icon(TablerIcons.scan, size: 18),
+                          label: const Text(
+                            'Pay using QR',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -312,18 +365,46 @@ class _WalletScreenState extends State<WalletScreen> with WidgetsBindingObserver
                     style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
                   ),
                   const SizedBox(height: 10),
+                  // Centred under the heading as plain text with a caret — no
+                  // button chrome.
                   Row(
-                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      _historyFilterButton(_walletDateLabels[_dateFilter]!, _selectDateFilter),
-                      const SizedBox(width: 8),
-                      _historyFilterButton(_walletTypeLabels[_typeFilter]!, _selectTypeFilter),
+                      Expanded(
+                        child: _historyFilterButton(
+                          _walletDateLabels[_dateFilter]!,
+                          _selectDateFilter,
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: _historyFilterButton(
+                          _walletTypeLabels[_typeFilter]!,
+                          _selectTypeFilter,
+                        ),
+                      ),
                     ],
                   ),
                 ],
               ),
             ),
-            if (grouped.isEmpty)
+            if (_historyStatus.hasFailed)
+              // Inline, inside the card. The balance card above, the filters
+              // and the Cash In button all keep working.
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+                child: SectionErrorNotice(
+                  status: _historyStatus,
+                  compact: true,
+                  isRetrying: _repository.isRetrying(SyncSection.wallet),
+                  onRetry: () => _repository.retrySection(SyncSection.wallet),
+                ),
+              )
+            else if (grouped.isEmpty && _historyStatus.isPending)
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 4, 16, 8),
+                child: SectionSkeleton(rows: 2),
+              )
+            else if (grouped.isEmpty)
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 28, 16, 36),
                 child: Text(
@@ -350,6 +431,8 @@ class _WalletScreenState extends State<WalletScreen> with WidgetsBindingObserver
     );
   }
 
+  SectionStatus get _historyStatus => _repository.effectiveStatusOf(SyncSection.wallet);
+
   String _emptyMessage() {
     if (PatientApi.walletUnavailable) {
       return 'The wallet is not set up on the clinic\'s system yet. Your transactions will appear here once it is.';
@@ -358,18 +441,30 @@ class _WalletScreenState extends State<WalletScreen> with WidgetsBindingObserver
   }
 
   Widget _historyFilterButton(String label, VoidCallback onTap) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
-            const SizedBox(width: 2),
-            Icon(Icons.keyboard_arrow_down_rounded, size: 16, color: AppColors.textSecondary),
-          ],
+    return SizedBox(
+      width: double.infinity,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(6),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  label,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 2),
+              Icon(Icons.keyboard_arrow_down_rounded, size: 16, color: AppColors.textSecondary),
+            ],
+          ),
         ),
       ),
     );

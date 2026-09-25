@@ -6,10 +6,13 @@ import 'package:mb_dental_app/widgets/field_icons.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mb_dental_app/app/theme.dart';
 import 'package:mb_dental_app/repositories/clinic_api.dart';
-import 'package:mb_dental_app/services/auth_service.dart';
 import 'package:mb_dental_app/app/theme_controller.dart';
 import 'package:mb_dental_app/data/clinic_catalog.dart';
 import 'package:mb_dental_app/repositories/patient_repository.dart';
+import 'package:mb_dental_app/services/session_controller.dart';
+import 'package:mb_dental_app/services/supabase_service.dart';
+import 'package:mb_dental_app/widgets/section_states.dart';
+import 'package:mb_dental_app/widgets/skeleton.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:mb_dental_app/widgets/app_dialog.dart';
 import 'package:mb_dental_app/widgets/app_toast.dart';
@@ -88,10 +91,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
                     onPressed: () async {
                       Navigator.pop(dialogContext);
-                      // Clears the stored session so the next launch lands on
-                      // Login. The app-wide auth listener handles the actual
-                      // navigation once Supabase reports the sign-out.
-                      await AuthService.signOut();
+                      // Ends the session, drops this account's cached data, and
+                      // resets the stack to Login so nothing protected is left
+                      // behind the back button.
+                      await SessionController.logout(context);
                     },
                     child: const Text('Log out'),
                   ),
@@ -376,8 +379,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // Every row below — Manage Profile, Password, Notifications,
+                // Theme, Support, Log Out — works without a single request, so
+                // the page is drawn in full whatever the profile read did.
                 _buildIdentityCard(patient.fullName, patient.email, patient.avatarPath),
-                if (!patient.isProfileComplete) ...[
+                if (_profileStatus.hasFailed) ...[
+                  const SizedBox(height: 12),
+                  SectionErrorNotice(
+                    status: _profileStatus,
+                    compact: true,
+                    isRetrying: _repository.isRetrying(SyncSection.profile),
+                    onRetry: () => _repository.retrySection(SyncSection.profile),
+                  ),
+                ]
+                // The nudge names the details still missing from the chart, so
+                // it may only be shown once the chart has actually been read —
+                // otherwise it lists fields that may well be filled in.
+                else if (_repository.hasPatientRecord && !patient.isProfileComplete) ...[
                   const SizedBox(height: 12),
                   _buildCompletionNudge(patient.missingProfileFields),
                 ],
@@ -459,7 +477,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return file.existsSync() ? FileImage(file) : null;
   }
 
+  SectionStatus get _profileStatus => _repository.effectiveStatusOf(SyncSection.profile);
+
   Widget _buildIdentityCard(String fullName, String email, String? avatarPath) {
+    // The signed-in account is known without any request, so the card is never
+    // blank while the chart is on its way — and never invents a name it does
+    // not have either.
+    final accountEmail = SupabaseService.auth.currentUser?.email ?? '';
+    final shownEmail = email.isNotEmpty ? email : accountEmail;
+    final hasName = fullName.trim().isNotEmpty;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(18),
@@ -505,13 +531,29 @@ class _ProfileScreenState extends State<ProfileScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  fullName,
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
-                ),
+                if (hasName)
+                  Text(
+                    fullName,
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                  )
+                else if (_profileStatus.isPending)
+                  const SkeletonPulse(
+                    child: FractionallySizedBox(
+                      widthFactor: 0.6,
+                      alignment: Alignment.centerLeft,
+                      child: SkeletonBox(height: 18),
+                    ),
+                  )
+                else
+                  // No invented placeholder: the account is real, the name on
+                  // the chart simply is not known here.
+                  Text(
+                    'Your account',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                  ),
                 const SizedBox(height: 4),
                 Text(
-                  email,
+                  shownEmail,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
                 ),

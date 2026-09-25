@@ -421,7 +421,7 @@ begin
     'appointments', 'appointment_services',
     'billing_records', 'billing', 'invoices', 'invoice_items', 'payment_receipts',
     'wallet_transactions',
-    'tooth_records', 'treatment_notes', 'treatment_plans', 'treatment_plan_items',
+    'dental_records', 'tooth_records', 'treatment_notes', 'treatment_plans', 'treatment_plan_items',
     'patient_files',
     -- clinic reference data
     'procedures', 'specializations', 'members', 'member_services',

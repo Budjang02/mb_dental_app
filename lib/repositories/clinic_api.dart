@@ -606,6 +606,39 @@ class ClinicApi {
     );
   }
 
+  /// Free start times on [date] for a visit covering [procedureIds], from the
+  /// same `available_slots_for_services` engine the website's booking wizard
+  /// uses. The server sees every patient's bookings and each dentist's hours
+  /// and breaks, which the app — limited by RLS to its own chart — cannot.
+  /// Each start comes with the dentist the engine would seat.
+  ///
+  /// [exceptAppointmentId] leaves that booking out of the count — the visit
+  /// being rescheduled must not block its own new time.
+  static Future<List<ServerSlot>> availableSlotsForServices({
+    required List<String> procedureIds,
+    required DateTime date,
+    String? exceptAppointmentId,
+  }) async {
+    final rows = await SupabaseService.client.rpc('available_slots_for_services', params: {
+      'p_procedure_ids': procedureIds,
+      'p_date': '${date.year.toString().padLeft(4, '0')}-'
+          '${date.month.toString().padLeft(2, '0')}-'
+          '${date.day.toString().padLeft(2, '0')}',
+      'p_except': exceptAppointmentId,
+    });
+    final slots = <ServerSlot>[];
+    for (final row in (rows as List).cast<Map<String, dynamic>>()) {
+      final minute = _minuteOfDay(row['slot_time']) ?? (row['slot_min'] as num?)?.toInt();
+      if (minute == null) continue;
+      slots.add(ServerSlot(
+        startMinute: minute,
+        doctorId: _str(row['doctor_id']).isEmpty ? null : _str(row['doctor_id']),
+        doctorName: _str(row['doctor_name']),
+      ));
+    }
+    return slots;
+  }
+
   /// Opening hours and closures as the clinic set them in the admin portal.
   /// Null when unreadable, so the built-in week stays in force.
   static Future<ClinicSchedule?> loadSchedule() async {
@@ -856,4 +889,14 @@ class ClinicCatalog extends ChangeNotifier {
       notifyListeners();
     }
   }
+}
+
+/// One free start time from the server's scheduling engine, and the dentist
+/// it would seat.
+class ServerSlot {
+  final int startMinute;
+  final String? doctorId;
+  final String doctorName;
+
+  const ServerSlot({required this.startMinute, this.doctorId, this.doctorName = ''});
 }

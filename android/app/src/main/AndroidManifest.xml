@@ -1,4 +1,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Required for Supabase, Firebase and every network read this app makes.
+         Declared here rather than relied on second-hand: Flutter injects it
+         into debug and profile builds only (android/app/src/debug/
+         AndroidManifest.xml), and a release build was getting it purely
+         because firebase-firestore happens to declare it. Dropping Firestore
+         would therefore have shipped a release APK with no network access at
+         all, and nothing in this project would have said why. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Lets the app tell "there is no connection" apart from "the server did
+         not answer", so the retry messages can say which it was. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <uses-permission android:name="android.permission.CAMERA"/>
     <uses-feature android:name="android.hardware.camera" android:required="false"/>
     <application

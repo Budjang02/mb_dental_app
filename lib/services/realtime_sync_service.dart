@@ -5,6 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../repositories/clinic_api.dart';
 import '../repositories/patient_repository.dart';
+import 'network_service.dart';
 import 'supabase_service.dart';
 
 /// Keeps this device's copy of the patient's record in step with the database
@@ -33,6 +34,7 @@ class RealtimeSyncService {
     'invoices': SyncSection.billing,
     'payment_receipts': SyncSection.billing,
     'wallet_transactions': SyncSection.wallet,
+    'dental_records': SyncSection.chart,
     'tooth_records': SyncSection.chart,
     'treatment_notes': SyncSection.chart,
     'treatment_plans': SyncSection.treatmentPlan,
@@ -222,7 +224,15 @@ class RealtimeSyncService {
       callback: callback,
     );
     channel.subscribe((status, error) {
-      if (error != null) debugPrint('Realtime ($table) unavailable: $error');
+      if (error == null) return;
+      if (NetworkService.isConnectionFailure(error)) {
+        // The Realtime client reconnects on its own; invalidate the HTTP
+        // reachability cache so a manual section retry probes again first.
+        NetworkService.invalidateReachabilityCache();
+      }
+      // Never put a socket error, endpoint, or server response in the browser
+      // console. The page's section state offers the patient a safe retry.
+      debugPrint('Realtime subscription unavailable.');
     });
     return channel;
   }

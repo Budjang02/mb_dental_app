@@ -8,6 +8,8 @@ import '../../models/dental_service.dart';
 import '../../models/appointment.dart';
 import 'package:mb_dental_app/repositories/patient_repository.dart';
 import 'package:mb_dental_app/widgets/appointment_detail_sheet.dart';
+import 'package:mb_dental_app/widgets/section_states.dart';
+import 'appointment_details_screen.dart';
 import 'book_appointment_screen.dart';
 
 /// The four views of the list, in the order their tabs run across the top.
@@ -43,6 +45,10 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: AppointmentView.values.length, vsync: this);
+    // A fresh read every time the page opens, so a booking the clinic made or
+    // changed on the website is here even if the realtime push was missed.
+    // The copy already loaded stays on screen until the new one lands.
+    _repository.refreshSection(SyncSection.appointments);
   }
 
   @override
@@ -88,11 +94,18 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
         listenable: Listenable.merge([_repository, ThemeController()]),
         builder: (context, _) {
           final all = _repository.appointments;
+          // The tabs, the bar above them and the Book New button are drawn
+          // whatever the appointments read did: only the list inside each tab
+          // depends on it.
+          final status = _repository.effectiveStatusOf(SyncSection.appointments);
           return TabBarView(
             controller: _tabController,
             children: [
               for (final view in AppointmentView.values)
-                _buildAppointmentList(all.where((a) => _matches(a, view)).toList()),
+                _buildAppointmentList(
+                  all.where((a) => _matches(a, view)).toList(),
+                  status,
+                ),
             ],
           );
         },
@@ -113,8 +126,31 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
     );
   }
 
-  Widget _buildAppointmentList(List<Appointment> appointments) {
+  Widget _buildAppointmentList(List<Appointment> appointments, SectionStatus status) {
+    // A failed read is said inside the list area, with its own retry. The tab
+    // bar, the app bar and the Book New button stay exactly where they were.
+    if (status.hasFailed) {
+      return ListView(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 104),
+        children: [
+          SectionErrorNotice(
+            status: status,
+            isRetrying: _repository.isRetrying(SyncSection.appointments),
+            onRetry: () => _repository.retrySection(SyncSection.appointments),
+          ),
+        ],
+      );
+    }
+
     if (appointments.isEmpty) {
+      // Still on its way: a skeleton, not "no appointments" — the patient must
+      // not be told they have none before anyone has looked.
+      if (status.isPending) {
+        return ListView(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 104),
+          children: const [SectionSkeleton(rows: 3)],
+        );
+      }
       // A list, not a bare Center, so the empty tab still takes the
       // pull-to-refresh gesture.
       return LayoutBuilder(
@@ -123,7 +159,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
             SizedBox(
               height: constraints.maxHeight * 0.7,
               child: Center(
-                child: Text('No appointments found.', style: TextStyle(color: AppColors.textSecondary)),
+                child: Text('No appointments yet.', style: TextStyle(color: AppColors.textSecondary)),
               ),
             ),
           ],
@@ -131,12 +167,15 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
       );
     }
 
-    // Most recent first on every tab, so a booking just made is the first
-    // thing the patient sees. Ties (and legacy rows without a creation time)
-    // fall back to the visit date, latest first.
+    // By visit date, latest first, on every tab — the website's order. It
+    // used to be by booking time, which buried a visit booked long ago (a
+    // Sep 30 appointment made in August sat below newer bookings for earlier
+    // dates) and read as missing. Same-day visits run latest slot first, then
+    // most recently booked.
     final ordered = [...appointments]..sort((a, b) {
-        final byCreated = (b.createdAt ?? b.startsAt).compareTo(a.createdAt ?? a.startsAt);
-        return byCreated != 0 ? byCreated : b.startsAt.compareTo(a.startsAt);
+        final byVisit = b.startsAt.compareTo(a.startsAt);
+        if (byVisit != 0) return byVisit;
+        return (b.createdAt ?? b.startsAt).compareTo(a.createdAt ?? a.startsAt);
       });
 
     return ListView.builder(
@@ -159,7 +198,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
         color: Colors.transparent,
         child: InkWell(
           borderRadius: BorderRadius.circular(12),
-          onTap: () => showAppointmentDetailSheet(context, item),
+          onTap: () => openAppointmentDetails(context, item),
           child: Padding(
             padding: const EdgeInsets.all(16.0),
           child: Column(
@@ -190,7 +229,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
               const SizedBox(height: 8),
               Row(
                 children: [
-                  Icon(kDoctorIcon, size: 16, color: AppColors.textSecondary),
+                  DoctorIcon(size: 16, color: AppColors.textSecondary),
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(

@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_tabler_icons/flutter_tabler_icons.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 
 /// The exact patient-facing strings the system spec fixes wording for. Screens
 /// reference these rather than inlining copy, so the wording stays identical
@@ -32,9 +32,21 @@ double downPaymentFor(double total) =>
 /// confirms it — printing an empty line there reads as missing data.
 const String kUnassignedDoctor = 'To be assigned';
 
-/// The glyph that marks a doctor wherever one is named: Tabler's outline
-/// stethoscope, in the same line style as the rest of the app's icons.
-const IconData kDoctorIcon = TablerIcons.stethoscope;
+/// The glyph that marks a doctor wherever one is named: Font Awesome's
+/// physician avatar (`user-doctor`, formerly `user-md`). It replaced a
+/// stethoscope, which read as a tool rather than as the person.
+class DoctorIcon extends StatelessWidget {
+  final double size;
+  final Color? color;
+
+  const DoctorIcon({super.key, this.size = 16, this.color});
+
+  // Font Awesome glyphs run a little large against the app's line icons at
+  // the same nominal size, so this draws them a notch smaller to sit level
+  // with the text beside them.
+  @override
+  Widget build(BuildContext context) => FaIcon(FontAwesomeIcons.userDoctor, size: size * 0.85, color: color);
+}
 
 /// Stand-in for a doctor the clinic has assigned but whose staff record this
 /// patient's session is not permitted to read. Distinct from

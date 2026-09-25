@@ -86,6 +86,47 @@ class WalletTopupApi {
     return url;
   }
 
+  /// Opens a PayMongo checkout for a booking's down payment — the website's
+  /// `_bwOpenPayMongoCheckout`. The request is marked `booking_payment`, so the
+  /// webhook records it as paid without crediting the wallet, and
+  /// `book_appointment_v6` then settles the booking against it. Not remembered
+  /// as a wallet top-up, so the Wallet tab never announces it as one.
+  /// Returns the checkout URL and the payment request id.
+  static Future<(String url, String requestId)> createBookingCheckout({
+    required int amountCentavos,
+    required String paymentMethod,
+  }) async {
+    final Map<String, dynamic> payload;
+    try {
+      final refreshed = await SupabaseService.auth.refreshSession();
+      final session = refreshed.session ?? SupabaseService.auth.currentSession;
+      if (session == null) {
+        throw const CashInException('Your session has ended. Please sign in again.');
+      }
+      final res = await SupabaseService.client.functions.invoke(
+        'create-topup-source',
+        body: {'amount_centavos': amountCentavos, 'payment_method': paymentMethod, 'booking_payment': true},
+        headers: {'Authorization': 'Bearer ${session.accessToken}'},
+      );
+      payload = res.data is Map ? Map<String, dynamic>.from(res.data as Map) : const {};
+    } on AuthException {
+      throw const CashInException('Your session has ended. Please sign in again.');
+    } on FunctionException catch (e) {
+      final details = e.details;
+      final error = details is Map ? (details['detail'] ?? details['error']) : null;
+      throw CashInException(
+        error is String && error.isNotEmpty ? error : 'Could not open PayMongo. Please try again.',
+      );
+    }
+    final url = payload['checkout_url'];
+    final requestId = payload['request_id'];
+    if (url is! String || url.isEmpty) throw const CashInException('PayMongo did not return a checkout link.');
+    if (requestId is! String || requestId.isEmpty) {
+      throw const CashInException('PayMongo did not return a payment reference.');
+    }
+    return (url, requestId);
+  }
+
   static Future<String?> _latestPendingId() async {
     try {
       final rows = await SupabaseService.client

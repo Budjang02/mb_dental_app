@@ -1,5 +1,7 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'network_service.dart';
+import 'session_controller.dart';
 import 'supabase_service.dart';
 
 /// The outcome of an auth call, so screens can show a message without having
@@ -8,19 +10,45 @@ class AuthResult {
   final bool success;
   final String? message;
   final User? user;
+  final bool isRetryable;
 
-  const AuthResult._(this.success, {this.message, this.user});
+  /// The session the call opened, or null when it opened none. Sign-up returns
+  /// null here whenever the Supabase project has email confirmation switched
+  /// on: the account exists, but nobody is signed in until the patient opens
+  /// the emailed link.
+  final Session? session;
 
-  const AuthResult.ok({User? user}) : this._(true, user: user);
+  const AuthResult._(
+    this.success, {
+    this.message,
+    this.user,
+    this.session,
+    this.isRetryable = false,
+  });
 
-  const AuthResult.failure(String message) : this._(false, message: message);
+  const AuthResult.ok({User? user, Session? session})
+      : this._(true, user: user, session: session);
+
+  const AuthResult.failure(String message, {bool isRetryable = false})
+      : this._(false, message: message, isRetryable: isRetryable);
+
+  const AuthResult.networkFailure()
+      : this._(
+          false,
+          message: kServerConnectionMessage,
+          isRetryable: true,
+        );
+
+  /// True when the account was created but still has to be confirmed by email
+  /// before it can be signed in to.
+  bool get needsEmailConfirmation => success && user != null && session == null;
 }
 
 /// Email/password authentication against Supabase Auth.
 ///
-/// Sessions are persisted and refreshed by `supabase_flutter` itself, so a
-/// patient who signed in once stays signed in until they sign out — the splash
-/// screen reads [SupabaseService.isSignedIn] to skip straight to the dashboard.
+/// Sessions are persisted by `supabase_flutter`, but a stored session is not
+/// proof of a live one: `AuthGate` calls [SupabaseService.restoreSession] at
+/// launch and only skips Login when that refresh succeeds.
 class AuthService {
   AuthService._();
 
@@ -30,10 +58,16 @@ class AuthService {
   /// AndroidManifest.xml and ios/Runner/Info.plist.
   static const String _authRedirect = 'mbdental://login-callback';
 
+  static Future<AuthResult?> _networkFailureIfOffline() async {
+    return await SupabaseService.canReachServer() ? null : const AuthResult.networkFailure();
+  }
+
   static Future<AuthResult> signIn({
     required String email,
     required String password,
   }) async {
+    final networkFailure = await _networkFailureIfOffline();
+    if (networkFailure != null) return networkFailure;
     try {
       final response = await SupabaseService.auth.signInWithPassword(
         email: email.trim(),
@@ -42,13 +76,16 @@ class AuthService {
       if (response.user == null) {
         return const AuthResult.failure('Sign in failed. Please try again.');
       }
-      return AuthResult.ok(user: response.user);
+      return AuthResult.ok(user: response.user, session: response.session);
     } on AuthException catch (e) {
-      return AuthResult.failure(_friendly(e));
-    } catch (_) {
-      return const AuthResult.failure(
-        'Could not reach the clinic server. Check your connection and try again.',
+      return AuthResult.failure(
+        _friendly(e),
+        isRetryable: NetworkService.isConnectionFailure(e),
       );
+    } catch (e) {
+      return NetworkService.isConnectionFailure(e)
+          ? const AuthResult.networkFailure()
+          : const AuthResult.failure('Sign in failed. Please try again.');
     }
   }
 
@@ -61,6 +98,8 @@ class AuthService {
     required String fullName,
     String? phone,
   }) async {
+    final networkFailure = await _networkFailureIfOffline();
+    if (networkFailure != null) return networkFailure;
     try {
       final response = await SupabaseService.auth.signUp(
         email: email.trim(),
@@ -74,13 +113,19 @@ class AuthService {
       if (response.user == null) {
         return const AuthResult.failure('Sign up failed. Please try again.');
       }
-      return AuthResult.ok(user: response.user);
+      // A null session here is not a failure: it is the project telling us the
+      // address has to be confirmed first. [AuthResult.needsEmailConfirmation]
+      // is how the sign-up screen tells the two apart.
+      return AuthResult.ok(user: response.user, session: response.session);
     } on AuthException catch (e) {
-      return AuthResult.failure(_friendly(e));
-    } catch (_) {
-      return const AuthResult.failure(
-        'Could not reach the clinic server. Check your connection and try again.',
+      return AuthResult.failure(
+        _friendly(e),
+        isRetryable: NetworkService.isConnectionFailure(e),
       );
+    } catch (e) {
+      return NetworkService.isConnectionFailure(e)
+          ? const AuthResult.networkFailure()
+          : const AuthResult.failure('We could not create your account. Please try again.');
     }
   }
 
@@ -88,6 +133,8 @@ class AuthService {
   /// address is registered, so the caller should show the same confirmation
   /// either way rather than leaking which emails exist.
   static Future<AuthResult> sendPasswordReset(String email) async {
+    final networkFailure = await _networkFailureIfOffline();
+    if (networkFailure != null) return networkFailure;
     try {
       await SupabaseService.auth.resetPasswordForEmail(
         email.trim(),
@@ -95,26 +142,34 @@ class AuthService {
       );
       return const AuthResult.ok();
     } on AuthException catch (e) {
-      return AuthResult.failure(_friendly(e));
-    } catch (_) {
-      return const AuthResult.failure(
-        'Could not reach the clinic server. Check your connection and try again.',
+      return AuthResult.failure(
+        _friendly(e),
+        isRetryable: NetworkService.isConnectionFailure(e),
       );
+    } catch (e) {
+      return NetworkService.isConnectionFailure(e)
+          ? const AuthResult.networkFailure()
+          : const AuthResult.failure('We could not send the reset email. Please try again.');
     }
   }
 
   /// Sets a new password for the currently signed-in user. Used both by the
   /// reset-link flow and by Profile → Change Password.
   static Future<AuthResult> updatePassword(String newPassword) async {
+    final networkFailure = await _networkFailureIfOffline();
+    if (networkFailure != null) return networkFailure;
     try {
       await SupabaseService.auth.updateUser(UserAttributes(password: newPassword));
       return const AuthResult.ok();
     } on AuthException catch (e) {
-      return AuthResult.failure(_friendly(e));
-    } catch (_) {
-      return const AuthResult.failure(
-        'Could not reach the clinic server. Check your connection and try again.',
+      return AuthResult.failure(
+        _friendly(e),
+        isRetryable: NetworkService.isConnectionFailure(e),
       );
+    } catch (e) {
+      return NetworkService.isConnectionFailure(e)
+          ? const AuthResult.networkFailure()
+          : const AuthResult.failure('We could not update your password. Please try again.');
     }
   }
 
@@ -137,11 +192,15 @@ class AuthService {
     return updatePassword(newPassword);
   }
 
-  static Future<void> signOut() => SupabaseService.auth.signOut();
+  /// Kept for callers that only want the auth half of a sign-out. Anything
+  /// with a [BuildContext] should use `SessionController.logout` instead, which
+  /// also clears the cached record and resets the navigator.
+  static Future<void> signOut() => SessionController.signOut();
 
   /// Supabase's raw messages are aimed at developers; these are the ones a
   /// patient should actually read.
   static String _friendly(AuthException e) {
+    if (NetworkService.isConnectionFailure(e)) return kServerConnectionMessage;
     final message = e.message.toLowerCase();
     if (message.contains('invalid login credentials')) {
       return 'That email and password do not match an account.';
@@ -158,6 +217,6 @@ class AuthService {
     if (message.contains('rate limit') || message.contains('too many')) {
       return 'Too many attempts. Please wait a moment and try again.';
     }
-    return e.message;
+    return 'We could not complete that request. Please try again.';
   }
 }

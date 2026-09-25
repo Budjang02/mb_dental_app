@@ -15,9 +15,11 @@ Future<void> main() async {
     // Initialize both backend services
     await Firebase.initializeApp();
     await SupabaseService.initialize();
-  } catch (e) {
-    startupError = '$e';
-    debugPrint('Initialization failed: $e');
+  } catch (_) {
+    // Do not render or print configuration, transport details, or stack
+    // traces. They can include endpoints and must never reach a browser
+    // console visible to a patient.
+    startupError = 'Unable to start the app. Please check your connection and try again.';
   }
 
   ThemeController().load();

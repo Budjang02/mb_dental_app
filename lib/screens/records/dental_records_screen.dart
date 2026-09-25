@@ -8,6 +8,7 @@ import 'package:mb_dental_app/app/theme_controller.dart';
 import 'package:mb_dental_app/models/patient_document.dart';
 import 'package:mb_dental_app/models/treatment.dart';
 import 'package:mb_dental_app/repositories/patient_repository.dart';
+import 'package:mb_dental_app/widgets/section_states.dart';
 import 'package:mb_dental_app/widgets/app_dialog.dart';
 import 'package:mb_dental_app/widgets/app_toast.dart';
 import 'dental_arch_chart.dart';
@@ -56,72 +57,119 @@ const List<String> _toothNames = [
 
 String toothName(int toothNumber) => _toothNames[toothNumber - 1];
 
-/// Tooth fill per condition, the exact values in the website's
-/// css/odontogram.css. An unmarked tooth is Healthy, as it is on the website.
+/// The tooth-status colour system. Every status is one colour family used
+/// the same way everywhere — the chart, the legend, the tooth dialog and its
+/// badge — and the same in light and dark mode:
+///
+/// * [kToothConditionColors] — the crown, the lighter shade.
+/// * [kToothConditionRoots] — the root, a slightly darker shade.
+/// * [kToothConditionStrokes] — the outline.
+/// * [kToothConditionText] — text on a crown-coloured badge, dark enough to
+///   read on it (at least 4.5:1).
 const Map<String, Color> kToothConditionColors = {
-  'Healthy': Color(0xFFD1FAE5),
-  'Caries/Cavity': Color(0xFFFEF3C7),
-  'Filled': Color(0xFFDBEAFE),
-  'Crown': Color(0xFFF3E8FF),
-  'Missing': Color(0xFFFEE2E2),
-  'Root Canal': Color(0xFFFFF7ED),
-  'Impacted': Color(0xFFFCE7F3),
-  'Other': Color(0xFFE0E7FF),
+  'Healthy': Color(0xFFF8FAFC), // off-white
+  'Caries/Cavity': Color(0xFFFDBA74), // orange
+  'Filled': Color(0xFF93C5FD), // blue
+  'Crown': Color(0xFFFCD34D), // amber / gold
+  'Missing': Color(0x99CBD5E1), // faded slate
+  'Root Canal': Color(0xFFD8B4FE), // purple
+  'Impacted': Color(0xFFF9A8D4), // pink
+  'Other': Color(0xFF5EEAD4), // teal
 };
 
-/// Outline and label colour per condition, the exact values in the website's
-/// css/odontogram.css.
-const Map<String, Color> kToothConditionStrokes = {
-  'Healthy': Color(0xFF10B981),
-  'Caries/Cavity': Color(0xFFF59E0B),
-  'Filled': Color(0xFF3B82F6),
-  'Crown': Color(0xFFA855F7),
-  'Missing': Color(0xFFEF4444),
-  'Root Canal': Color(0xFFEA580C),
-  'Impacted': Color(0xFFEC4899),
-  'Other': Color(0xFF6366F1),
+const Map<String, Color> kToothConditionRoots = {
+  'Healthy': Color(0xFFE2E8F0),
+  'Caries/Cavity': Color(0xFFFB923C),
+  'Filled': Color(0xFF60A5FA),
+  'Crown': Color(0xFFFBBF24),
+  'Missing': Color(0x99B6C0CE),
+  'Root Canal': Color(0xFFC084FC),
+  'Impacted': Color(0xFFF472B6),
+  'Other': Color(0xFF2DD4BF),
 };
+
+const Map<String, Color> kToothConditionStrokes = {
+  'Healthy': Color(0xFF64748B),
+  'Caries/Cavity': Color(0xFFC2410C),
+  'Filled': Color(0xFF1D4ED8),
+  'Crown': Color(0xFFB45309),
+  'Missing': Color(0xFF94A3B8), // light enough for its dashes to show on navy
+  'Root Canal': Color(0xFF7E22CE),
+  'Impacted': Color(0xFFBE185D),
+  'Other': Color(0xFF0F766E),
+};
+
+const Map<String, Color> kToothConditionText = {
+  'Healthy': Color(0xFF334155),
+  'Caries/Cavity': Color(0xFF7C2D12),
+  'Filled': Color(0xFF1E3A8A),
+  'Crown': Color(0xFF78350F),
+  'Missing': Color(0xFF334155),
+  'Root Canal': Color(0xFF581C87),
+  'Impacted': Color(0xFF831843),
+  'Other': Color(0xFF134E4A),
+};
+
+/// Every status in the order the legend lists them.
+const List<String> kToothConditionOrder = [
+  'Healthy',
+  'Caries/Cavity',
+  'Filled',
+  'Crown',
+  'Root Canal',
+  'Missing',
+  'Impacted',
+  'Other',
+];
+
+/// What the legend and badges call a status. "Other" covers any mark the
+/// clinic recorded that is not one of the named ones.
+String toothConditionLabel(String condition) => condition == 'Other' ? 'Other / Marked' : condition;
 
 /// Conditions whose outline is dashed (`stroke-dasharray: 3 2`). Missing is
-/// the only one on the website; every other outline is solid.
+/// the only one: a dashed edge round a see-through crown reads as a gap.
 const Set<String> kToothDashedConditions = {'Missing'};
+
+/// The arch well follows the theme: off-white in light mode, dark navy in
+/// dark mode. Numbers and the heading take the high-contrast text colour of
+/// each, and the Healthy outline darkens in light mode so white crowns keep a
+/// visible edge against the pale well.
+Color get archWellColor => ThemeController().isDark ? const Color(0xFF0B132B) : const Color(0xFFF8FAFC);
+Color get archWellBorder => ThemeController().isDark ? const Color(0xFF1E293B) : const Color(0xFFE2E8F0);
+Color get archLabelColor => ThemeController().isDark ? const Color(0xFFF8FAFC) : const Color(0xFF1E293B);
+Color get archLabelMutedColor => ThemeController().isDark ? const Color(0xFFCBD5E1) : const Color(0xFF64748B);
+Color get archHealthyStroke => ThemeController().isDark ? const Color(0xFF94A3B8) : const Color(0xFF475569);
 
 /// The condition name [kToothConditionColors] is keyed by, for however the
 /// row spells it.
 ///
-/// Case-insensitive on purpose: the lookup used to be exact, so a row saying
-/// "crown", "Caries" or "Root canal" matched nothing and every such tooth was
-/// painted with the catch-all swatch. An empty condition is Healthy.
+/// Matched on keywords, not on the exact string: the clinic's rows spell one
+/// status many ways ("ROOT_CANAL", "Root-Canal", "Root Canal Treatment",
+/// "RCT"), and an exact match sent every variant it did not list to Other —
+/// a Root Canal tooth came out teal. Root Canal is tested before Crown and
+/// Filled, since a treated tooth is often written up with its restoration
+/// ("Root canal + crown"). An empty condition is Healthy.
 String canonicalToothCondition(String raw) {
-  switch (raw.trim().toLowerCase().replaceAll(RegExp(r'[\s_]+'), ' ')) {
-    case '':
-    case 'healthy':
-      return 'Healthy';
-    case 'caries':
-    case 'cavity':
-    case 'caries/cavity':
-      return 'Caries/Cavity';
-    case 'filled':
-      return 'Filled';
-    case 'crown':
-      return 'Crown';
-    case 'missing':
-      return 'Missing';
-    case 'root canal':
-      return 'Root Canal';
-    case 'impacted':
-      return 'Impacted';
-    default:
-      return 'Other';
+  final text = ' ${raw.toLowerCase().replaceAll(RegExp(r'[^a-z]+'), ' ').trim()} ';
+  bool has(String word) => text.contains(' $word');
+
+  if (text.trim().isEmpty) return 'Healthy';
+  if (has('root canal') || has('rootcanal') || has('rct') || has('endodon') || has('pulpectom')) {
+    return 'Root Canal';
   }
+  if (has('missing') || has('extract') || has('absent')) return 'Missing';
+  if (has('impact')) return 'Impacted';
+  if (has('carie') || has('cavit') || has('decay')) return 'Caries/Cavity';
+  if (has('crown')) return 'Crown';
+  if (has('fill') || has('restor') || has('amalgam') || has('composite')) return 'Filled';
+  if (has('healthy') || has('sound') || has('normal') || has('none')) return 'Healthy';
+  return 'Other';
 }
 
-/// The coral the reference chart marks a picked tooth with. Deliberately not
-/// part of [kToothConditionColors]: a condition describes the tooth, while
-/// selection only says which one the panel underneath is talking about, so a
-/// tooth that already has a condition keeps its own colour and takes the ring.
-const Color kToothSelectedFill = Color(0xFFEE8172);
-const Color kToothSelectedOutline = Color(0xFFC2503F);
+/// A picked tooth keeps its own colours and is called out by a ring in the
+/// arch's high-contrast text colour — outside the status palette, so a
+/// selection is never read as a condition. An unmarked tooth stays off-white.
+Color get toothSelectedOutline => archLabelColor;
 
 const List<String> _planMonths = [
   'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
@@ -133,7 +181,11 @@ String _formatPlanDate(DateTime date) => '${_planMonths[date.month - 1]} ${date.
 /// for whole-mouth entries such as "Full Mouth".
 int? toothNumberOf(String toothField) {
   final match = RegExp(r'^#(\d+)').firstMatch(toothField.trim());
-  return match == null ? null : int.tryParse(match.group(1)!);
+  final number = match == null ? null : int.tryParse(match.group(1)!);
+  // The chart is Universal (1-32). Anything else — an FDI number such as 46,
+  // or a typo — has no crown to paint and no name to show, and looking one up
+  // would throw.
+  return number != null && number >= 1 && number <= 32 ? number : null;
 }
 
 class DentalRecordsScreen extends StatefulWidget {
@@ -165,8 +217,14 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
       if (current.containsKey(tooth)) continue;
 
       final condition = canonicalToothCondition(record['condition'] ?? '');
+      if (condition == 'Other') {
+        // Logged so a status the parser does not know yet can be named and
+        // added, rather than silently painted teal.
+        debugPrint('[chart] tooth #$tooth: unrecognised condition "${record['condition']}"');
+      }
       current[tooth] = {
         'condition': condition,
+        'raw': (record['condition'] ?? '').trim(),
         'color': kToothConditionColors[condition]!,
         'stroke': kToothConditionStrokes[condition]!,
         'notes': record['notes'] ?? '',
@@ -371,6 +429,11 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
     );
   }
 
+  /// How the chart read went — `tooth_records` and the treatment history that
+  /// shares its section.
+  SectionStatus get _chartStatus =>
+      PatientRepository().effectiveStatusOf(SyncSection.chart);
+
   // --- TAB 1: INTERACTIVE ODONTOGRAM ---
   Widget _buildDentalChartTab() {
     return Column(
@@ -451,13 +514,42 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
                 ],
               ),
               const SizedBox(height: 16),
+              // An unread chart paints every tooth Healthy, which would tell
+              // the patient something about their mouth that nobody checked.
+              // Say so above the chart instead, and leave the chart, its
+              // legend and the export button working.
+              if (_chartStatus.hasFailed) ...[
+                SectionErrorNotice(
+                  status: _chartStatus,
+                  compact: true,
+                  isRetrying: PatientRepository().isRetrying(SyncSection.chart),
+                  onRetry: () => PatientRepository().retrySection(SyncSection.chart),
+                ),
+                const SizedBox(height: 12),
+              ] else if (_chartStatus.isPending) ...[
+                Row(
+                  children: [
+                    SizedBox(
+                      width: 13,
+                      height: 13,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primary),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Loading your dental records…',
+                      style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+              ],
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.fromLTRB(14, 18, 14, 18),
                 decoration: BoxDecoration(
-                  color: AppColors.background,
+                  color: archWellColor,
                   borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: AppColors.border),
+                  border: Border.all(color: archWellBorder),
                 ),
                 child: Column(
                   children: [
@@ -475,20 +567,29 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
                       },
                       // A tooth with no row is Healthy, as on the website.
                       idleFill: kToothConditionColors['Healthy']!,
-                      idleStroke: kToothConditionStrokes['Healthy']!,
+                      idleRoot: kToothConditionRoots['Healthy']!,
+                      idleStroke: archHealthyStroke,
+                      rootColors: {
+                        for (final entry in _toothConditions.entries)
+                          entry.key: kToothConditionRoots[entry.value['condition']]!,
+                      },
                       conditionStrokes: {
                         for (final entry in _toothConditions.entries)
-                          entry.key: entry.value['stroke'] as Color,
+                          entry.key: entry.value['condition'] == 'Healthy'
+                              ? archHealthyStroke
+                              : entry.value['stroke'] as Color,
                       },
                       dashedTeeth: {
                         for (final entry in _toothConditions.entries)
                           if (kToothDashedConditions.contains(entry.value['condition'])) entry.key,
                       },
                       outlineColor: AppColors.toothOutline,
-                      selectedFill: kToothSelectedFill,
-                      selectedOutline: kToothSelectedOutline,
-                      labelColor: AppColors.textSecondary,
+                      selectedFill: kToothConditionColors['Healthy']!,
+                      selectedOutline: toothSelectedOutline,
+                      labelColor: archLabelColor,
                     ),
+                    const SizedBox(height: 18),
+                    const _ToothStatusLegend(),
                   ],
                 ),
               ),
@@ -504,12 +605,12 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
     return RichText(
       textAlign: TextAlign.center,
       text: TextSpan(
-        style: TextStyle(fontSize: 13, letterSpacing: 1.6, color: AppColors.textPrimary),
+        style: TextStyle(fontSize: 13, letterSpacing: 1.6, color: archLabelColor),
         children: [
           const TextSpan(text: 'SELECT ', style: TextStyle(fontWeight: FontWeight.w800)),
           TextSpan(
             text: 'TEETH',
-            style: TextStyle(fontWeight: FontWeight.w400, color: AppColors.textSecondary),
+            style: TextStyle(fontWeight: FontWeight.w400, color: archLabelMutedColor),
           ),
         ],
       ),
@@ -524,6 +625,7 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
   /// link — tapping a row asks for a short-lived signed URL and opens that.
   Widget _buildXRaysAndFilesTab() {
     final documents = PatientRepository().documents;
+    final status = PatientRepository().effectiveStatusOf(SyncSection.documents);
 
     return Container(
       width: double.infinity,
@@ -553,37 +655,22 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
             ],
           ),
           const SizedBox(height: 16),
-          if (documents.isEmpty)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 48),
-              decoration: BoxDecoration(
-                color: AppColors.background,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.border),
-              ),
-              child: Column(
-                children: [
-                  Icon(CupertinoIcons.tray, size: 36, color: AppColors.textSecondary),
-                  const SizedBox(height: 12),
-                  Text(
-                    'No X-rays or files yet',
-                    style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.textSecondary),
-                  ),
-                  const SizedBox(height: 6),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 32),
-                    child: Text(
-                      'Files your dentist uploads will appear here.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
-                    ),
-                  ),
-                ],
-              ),
+          // The card, its heading and the tab switcher above it stay put: only
+          // the file list inside reflects how the read went.
+          if (status.hasFailed)
+            SectionErrorNotice(
+              status: status,
+              compact: true,
+              isRetrying: PatientRepository().isRetrying(SyncSection.documents),
+              onRetry: () => PatientRepository().retrySection(SyncSection.documents),
+            )
+          else if (documents.isEmpty && status.isPending)
+            const SectionSkeleton(rows: 2)
+          else if (documents.isEmpty)
+            const SectionEmptyState(
+              icon: CupertinoIcons.tray,
+              title: 'No X-rays or files yet',
+              detail: 'Files your dentist uploads will appear here.',
             )
           else
             for (int i = 0; i < documents.length; i++) ...[
@@ -643,11 +730,15 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
   void _showToothDetail(int tooth) {
     final info = _toothConditions[tooth];
     final condition = (info?['condition'] as String?) ?? 'Healthy';
-    final swatch = (info?['color'] as Color?) ?? kToothConditionColors[condition]!;
-    final stroke = (info?['stroke'] as Color?) ?? kToothConditionStrokes[condition]!;
     final clinicalNote = (info?['notes'] as String?)?.trim() ?? '';
     final recordedOn = (info?['date'] as String?)?.trim() ?? '';
     final recordedBy = (info?['doctor'] as String?)?.trim() ?? '';
+    // The clinic's own wording, shown beside "Other / Marked" so an
+    // unrecognised status is still named rather than hidden behind the label.
+    final raw = (info?['raw'] as String?) ?? '';
+    final conditionText = condition == 'Other' && raw.isNotEmpty
+        ? '${toothConditionLabel(condition)} ($raw)'
+        : toothConditionLabel(condition);
 
     showAppDialog(
       context,
@@ -659,23 +750,9 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
           children: [
             Row(
               children: [
-                Container(
-                  width: 40,
-                  height: 40,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: AppColors.primary.withOpacity(0.12),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    '#$tooth',
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: AppColors.primary),
-                  ),
-                ),
-                const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    toothName(tooth),
+                    'Tooth Records',
                     style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
                   ),
                 ),
@@ -685,35 +762,24 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
             const SizedBox(height: 16),
             Row(
               children: [
+                // A plain square in the status's full-strength shade.
                 Container(
-                  width: 12,
-                  height: 12,
+                  width: 14,
+                  height: 14,
                   decoration: BoxDecoration(
-                    color: swatch,
+                    color: kToothConditionStrokes[condition],
                     borderRadius: BorderRadius.circular(3),
-                    border: Border.all(color: stroke),
                   ),
                 ),
-                const SizedBox(width: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: swatch,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: stroke),
-                  ),
-                  child: Text(
-                    condition,
-                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: stroke),
-                  ),
-                ),
+                const SizedBox(width: 10),
+                ToothStatusBadge(condition: condition),
               ],
             ),
             const SizedBox(height: 12),
             _kv('Tooth', '#$tooth'),
             _kv('Name', toothName(tooth)),
             _kv('Type', _toothTypeLabel(tooth)),
-            _kv('Condition', condition),
+            _kv('Condition', conditionText),
             if (recordedOn.isNotEmpty) _kv('Last updated', recordedOn),
             if (recordedBy.isNotEmpty) _kv('Doctor', recordedBy),
             if (clinicalNote.isNotEmpty) _kv('Clinical note', clinicalNote),
@@ -749,6 +815,7 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
   /// patients, so the empty state is the common case and is written to match
   /// the one on X-Rays & Files rather than being a bare line of text.
   Widget _buildTreatmentPlanTab() {
+    final status = PatientRepository().effectiveStatusOf(SyncSection.treatmentPlan);
     final plan = List<TreatmentPlanItem>.from(PatientRepository().treatmentPlan)
       ..sort((a, b) {
         // Scheduled items first, soonest at the top; anything still unscheduled
@@ -775,34 +842,20 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
           ),
           const SizedBox(height: 16),
-          if (plan.isEmpty)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 48),
-              decoration: BoxDecoration(
-                color: AppColors.background,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.border),
-              ),
-              child: Column(
-                children: [
-                  Icon(CupertinoIcons.doc_text, size: 36, color: AppColors.textSecondary),
-                  const SizedBox(height: 12),
-                  Text(
-                    'No treatment plan yet.',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textSecondary),
-                  ),
-                  const SizedBox(height: 6),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 32),
-                    child: Text(
-                      'Procedures your dentist plans for you will appear here after your next visit.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
-                    ),
-                  ),
-                ],
-              ),
+          if (status.hasFailed)
+            SectionErrorNotice(
+              status: status,
+              compact: true,
+              isRetrying: PatientRepository().isRetrying(SyncSection.treatmentPlan),
+              onRetry: () => PatientRepository().retrySection(SyncSection.treatmentPlan),
+            )
+          else if (plan.isEmpty && status.isPending)
+            const SectionSkeleton(rows: 2)
+          else if (plan.isEmpty)
+            const SectionEmptyState(
+              icon: CupertinoIcons.doc_text,
+              title: 'No treatment plan yet.',
+              detail: 'Procedures your dentist plans for you will appear here after your next visit.',
             )
           else
             for (int i = 0; i < plan.length; i++) ...[
@@ -849,7 +902,7 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
                     const SizedBox(height: 3),
                     Row(
                       children: [
-                        Icon(kDoctorIcon, size: 12, color: AppColors.textSecondary),
+                        DoctorIcon(size: 12, color: AppColors.textSecondary),
                         const SizedBox(width: 5),
                         Expanded(
                           child: Text(
@@ -905,6 +958,84 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
     );
   }
 
+}
+
+/// A status's legend key: a simple rounded square in the colour the chart
+/// fills that status with, edged in its outline colour — the same pairing a
+/// tooth on the arch carries, so the legend reads straight onto the chart.
+class ToothStatusSwatch extends StatelessWidget {
+  final String condition;
+  final double size;
+
+  const ToothStatusSwatch({super.key, required this.condition, this.size = 14});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: kToothConditionColors[condition]!,
+        borderRadius: BorderRadius.circular(size * 0.22),
+        border: Border.all(color: kToothConditionStrokes[condition]!, width: 1.5),
+      ),
+    );
+  }
+}
+
+/// A status as a pill: crown-shade background, the status outline, and text
+/// in the family's darkest shade so it reads in either theme.
+class ToothStatusBadge extends StatelessWidget {
+  final String condition;
+
+  const ToothStatusBadge({super.key, required this.condition});
+
+  @override
+  Widget build(BuildContext context) {
+    final stroke = kToothConditionStrokes[condition]!;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        // Missing's crown is see-through; the badge needs a solid ground for
+        // its text, so it takes the same slate at full strength.
+        color: kToothConditionColors[condition]!.withAlpha(0xFF),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: stroke),
+      ),
+      child: Text(
+        toothConditionLabel(condition),
+        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: kToothConditionText[condition]),
+      ),
+    );
+  }
+}
+
+/// Every status under the arch, each with its tooth icon.
+class _ToothStatusLegend extends StatelessWidget {
+  const _ToothStatusLegend();
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      alignment: WrapAlignment.center,
+      spacing: 14,
+      runSpacing: 8,
+      children: [
+        for (final condition in kToothConditionOrder)
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ToothStatusSwatch(condition: condition),
+              const SizedBox(width: 5),
+              Text(
+                toothConditionLabel(condition),
+                style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w500, color: archLabelColor),
+              ),
+            ],
+          ),
+      ],
+    );
+  }
 }
 
 class _ToothTypeInfoRow extends StatelessWidget {
@@ -1053,7 +1184,7 @@ class _PatientFileRow extends StatelessWidget {
                       const SizedBox(height: 3),
                       Row(
                         children: [
-                          Icon(kDoctorIcon, size: 12, color: AppColors.textSecondary),
+                          DoctorIcon(size: 12, color: AppColors.textSecondary),
                           const SizedBox(width: 5),
                           Expanded(
                             child: Text(

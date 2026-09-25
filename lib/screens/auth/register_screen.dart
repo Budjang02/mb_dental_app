@@ -4,7 +4,6 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:mb_dental_app/widgets/field_icons.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:mb_dental_app/app/routes.dart';
 import 'package:mb_dental_app/app/theme.dart';
 import 'package:mb_dental_app/app/theme_controller.dart';
 import 'package:mb_dental_app/screens/auth/otp_verification_screen.dart';
@@ -83,6 +82,23 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return;
     }
 
+    // With email confirmation switched on in Supabase, sign-up creates the
+    // account but opens no session. Sending the patient to the dashboard then
+    // would land them on a page with no JWT behind it, so say what is left to
+    // do and put them back on Login.
+    if (result.needsEmailConfirmation) {
+      await showSuccessOverlay(
+        context,
+        message:
+            'Your account is created. Open the confirmation link we emailed to '
+            '$email, then sign in.',
+      );
+      if (!mounted) return;
+      // Back to the gate, which shows Login because sign-up opened no session.
+      Navigator.of(context).popUntil((route) => route.isFirst);
+      return;
+    }
+
     await showSuccessOverlay(
       context,
       message:
@@ -91,7 +107,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
     if (!mounted) return;
 
-    Navigator.pushReplacementNamed(context, AppRoutes.dashboard);
+    // The gate follows the new session; this screen only has to get out of
+    // the way of it.
+    Navigator.of(context).popUntil((route) => route.isFirst);
   }
 
   @override

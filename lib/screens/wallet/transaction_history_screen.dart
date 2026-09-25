@@ -256,9 +256,18 @@ class _FilterBar extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
         child: Row(
-          mainAxisSize: MainAxisSize.min,
           children: [
-            Text(label, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+            Expanded(
+              child: Text(
+                label,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+            ),
             const SizedBox(width: 3),
             Icon(Icons.keyboard_arrow_down_rounded, size: 18, color: AppColors.textSecondary),
           ],
@@ -268,13 +277,15 @@ class _FilterBar extends StatelessWidget {
 
     return Container(
       color: AppColors.surface,
-      child: Row(
-        children: [
-          const SizedBox(width: 16),
-          selector(dateLabel, onDateTap),
-          const SizedBox(width: 8),
-          selector(typeLabel, onTypeTap),
-        ],
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: Row(
+          children: [
+            Expanded(child: selector(dateLabel, onDateTap)),
+            const SizedBox(width: 8),
+            Expanded(child: selector(typeLabel, onTypeTap)),
+          ],
+        ),
       ),
     );
   }
@@ -327,7 +338,7 @@ class _BillingTab extends StatelessWidget {
                   const SizedBox(height: 3),
                   Row(
                     children: [
-                      Icon(kDoctorIcon, size: 12, color: AppColors.textSecondary),
+                      DoctorIcon(size: 12, color: AppColors.textSecondary),
                       const SizedBox(width: 5),
                       Expanded(
                         child: Text(

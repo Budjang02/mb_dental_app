@@ -49,6 +49,30 @@ void main() {
     });
   });
 
+  group('WalletCheckoutResult', () {
+    test('requires an appointment id or booking reference before success is shown', () {
+      const noConfirmation = WalletCheckoutResult(
+        appointmentId: '',
+        referenceNo: '',
+        walletBalance: 0,
+      );
+      const appointmentConfirmation = WalletCheckoutResult(
+        appointmentId: 'appointment-1',
+        referenceNo: '',
+        walletBalance: 0,
+      );
+      const referenceConfirmation = WalletCheckoutResult(
+        appointmentId: '',
+        referenceNo: 'REF-1',
+        walletBalance: 0,
+      );
+
+      expect(noConfirmation.hasBookingConfirmation, isFalse);
+      expect(appointmentConfirmation.hasBookingConfirmation, isTrue);
+      expect(referenceConfirmation.hasBookingConfirmation, isTrue);
+    });
+  });
+
   group('checkoutWithWallet', () {
     test('does nothing without a loaded patient record', () async {
       // No chart means no wallet to spend and no patient to bill, so the call

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
@@ -10,12 +12,15 @@ import 'package:mb_dental_app/models/appointment.dart';
 import 'package:mb_dental_app/models/notification.dart';
 import 'package:mb_dental_app/models/wallet_transaction.dart';
 import 'package:mb_dental_app/repositories/patient_repository.dart';
+import 'package:mb_dental_app/widgets/section_states.dart';
+import 'package:mb_dental_app/widgets/skeleton.dart';
 import 'package:mb_dental_app/screens/appointments/appointments_screen.dart';
 import 'package:mb_dental_app/screens/appointments/book_appointment_screen.dart';
 import 'package:mb_dental_app/screens/chat/chat_screen.dart';
 import 'package:mb_dental_app/screens/dashboard/notifications_screen.dart';
 import 'package:mb_dental_app/screens/wallet/transaction_history_screen.dart';
 import 'package:mb_dental_app/widgets/app_dialog.dart';
+import 'package:mb_dental_app/screens/appointments/appointment_details_screen.dart';
 import 'package:mb_dental_app/widgets/appointment_detail_sheet.dart';
 import 'package:mb_dental_app/widgets/transaction_detail_sheet.dart';
 
@@ -94,7 +99,7 @@ void _navigateForNotification(BuildContext context, NotificationItem n) {
     if (appointment != null) {
       final found = appointment;
       Future.delayed(const Duration(milliseconds: 300), () {
-        if (context.mounted) showAppointmentDetailSheet(context, found);
+        if (context.mounted) openAppointmentDetails(context, found);
       });
     }
   } else if (n.relatedTransactionId != null) {
@@ -177,6 +182,16 @@ class _HomeTabState extends State<HomeTab> {
   final PatientRepository _repository = PatientRepository();
   final LayerLink _bellLink = LayerLink();
   OverlayEntry? _notificationOverlay;
+
+  @override
+  void initState() {
+    super.initState();
+    // The clinic can archive or cancel a booking from the website while this
+    // app is open. Re-read this section whenever Home is opened so the next
+    // appointment card is not dependent on a Realtime event reaching the
+    // device.
+    unawaited(_repository.refreshSection(SyncSection.appointments));
+  }
 
   @override
   void dispose() {
@@ -265,8 +280,13 @@ class _HomeTabState extends State<HomeTab> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // The header, the quick actions and the navigation never
+                  // depend on a request, so they are drawn first and always.
                   _buildHeader(),
                   const SizedBox(height: 20),
+                  // Each card below loads on its own. A failed appointments
+                  // read leaves the wallet card and the activity list alone,
+                  // and vice versa.
                   _buildNextAppointmentCard(appointment),
                   const SizedBox(height: 16),
                   _buildWalletCard(),
@@ -469,6 +489,19 @@ class _HomeTabState extends State<HomeTab> {
       );
 
   Widget _buildNextAppointmentCard(Appointment? appointment) {
+    final status = _repository.effectiveStatusOf(SyncSection.appointments);
+    // "No upcoming appointments" is a claim about the patient's schedule. It
+    // may only be made once the schedule has actually been read.
+    if (appointment == null && status.hasFailed) {
+      return SectionErrorNotice(
+        status: status,
+        isRetrying: _repository.isRetrying(SyncSection.appointments),
+        onRetry: () => _repository.retrySection(SyncSection.appointments),
+      );
+    }
+    if (appointment == null && status.isPending) {
+      return const SkeletonPulse(child: SkeletonBox(height: 150, radius: 22));
+    }
     if (appointment == null) {
       return InkWell(
         borderRadius: BorderRadius.circular(22),
@@ -532,7 +565,7 @@ class _HomeTabState extends State<HomeTab> {
     // The booked card: a date badge on the left, the visit details beside it.
     return InkWell(
       borderRadius: BorderRadius.circular(22),
-      onTap: () => showAppointmentDetailSheet(context, appointment),
+      onTap: () => openAppointmentDetails(context, appointment),
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.all(18),
@@ -684,16 +717,31 @@ class _HomeTabState extends State<HomeTab> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '₱ ${_repository.walletBalance.toStringAsFixed(2)}',
-                      style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
-                    ),
-                    const SizedBox(height: 2),
-                    Text('Available Balance', style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
-                  ],
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Only a confirmed figure is printed. An unchecked zero
+                      // would be a false statement about the patient's money.
+                      Text(
+                        _repository.isWalletBalanceKnown
+                            ? '₱ ${_repository.walletBalance.toStringAsFixed(2)}'
+                            : '₱ —',
+                        style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _repository.isWalletBalanceKnown
+                            ? 'Available Balance'
+                            : (_walletStatus.hasFailed
+                                ? (_walletStatus.message ?? 'Balance unavailable')
+                                : 'Checking your balance…'),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                      ),
+                    ],
+                  ),
                 ),
                 Container(
                   padding: const EdgeInsets.all(12),
@@ -743,7 +791,19 @@ class _HomeTabState extends State<HomeTab> {
     );
   }
 
+  SectionStatus get _walletStatus => _repository.effectiveStatusOf(SyncSection.wallet);
+
   Widget _buildRecentTransactionCard(List<WalletTransaction> transactions) {
+    if (transactions.isEmpty && _walletStatus.hasFailed) {
+      return SectionErrorNotice(
+        status: _walletStatus,
+        isRetrying: _repository.isRetrying(SyncSection.wallet),
+        onRetry: () => _repository.retrySection(SyncSection.wallet),
+      );
+    }
+    if (transactions.isEmpty && _walletStatus.isPending) {
+      return const SkeletonPulse(child: SkeletonCard());
+    }
     if (transactions.isEmpty) {
       return Container(
         width: double.infinity,

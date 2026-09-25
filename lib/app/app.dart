@@ -8,9 +8,10 @@ import 'routes.dart';
 import '../screens/auth/create_new_password_screen.dart';
 import '../repositories/clinic_api.dart';
 import '../repositories/patient_repository.dart';
-import '../screens/splash/splash_screen.dart';
 import '../services/realtime_sync_service.dart';
+import '../services/session_controller.dart';
 import '../services/supabase_service.dart';
+import 'auth_gate.dart';
 import '../widgets/push_banner.dart';
 
 class DentalApp extends StatefulWidget {
@@ -96,9 +97,11 @@ class _DentalAppState extends State<DentalApp> with WidgetsBindingObserver {
       // Covers a deliberate sign-out and a refresh token the server rejected,
       // so a revoked session cannot leave patient data on screen.
       case AuthChangeEvent.signedOut:
-        PatientRepository().clear();
-        unawaited(RealtimeSyncService().stop());
-        navigator.pushNamedAndRemoveUntil(AppRoutes.login, (route) => false);
+        unawaited(SessionController.clearLocalState());
+        // `AuthGate` is at the root and already reacts to this event by showing
+        // Login, so the only work left is removing whatever was stacked on top
+        // of it — a detail sheet, a settings page, the profile screen.
+        navigator.popUntil((route) => route.isFirst);
       // Fires on sign-in and on the session restored at launch, so the record
       // is fetched once per session from whichever route the patient entered by.
       case AuthChangeEvent.signedIn:
@@ -124,8 +127,10 @@ class _DentalAppState extends State<DentalApp> with WidgetsBindingObserver {
           // Hosts the real-time alert banner above every route, so a push
           // arriving mid-flow is visible wherever the patient happens to be.
           builder: (context, child) => PushBannerHost(child: child ?? const SizedBox.shrink()),
-          home: const SplashScreen(),
-          routes: AppRoutes.routes,
+          home: const AuthGate(),
+          // Every named route is built through the guard, so a protected
+          // screen can never be reached without a session.
+          onGenerateRoute: AppRoutes.onGenerateRoute,
         );
       },
     );
