@@ -18,13 +18,26 @@ const List<CashInRail> kCashInRails = [
   CashInRail('grab_pay', 'GrabPay', 'assets/wallet/grab-logo.svg'),
 ];
 
-/// Where a top-up request stands on the server.
+/// Where a checkout request stands on the server: one `wallet_topup_requests`
+/// row. [purpose] says what the money was for — `wallet` (a cash-in), `bill`
+/// (a charge paid directly), `visit` (a clinic request paid directly) or
+/// `booking` — because only a cash-in lands in the wallet.
 class TopupState {
   final String status;
   final int amountCentavos;
   final String? failureReason;
+  final String purpose;
+  final String? billingRecordId;
+  final String? visitRequestId;
 
-  const TopupState({required this.status, required this.amountCentavos, this.failureReason});
+  const TopupState({
+    required this.status,
+    required this.amountCentavos,
+    this.failureReason,
+    this.purpose = 'wallet',
+    this.billingRecordId,
+    this.visitRequestId,
+  });
 }
 
 /// Raised when the checkout could not be opened. [message] is safe to show.
@@ -49,8 +62,22 @@ class WalletTopupApi {
   /// it was closed — still confirms the payment.
   static const String _pendingKey = 'wallet_pending_topup';
 
-  /// Creates the top-up request and PaymentIntent. Returns the checkout URL.
-  static Future<String> createCheckout({required int amountCentavos, required String paymentMethod}) async {
+  /// Opens a PayMongo checkout through `create-topup-source` and returns its
+  /// URL. Exactly one of:
+  ///  * [amountCentavos] — a cash-in into the wallet;
+  ///  * [billId] — pays that charge directly; the server prices it;
+  ///  * [visitRequestId] — pays that clinic request directly; the server
+  ///    prices it.
+  /// Nothing is paid or credited here: the webhook (or `reconcile-topup`)
+  /// settles it once PayMongo confirms. The request id is kept on the device
+  /// so the result is still checked if the app is closed during checkout.
+  static Future<String> createCheckout({
+    int? amountCentavos,
+    String? billId,
+    String? visitRequestId,
+    required String paymentMethod,
+  }) async {
+    assert([amountCentavos, billId, visitRequestId].where((v) => v != null).length == 1);
     final Map<String, dynamic> payload;
     try {
       // A patient may have left the app open long enough for its JWT to
@@ -62,15 +89,23 @@ class WalletTopupApi {
       }
       final res = await SupabaseService.client.functions.invoke(
         'create-topup-source',
-        body: {'amount_centavos': amountCentavos, 'payment_method': paymentMethod},
+        body: {
+          'payment_method': paymentMethod,
+          'return_section': 'wallet',
+          if (amountCentavos != null) 'amount_centavos': amountCentavos,
+          if (billId != null) 'bill_id': billId,
+          if (visitRequestId != null) 'visit_request_id': visitRequestId,
+        },
         headers: {'Authorization': 'Bearer ${session.accessToken}'},
       );
       payload = res.data is Map ? Map<String, dynamic>.from(res.data as Map) : const {};
     } on AuthException {
       throw const CashInException('Your session has ended. Please sign in again.');
     } on FunctionException catch (e) {
+      // The server's own words ("that charge is already paid", "under the
+      // online minimum") are what the patient needs to read.
       final details = e.details;
-      final error = details is Map ? details['error'] : null;
+      final error = details is Map ? (details['detail'] ?? details['error']) : null;
       throw CashInException(
         error is String && error.isNotEmpty ? error : 'The checkout could not be opened. Please try again.',
       );
@@ -156,16 +191,29 @@ class WalletTopupApi {
   }
 
   static Future<TopupState?> fetchState(String requestId) async {
-    final row = await SupabaseService.client
-        .from('wallet_topup_requests')
-        .select('status, amount_centavos, failure_reason')
-        .eq('id', requestId)
-        .maybeSingle();
+    Map<String, dynamic>? row;
+    try {
+      row = await SupabaseService.client
+          .from('wallet_topup_requests')
+          .select('status, amount_centavos, failure_reason, purpose, billing_record_id, visit_request_id')
+          .eq('id', requestId)
+          .maybeSingle();
+    } on PostgrestException {
+      // A database from before purposes: every request is a cash-in.
+      row = await SupabaseService.client
+          .from('wallet_topup_requests')
+          .select('status, amount_centavos, failure_reason')
+          .eq('id', requestId)
+          .maybeSingle();
+    }
     if (row == null) return null;
     return TopupState(
       status: (row['status'] as String?) ?? 'pending',
       amountCentavos: (row['amount_centavos'] as num?)?.toInt() ?? 0,
       failureReason: row['failure_reason'] as String?,
+      purpose: (row['purpose'] as String?) ?? 'wallet',
+      billingRecordId: row['billing_record_id'] as String?,
+      visitRequestId: row['visit_request_id'] as String?,
     );
   }
 

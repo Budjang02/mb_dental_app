@@ -42,6 +42,14 @@ class AppointmentMoney {
   final double balanceMin;
   final double balanceMax;
 
+  /// The deposit was forfeited by a cancellation: paid, but not credited.
+  final bool forfeited;
+
+  /// The visit's charges could not be read. The figures are then the
+  /// estimate, and the screen says the bill could not be checked rather than
+  /// that nothing was billed.
+  final bool billingFailed;
+
   const AppointmentMoney({
     required this.method,
     required this.down,
@@ -53,6 +61,8 @@ class AppointmentMoney {
     required this.priceMax,
     required this.balanceMin,
     required this.balanceMax,
+    this.forfeited = false,
+    this.billingFailed = false,
   });
 
   /// [estimateMin]/[estimateMax] are the estimated service cost; [billTotal]
@@ -66,8 +76,11 @@ class AppointmentMoney {
     required double estimateMax,
     double? billTotal,
     double? billUnpaid,
+    bool depositForfeited = false,
+    bool billingFailed = false,
   }) {
-    final paid = downpaymentPaid && downpaymentAmount > 0;
+    // Paid and not forfeited — `_padMoney`'s rule, which Complete & Bill uses.
+    final paid = downpaymentPaid && !depositForfeited && downpaymentAmount > 0;
     final feeTotal = paid ? (rescheduleFeeTotal < downpaymentAmount ? rescheduleFeeTotal : downpaymentAmount) : 0.0;
     final credited = paid ? downpaymentAmount - feeTotal : 0.0;
     final estMax = estimateMax < estimateMin ? estimateMin : estimateMax;
@@ -87,6 +100,8 @@ class AppointmentMoney {
       priceMax: billed ? billTotal : estMax,
       balanceMin: balMin,
       balanceMax: balMax,
+      forfeited: depositForfeited && downpaymentPaid && downpaymentAmount > 0,
+      billingFailed: billingFailed,
     );
   }
 
@@ -164,6 +179,7 @@ class ClinicDocumentsApi {
 
     double? billTotal;
     double? billUnpaid;
+    var billingFailed = false;
     try {
       final rows = await _db
           .from('billing_records')
@@ -177,6 +193,7 @@ class ClinicDocumentsApi {
       }
     } catch (e) {
       debugPrint('Billing lookup failed: $e');
+      billingFailed = true;
     }
 
     return AppointmentMoney.compute(
@@ -188,6 +205,8 @@ class ClinicDocumentsApi {
       estimateMax: rateMax > estMin ? rateMax : estMin,
       billTotal: billTotal,
       billUnpaid: billUnpaid,
+      depositForfeited: a['deposit_forfeited_at'] != null,
+      billingFailed: billingFailed,
     );
   }
 
@@ -207,13 +226,28 @@ class ClinicDocumentsApi {
         .eq('appointment_id', appointmentId)
         .eq('patient_id', patientId);
     final billIds = [for (final b in (bills as List)) _str(b['id'])]..removeWhere((id) => id.isEmpty);
-    if (billIds.isEmpty) return AppointmentDocuments.none;
 
-    final invoiceRows = await _db.from('invoice_items').select('invoice_id').inFilter('billing_record_id', billIds);
-    final invoiceId = [for (final r in (invoiceRows as List)) _str(r['invoice_id'])].firstWhere(
-      (id) => id.isNotEmpty,
-      orElse: () => '',
-    );
+    // An issued invoice is found either way the website files one: straight
+    // on the appointment, or through its charges' invoice items. Errors are
+    // not swallowed — "could not check" must not read as "none issued".
+    final direct = await _db
+        .from('invoices')
+        .select('id')
+        .eq('appointment_id', appointmentId)
+        .eq('patient_id', patientId)
+        .order('issued_at', ascending: false)
+        .limit(1);
+    var invoiceId = (direct as List).isEmpty ? '' : _str(direct.first['id']);
+    if (invoiceId.isEmpty && billIds.isNotEmpty) {
+      final invoiceRows = await _db.from('invoice_items').select('invoice_id').inFilter('billing_record_id', billIds);
+      invoiceId = [for (final r in (invoiceRows as List)) _str(r['invoice_id'])].firstWhere(
+        (id) => id.isNotEmpty,
+        orElse: () => '',
+      );
+    }
+    if (billIds.isEmpty) {
+      return AppointmentDocuments(invoiceId: invoiceId.isEmpty ? null : invoiceId);
+    }
 
     final receipts = await _receiptsFor(billIds);
     return AppointmentDocuments(
@@ -516,6 +550,7 @@ class ClinicDocumentsApi {
   static Future<Map<String, dynamic>?> _loadAppointment(String id) async {
     if (id.isEmpty) return null;
     return _firstThatWorks([
+      '$_apptColumns,payment_request_id,reschedule_fee_total,deposit_forfeited_at',
       '$_apptColumns,payment_request_id,reschedule_fee_total',
       '$_apptColumns,payment_request_id',
       _apptColumns,

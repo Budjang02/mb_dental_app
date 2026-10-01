@@ -86,21 +86,6 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Container(
-                    height: 72,
-                    width: 72,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: AppColors.primary.withOpacity(0.12),
-                    ),
-                    child: Icon(
-                      CupertinoIcons.lock_rotation,
-                      size: 32,
-                      color: AppColors.primary,
-                    ),
-                  ),
-                  const SizedBox(height: 24),
                   Text(
                     'Forgot Password',
                     style: TextStyle(

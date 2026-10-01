@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:mb_dental_app/screens/wallet/cash_in_dialog.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -624,14 +625,29 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
   /// Says how short the wallet is and offers the top-up screen, rather than only
   /// refusing. Nothing has been charged at this point.
   void _reportInsufficientFunds({required double available, required double required}) {
-    final shortfall = (required - available).clamp(0, double.infinity);
-    showAppToast(
-      context,
-      '${AppMessages.insufficientBalance} '
-      'Balance ${formatPeso(available)}, ${formatPeso(required)} due — '
-      'top up ${formatPeso(shortfall.toDouble())} to continue.',
-      isError: true,
-    );
+    final shortfall = (required - available).clamp(0, double.infinity).toDouble();
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 8),
+        content: Text(
+          '${AppMessages.insufficientBalance} '
+          'Balance ${formatPeso(available)}, ${formatPeso(required)} due — '
+          'top up ${formatPeso(shortfall)} to continue.',
+        ),
+        // Cash In over this booking: it confirms the payment itself and comes
+        // back here, with the booking as it was.
+        action: SnackBarAction(
+          label: 'Cash In',
+          onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => CashInScreen(
+              initialAmount: shortfall < 20 ? 20 : (shortfall * 100).ceil() / 100,
+              returnToCaller: true,
+            ),
+          )),
+        ),
+      ));
   }
 
   // --- Build ---

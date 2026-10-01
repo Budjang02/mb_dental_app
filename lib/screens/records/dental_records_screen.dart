@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -189,16 +191,79 @@ int? toothNumberOf(String toothField) {
 }
 
 class DentalRecordsScreen extends StatefulWidget {
-  const DentalRecordsScreen({super.key});
+  /// Which tab opens first: 0 = Dental Chart, 1 = Treatment Plan,
+  /// 2 = X-Rays & Files. A treatment plan notice opens on the plan.
+  final int initialTabIndex;
+
+  /// A treatment note's tooth key ("1", "P_A") to point at once the chart is
+  /// shown — View on Chart from a page without the chart beneath it.
+  final String? focusToothKey;
+
+  const DentalRecordsScreen({super.key, this.initialTabIndex = 0, this.focusToothKey});
 
   @override
   State<DentalRecordsScreen> createState() => _DentalRecordsScreenState();
 }
 
 class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
-  int _selectedTabIndex = 0; // 0 = Dental Chart, 1 = Treatment Plan, 2 = X-Rays & Files
+  late int _selectedTabIndex = widget.initialTabIndex; // 0 = Dental Chart, 1 = Treatment Plan, 2 = X-Rays & Files
   /// Null until a crown is tapped: the chart opens with nothing singled out.
   int? _selectedToothNumber;
+
+  /// The chart's well, to scroll it into view for View on Chart.
+  final GlobalKey _chartKey = GlobalKey();
+  Timer? _focusTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    final key = widget.focusToothKey;
+    if (key != null) WidgetsBinding.instance.addPostFrameCallback((_) => focusTooth(key));
+  }
+
+  @override
+  void dispose() {
+    _focusTimer?.cancel();
+    super.dispose();
+  }
+
+  /// View on Chart — the website's `showNoteToothOnChart`: switch to the
+  /// Dental Chart, wait for it to load, scroll to the note's tooth and single
+  /// it out for about 3.5 seconds. Only the selection outline changes; the
+  /// tooth keeps its current saved condition, whatever the note said then.
+  Future<void> focusTooth(String key) async {
+    if (!mounted) return;
+    setState(() => _selectedTabIndex = 0);
+    // The chart draws permanent teeth 1–32; a primary tooth ("P_A") is not on it.
+    final tooth = int.tryParse(key);
+    if (tooth == null || tooth < 1 || tooth > 32) {
+      _notOnChart();
+      return;
+    }
+    for (var i = 0; i < 40 && mounted && PatientRepository().effectiveStatusOf(SyncSection.chart).isPending; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    if (!mounted) return;
+    setState(() => _selectedToothNumber = tooth);
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    final target = _chartKey.currentContext;
+    if (target == null || !target.mounted) {
+      _notOnChart();
+      return;
+    }
+    await Scrollable.ensureVisible(target, duration: const Duration(milliseconds: 350), alignment: 0.3);
+    _focusTimer?.cancel();
+    _focusTimer = Timer(const Duration(milliseconds: 3500), () {
+      if (mounted && _selectedToothNumber == tooth) setState(() => _selectedToothNumber = null);
+    });
+  }
+
+  void _notOnChart() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(const SnackBar(content: Text('This tooth is not on the chart shown for this patient.')));
+  }
 
   /// The file currently being opened, so only its row shows a spinner.
   String? _openingDocumentId;
@@ -360,7 +425,7 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
             icon: Icon(CupertinoIcons.clock, color: AppColors.primary),
             onPressed: () => Navigator.push(
               context,
-              MaterialPageRoute(builder: (_) => const TreatmentNotesScreen()),
+              MaterialPageRoute(builder: (_) => TreatmentNotesScreen(onViewOnChart: focusTooth)),
             ),
           ),
         ],
@@ -544,6 +609,7 @@ class _DentalRecordsScreenState extends State<DentalRecordsScreen> {
                 const SizedBox(height: 12),
               ],
               Container(
+                key: _chartKey,
                 width: double.infinity,
                 padding: const EdgeInsets.fromLTRB(14, 18, 14, 18),
                 decoration: BoxDecoration(

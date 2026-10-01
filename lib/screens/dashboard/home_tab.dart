@@ -2,24 +2,23 @@ import 'dart:async';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_tabler_icons/flutter_tabler_icons.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:mb_dental_app/app/messages.dart';
 import 'package:mb_dental_app/app/theme.dart';
 import 'package:mb_dental_app/app/theme_controller.dart';
-import 'package:mb_dental_app/data/clinic_catalog.dart';
-import 'package:mb_dental_app/models/dental_service.dart';
 import 'package:mb_dental_app/models/appointment.dart';
 import 'package:mb_dental_app/models/notification.dart';
 import 'package:mb_dental_app/models/wallet_transaction.dart';
 import 'package:mb_dental_app/repositories/patient_repository.dart';
 import 'package:mb_dental_app/widgets/section_states.dart';
 import 'package:mb_dental_app/widgets/skeleton.dart';
-import 'package:mb_dental_app/screens/appointments/appointments_screen.dart';
 import 'package:mb_dental_app/screens/appointments/book_appointment_screen.dart';
 import 'package:mb_dental_app/screens/chat/chat_screen.dart';
+import 'package:mb_dental_app/screens/dashboard/notification_actions.dart';
 import 'package:mb_dental_app/screens/dashboard/notifications_screen.dart';
+import 'package:mb_dental_app/widgets/notification_row.dart';
 import 'package:mb_dental_app/screens/wallet/transaction_history_screen.dart';
-import 'package:mb_dental_app/widgets/app_dialog.dart';
 import 'package:mb_dental_app/screens/appointments/appointment_details_screen.dart';
 import 'package:mb_dental_app/widgets/appointment_detail_sheet.dart';
 import 'package:mb_dental_app/widgets/transaction_detail_sheet.dart';
@@ -43,131 +42,6 @@ String _formatFullDate(DateTime date) {
 
 /// Three-letter month for the date badge, e.g. "SEP".
 String _shortMonth(DateTime date) => _monthNames[date.month - 1].substring(0, 3);
-
-/// The website's Font Awesome (solid) icon for each notice type. The six keys
-/// shared with the website use its own icons; app-only notices, which the
-/// website does not have, and `notifications` rows get the nearest equivalent.
-FaIconData notificationIconFor(NotificationItem n) {
-  final id = n.id;
-  if (id.startsWith('booked|')) return FontAwesomeIcons.calendarPlus;
-  if (id.startsWith('confirmed|')) return FontAwesomeIcons.calendarCheck;
-  if (id.startsWith('awaiting|')) return FontAwesomeIcons.hourglassHalf;
-  if (id.startsWith('reminder|')) return FontAwesomeIcons.clock;
-  if (id.startsWith('rcpt|')) return FontAwesomeIcons.receipt;
-  if (id.startsWith('plan|')) return FontAwesomeIcons.listCheck;
-  if (id.startsWith('local:cancelled:')) return FontAwesomeIcons.calendarXmark;
-  if (id.startsWith('local:completed:')) return FontAwesomeIcons.circleCheck;
-  if (id.startsWith('local:due:')) return FontAwesomeIcons.fileInvoiceDollar;
-  if (id.startsWith('local:topup:') || id.startsWith('local:walletpay:')) {
-    return FontAwesomeIcons.wallet;
-  }
-  return FontAwesomeIcons.bell;
-}
-
-String formatNotificationDate(DateTime date) => '${_monthNames[date.month - 1].substring(0, 1)}${_monthNames[date.month - 1].substring(1).toLowerCase()} ${date.day}, ${date.year}';
-
-String formatNotificationTime(DateTime date) {
-  final hour = date.hour % 12 == 0 ? 12 : date.hour % 12;
-  final minute = date.minute.toString().padLeft(2, '0');
-  final period = date.hour >= 12 ? 'PM' : 'AM';
-  return '$hour:$minute $period';
-}
-
-/// True when a notification has somewhere concrete to take the user —
-/// decides where tapping its detail dialog lands.
-bool notificationHasTarget(NotificationItem n) =>
-    n.relatedAppointmentId != null || n.relatedTransactionId != null;
-
-/// Navigates to whatever this notification is about: an appointment (pushes
-/// Appointments and opens that appointment's detail dialog) or a wallet
-/// transaction (pushes Transaction History and opens that transaction's
-/// detail dialog). Uses `context` after a short delay so the target screen's
-/// push transition finishes before the follow-up dialog appears on top of it.
-void _navigateForNotification(BuildContext context, NotificationItem n) {
-  final repository = PatientRepository();
-  if (n.relatedAppointmentId != null) {
-    Appointment? appointment;
-    for (final a in repository.appointments) {
-      if (a.id == n.relatedAppointmentId) appointment = a;
-    }
-    // Appointments lists every booking on one page, so there is no tab to
-    // pick here — push the list and open this appointment's detail on top.
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => const AppointmentsScreen()),
-    );
-    if (appointment != null) {
-      final found = appointment;
-      Future.delayed(const Duration(milliseconds: 300), () {
-        if (context.mounted) openAppointmentDetails(context, found);
-      });
-    }
-  } else if (n.relatedTransactionId != null) {
-    WalletTransaction? txn;
-    for (final t in repository.transactions) {
-      if (t.id == n.relatedTransactionId) txn = t;
-    }
-    Navigator.push(context, MaterialPageRoute(builder: (_) => const TransactionHistoryScreen()));
-    if (txn != null) {
-      final found = txn;
-      Future.delayed(const Duration(milliseconds: 300), () {
-        if (context.mounted) showTransactionDetailSheet(context, found);
-      });
-    }
-  }
-}
-
-/// Compact floating dialog with a notification's full detail — used from the
-/// home dropdown, the "See All" list, and the standalone Notifications screen.
-/// The whole dialog is always tappable: it opens whatever the notification is
-/// about (an appointment or a wallet transaction) and otherwise just dismisses,
-/// so there is no need for a "tap to view" hint.
-void showNotificationDetailDialog(BuildContext context, NotificationItem n) {
-  final hasTarget = notificationHasTarget(n);
-  showAppDialog(
-    context,
-    maxHeightFactor: 0.6,
-    builder: (dialogContext) => InkWell(
-      borderRadius: BorderRadius.circular(24),
-      onTap: () {
-        Navigator.pop(dialogContext);
-        if (hasTarget) _navigateForNotification(context, n);
-      },
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-
-                Expanded(
-                  child: Text(
-                    n.title,
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
-                  ),
-                ),
-                const AppDialogCloseButton(),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Text(n.body, style: TextStyle(fontSize: 15, color: AppColors.textPrimary, height: 1.45)),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Text(
-                  '${formatNotificationDate(n.createdAt)} • ${formatNotificationTime(n.createdAt)}',
-                  style: TextStyle(fontSize: 12, color: AppColors.textSecondary, fontWeight: FontWeight.w600),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    ),
-  );
-}
 
 class HomeTab extends StatefulWidget {
   final ValueChanged<int> onNavigateToTab;
@@ -246,8 +120,7 @@ class _HomeTabState extends State<HomeTab> {
               },
               onNotificationTap: (n) {
                 _closeNotifications();
-                _repository.markNotificationRead(n.id);
-                showNotificationDetailDialog(context, n);
+                openNotification(context, n);
               },
             ),
           ),
@@ -608,17 +481,6 @@ class _HomeTabState extends State<HomeTab> {
                         style: const TextStyle(
                             fontWeight: FontWeight.bold, fontSize: 22, color: Colors.white),
                       ),
-                      // The start time alone does not say when the patient
-                      // is free again, so the block's end and length ride with
-                      // it. Skipped only for a legacy slot label that cannot
-                      // be parsed back to a start minute.
-                      if (appointment.endMinuteOfDay != null) ...[
-                        const SizedBox(height: 4),
-                        _buildDetailLine(
-                          'Until ${formatMinuteOfDay(appointment.endMinuteOfDay!)}'
-                          ' · ${formatDuration(appointment.durationMinutes)}',
-                        ),
-                      ],
                       const SizedBox(height: 12),
                       // The website prints the doctor's `full_name`, and
                       // "your doctor" when there is none.
@@ -627,10 +489,14 @@ class _HomeTabState extends State<HomeTab> {
                                 appointment.doctorName.trim() == kDoctorAssignedUnnamed
                             ? 'your doctor'
                             : appointment.doctorName.trim(),
+                        icon: const DoctorIcon(size: 16, color: Colors.white),
                       ),
 
                       const SizedBox(height: 6),
-                      _buildDetailLine(appointment.serviceName.trim().isEmpty ? 'Appointment' : appointment.serviceName),
+                      _buildDetailLine(
+                        appointment.serviceName.trim().isEmpty ? 'Appointment' : appointment.serviceName,
+                        icon: const Icon(TablerIcons.dental, size: 16, color: Colors.white),
+                      ),
                     ],
                   ),
                 ),
@@ -687,11 +553,20 @@ class _HomeTabState extends State<HomeTab> {
     );
   }
 
-  Widget _buildDetailLine(String text) {
-    return Text(
-      text,
-      overflow: TextOverflow.ellipsis,
-      style: const TextStyle(fontSize: 13, color: Colors.white),
+  Widget _buildDetailLine(String text, {required Widget icon}) {
+    return Row(
+      children: [
+        SizedBox(width: 16, child: Center(child: icon)),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            text,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 13, color: Colors.white),
+          ),
+        ),
+      ],
     );
   }
 
@@ -866,8 +741,8 @@ class _NotificationDropdown extends StatelessWidget {
       // the title, timestamp and everything around them live one tap away,
       // in the detail dialog and on the "See All" page.
       child: Container(
-        width: 300,
-        constraints: const BoxConstraints(maxHeight: 380),
+        width: 330,
+        constraints: const BoxConstraints(maxHeight: 440),
         decoration: BoxDecoration(
           color: AppColors.surface,
           borderRadius: BorderRadius.circular(18),
@@ -923,7 +798,14 @@ class _NotificationDropdown extends StatelessWidget {
                   ),
                 ),
                 Divider(height: 1, color: AppColors.border),
-                if (notifications.isEmpty)
+                if (!repository.notificationPrefs.enabled)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 26, horizontal: 16),
+                    child: Text('Notifications are turned off.\nTurn them back on in Settings.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+                  )
+                else if (notifications.isEmpty)
                   Padding(
                     padding: const EdgeInsets.symmetric(vertical: 26),
                     child: Text('No notifications yet.',
@@ -938,41 +820,10 @@ class _NotificationDropdown extends StatelessWidget {
                       separatorBuilder: (_, __) => Divider(height: 1, color: AppColors.border),
                       itemBuilder: (context, index) {
                         final n = notifications[index];
-                        return InkWell(
+                        return NotificationRow(
+                          notification: n,
+                          compact: true,
                           onTap: () => onNotificationTap(n),
-                          child: Container(
-                            color: n.isRead ? Colors.transparent : AppColors.primary.withOpacity(0.05),
-                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 2, right: 10),
-                                  child: FaIcon(notificationIconFor(n), size: 15, color: AppColors.primary),
-                                ),
-                                Expanded(
-                                  child: Text(
-                                    n.body,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      fontSize: 13.5,
-                                      height: 1.35,
-                                      fontWeight: n.isRead ? FontWeight.w400 : FontWeight.w600,
-                                      color: n.isRead ? AppColors.textSecondary : AppColors.textPrimary,
-                                    ),
-                                  ),
-                                ),
-                                if (!n.isRead)
-                                  Container(
-                                    margin: const EdgeInsets.only(top: 9, left: 7),
-                                    width: 6,
-                                    height: 6,
-                                    decoration: BoxDecoration(color: AppColors.primary, shape: BoxShape.circle),
-                                  ),
-                              ],
-                            ),
-                          ),
                         );
                       },
                     ),

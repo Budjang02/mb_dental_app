@@ -8,6 +8,7 @@ import 'package:mb_dental_app/models/appointment.dart';
 import 'package:mb_dental_app/models/treatment.dart';
 import 'package:mb_dental_app/models/payment.dart';
 import 'package:mb_dental_app/models/notification.dart';
+import 'package:mb_dental_app/models/treatment_note.dart';
 import 'package:mb_dental_app/models/patient_document.dart';
 import 'package:mb_dental_app/models/patient_message.dart';
 import 'package:mb_dental_app/models/wallet_transaction.dart';
@@ -74,24 +75,36 @@ class PatientRepository extends ChangeNotifier {
   List<WalletTransaction> _transactions = const [];
   List<PatientDocument> _documents = const [];
   List<Map<String, String>> _toothRecords = const [];
-  List<Map<String, String>> _treatmentNotes = const [];
+  List<TreatmentNote> _treatmentNotes = const [];
+
+  /// Whether the treatment notes were read, apart from the chart: a failed
+  /// read shows an error with Retry, never an empty history.
+  SectionStatus _treatmentNotesStatus = SectionStatus.idle;
   List<PatientMessage> _messages = const [];
   bool _isApprovedForBooking = true;
 
-  /// Rows from the `notifications` table, addressed to this account.
-  List<NotificationItem> _tableNotifications = const [];
+  /// Addressed `notifications` rows, receipts and the duplicate check — what
+  /// the bell needs besides the record.
+  NotificationSources _notificationSources = const NotificationSources();
 
-  /// What this account has read or dismissed in the derived feed.
+  /// What this account has read or dismissed (`notification_state`).
   Map<String, NotificationState> _notificationState = const {};
 
-  /// Everything the bell shows: [_tableNotifications] plus the notices built
-  /// from the record by [NotificationFeed]. Rebuilt by [_rebuildNotifications].
+  /// Settings → Notifications, shared with the website.
+  NotificationPrefs _notificationPrefs = const NotificationPrefs();
+
+  /// Everything the bell shows, in the website's order, dismissed notices and
+  /// switched-off categories already left out. Rebuilt by
+  /// [_rebuildNotifications].
   List<NotificationItem> _notifications = const [];
 
   /// Signed preview links, keyed by document id. Fetched in one batch after a
   /// load so the file list can show thumbnails without a request per row.
   Map<String, String> _documentUrls = const {};
   double _walletBalance = 0;
+
+  /// Bills the clinic sent to be paid from this account, still pending.
+  List<VisitPaymentRequest> _visitRequests = const [];
 
   bool _isLoading = false;
   String? _loadError;
@@ -207,6 +220,7 @@ class PatientRepository extends ChangeNotifier {
       final results = await Future.wait([
         PatientApi.loadAll(),
         if (userId != null) PatientApi.fetchNotificationState(userId),
+        if (userId != null) PatientApi.fetchNotificationPrefs(userId),
       ]);
       final snapshot = results[0] as PatientSnapshot;
 
@@ -216,15 +230,21 @@ class PatientRepository extends ChangeNotifier {
       _treatmentPlan = snapshot.treatmentPlan;
       _treatmentPlans = snapshot.treatmentPlans;
       _billing = snapshot.billing;
-      _tableNotifications = snapshot.notifications;
+      _notificationSources = snapshot.notifications;
       _notificationState =
           results.length > 1 ? results[1] as Map<String, NotificationState> : const {};
+      _notificationPrefs =
+          results.length > 2 ? results[2] as NotificationPrefs : const NotificationPrefs();
       _transactions = snapshot.transactions;
       _documents = snapshot.documents;
       _toothRecords = snapshot.toothRecords;
-      _treatmentNotes = snapshot.treatmentNotes;
+      _treatmentNotes = snapshot.treatmentNotes ?? const [];
+      _treatmentNotesStatus = snapshot.treatmentNotes == null
+          ? SectionStatus.failed(LoadFailure.server, 'Unable to load treatment notes.')
+          : SectionStatus.ready;
       _messages = snapshot.messages;
       _walletBalance = snapshot.walletBalance;
+      _visitRequests = snapshot.visitRequests;
       _isWalletBalanceKnown = snapshot.isWalletBalanceKnown;
       _isApprovedForBooking = snapshot.isApprovedForBooking;
 
@@ -296,21 +316,19 @@ class PatientRepository extends ChangeNotifier {
   /// spinner and refuse further presses.
   bool isRetrying(SyncSection section) => _sectionRetries.containsKey(section);
 
-  /// Recomposes the bell from the table rows and the record, then raises a
-  /// banner for anything new since the last composition.
+  /// Recomposes the bell from the addressed rows and the record, then raises
+  /// a banner for anything new since the last composition.
   void _rebuildNotifications({required bool isFirstLoad}) {
-    final feed = NotificationFeed.build(
+    _notifications = NotificationFeed.build(
+      addressed: _notificationSources.addressed,
+      covered: _notificationSources.covered,
       appointments: _appointments,
-      billing: _billing,
-      transactions: _transactions,
+      receipts: _notificationSources.receipts,
       plans: _treatmentPlans,
       state: _notificationState,
+      prefs: _notificationPrefs,
     );
-    for (final notice in feed) {
-      PatientApi.notificationChannels[notice.item.id] = notice.channel;
-    }
-    _notifications = [..._tableNotifications, for (final notice in feed) notice.item];
-    _announceNew(_notifications, isFirstLoad: isFirstLoad);
+    if (_notificationPrefs.enabled) _announceNew(_notifications, isFirstLoad: isFirstLoad);
   }
 
   /// Raises a banner for alerts that have arrived since the last read.
@@ -323,7 +341,7 @@ class PatientRepository extends ChangeNotifier {
       if (isFirstLoad || item.isRead) continue;
       PushNotificationService().deliver(
         item,
-        channel: PatientApi.notificationChannels[item.id] ?? PushChannel.statusUpdate,
+        channel: NotificationFeed.channelOf(item),
       );
     }
   }
@@ -334,18 +352,21 @@ class PatientRepository extends ChangeNotifier {
 
   Future<void> _refreshNotifications({bool reportFailure = false}) async {
     final userId = SupabaseService.currentUserId;
-    if (userId == null || _patient == null) return;
+    final patientId = _patient?.id;
+    if (userId == null || patientId == null) return;
     try {
       final results = await runWithRetry(
         () => Future.wait([
-          PatientApi.fetchNotifications(userId),
+          PatientApi.fetchNotificationSources(userId, patientId),
           PatientApi.fetchNotificationState(userId),
+          PatientApi.fetchNotificationPrefs(userId),
         ]),
         context: 'PatientRepository.refreshNotifications',
       );
-      if (_patient == null) return;
-      _tableNotifications = results[0] as List<NotificationItem>;
+      if (_patient?.id != patientId) return;
+      _notificationSources = results[0] as NotificationSources;
       _notificationState = results[1] as Map<String, NotificationState>;
+      _notificationPrefs = results[2] as NotificationPrefs;
       _setSection(SyncSection.notifications, SectionStatus.ready);
       _rebuildNotifications(isFirstLoad: false);
       notifyListeners();
@@ -403,21 +424,19 @@ class PatientRepository extends ChangeNotifier {
               if (!stillCurrent()) return false;
               _billing = billing;
             case SyncSection.wallet:
-              final transactions = await PatientApi.fetchTransactions(patientId);
-              final balance =
-                  await PatientApi.walletBalanceFor(userId: userId, transactions: transactions);
+              final wallet = await PatientApi.fetchWallet(patientId);
               if (!stillCurrent()) return false;
-              _transactions = transactions;
-              _walletBalance = balance;
-              _isWalletBalanceKnown = true;
+              _transactions = wallet.transactions;
+              _visitRequests = wallet.visitRequests;
+              // Only a balance `wallet_balance()` answered with is shown.
+              _walletBalance = wallet.balance ?? _walletBalance;
+              _isWalletBalanceKnown = wallet.balance != null;
             case SyncSection.chart:
-              final results = await Future.wait([
-                PatientApi.fetchToothRecords(patientId),
-                PatientApi.fetchTreatmentNotes(patientId),
-              ]);
+              final records = await PatientApi.fetchToothRecords(patientId);
               if (!stillCurrent()) return false;
-              _toothRecords = results[0];
-              _treatmentNotes = results[1];
+              _toothRecords = records;
+              // The notes refresh on their own, keeping their own status.
+              unawaited(refreshTreatmentNotes());
             case SyncSection.treatmentPlan:
               final plan = await PatientApi.fetchTreatmentPlan(patientId);
               if (!stillCurrent()) return false;
@@ -473,16 +492,19 @@ class PatientRepository extends ChangeNotifier {
     _treatmentPlan = const [];
     _treatmentPlans = const [];
     _billing = const [];
-    _tableNotifications = const [];
+    _notificationSources = const NotificationSources();
     _notificationState = const {};
+    _notificationPrefs = const NotificationPrefs();
     _notifications = const [];
     _transactions = const [];
     _documents = const [];
     _toothRecords = const [];
     _treatmentNotes = const [];
+    _treatmentNotesStatus = SectionStatus.idle;
     _messages = const [];
     _documentUrls = const {};
     _walletBalance = 0;
+    _visitRequests = const [];
     _isApprovedForBooking = true;
     _announcedNotificationIds.clear();
     _loadError = null;
@@ -503,8 +525,13 @@ class PatientRepository extends ChangeNotifier {
     List<WalletTransaction> transactions = const [],
     List<NotificationItem> notifications = const [],
     List<PatientMessage> messages = const [],
+    List<TreatmentNote> treatmentNotes = const [],
     Map<String, NotificationState> notificationState = const {},
+    NotificationPrefs notificationPrefs = const NotificationPrefs(),
     double walletBalance = 0,
+    bool isWalletBalanceKnown = true,
+    List<Payment> billing = const [],
+    List<VisitPaymentRequest> visitRequests = const [],
     bool isApprovedForBooking = true,
   }) {
     _patient = patient;
@@ -512,22 +539,25 @@ class PatientRepository extends ChangeNotifier {
     _treatments = const [];
     _treatmentPlan = const [];
     _treatmentPlans = const [];
-    _billing = const [];
-    _tableNotifications = List.of(notifications);
+    _billing = List.of(billing);
+    _notificationSources = NotificationSources(addressed: List.of(notifications));
     _notificationState = Map.of(notificationState);
+    _notificationPrefs = notificationPrefs;
     _transactions = List.of(transactions);
     _documents = const [];
     _toothRecords = const [];
-    _treatmentNotes = const [];
+    _treatmentNotes = List.of(treatmentNotes);
+    _treatmentNotesStatus = SectionStatus.ready;
     _messages = List.of(messages);
     _documentUrls = const {};
     _walletBalance = walletBalance;
+    _visitRequests = List.of(visitRequests);
     _isApprovedForBooking = isApprovedForBooking;
     _isLoading = false;
     _loadError = null;
     _identity = SectionStatus.ready;
     _setAllSections(SectionStatus.ready);
-    _isWalletBalanceKnown = true;
+    _isWalletBalanceKnown = isWalletBalanceKnown;
     _rebuildNotifications(isFirstLoad: true);
     notifyListeners();
   }
@@ -585,23 +615,27 @@ class PatientRepository extends ChangeNotifier {
 
   List<Payment> get billing => List.unmodifiable(_billing);
 
-  /// Newest first. `List.sort` is not stable, so insertion order breaks ties
-  /// explicitly — two alerts raised in the same millisecond (a payment and the
-  /// booking it paid for) must not swap places between reads.
-  List<NotificationItem> get notifications {
-    final indexed = List<(int, NotificationItem)>.generate(
-      _notifications.length,
-      (i) => (i, _notifications[i]),
-    )..sort((a, b) {
-        final byTime = b.$2.createdAt.compareTo(a.$2.createdAt);
-        return byTime != 0 ? byTime : a.$1.compareTo(b.$1);
-      });
-    return List.unmodifiable(indexed.map((e) => e.$2));
-  }
+  /// The bell, in the website's order: addressed notices newest first, then
+  /// the ones derived from the record.
+  List<NotificationItem> get notifications => List.unmodifiable(_notifications);
 
-  int get unreadNotificationCount => _notifications.where((n) => !n.isRead).length;
+  /// Unread notices on the bell. Zero while notifications are switched off,
+  /// which is also when the badge is hidden — the website's rule.
+  int get unreadNotificationCount =>
+      _notificationPrefs.enabled ? _notifications.where((n) => !n.isRead).length : 0;
+
+  /// The shared Settings → Notifications switches.
+  NotificationPrefs get notificationPrefs => _notificationPrefs;
 
   double get walletBalance => _walletBalance;
+
+  /// The clinic's pending payment requests, newest first.
+  List<VisitPaymentRequest> get visitRequests => List.unmodifiable(_visitRequests);
+
+  /// Charges Pay Bill can settle: unpaid, not voided, oldest first — the
+  /// website's `_loadUnpaidCharges`.
+  List<Payment> get unpaidCharges =>
+      _billing.where((b) => b.isOwed).toList()..sort((a, b) => a.billedOn.compareTo(b.billedOn));
 
   List<WalletTransaction> get transactions {
     final sorted = List<WalletTransaction>.from(_transactions)
@@ -625,8 +659,32 @@ class PatientRepository extends ChangeNotifier {
   /// what the Treatment Notes page lists. Falls back to the chart entries for a
   /// patient with no history written yet, so the page is not blank beside a
   /// chart that has marks on it.
-  List<Map<String, String>> get treatmentNotes =>
-      List.unmodifiable(_treatmentNotes.isNotEmpty ? _treatmentNotes : _toothRecords);
+  List<TreatmentNote> get treatmentNotes => List.unmodifiable(_treatmentNotes);
+
+  SectionStatus get treatmentNotesStatus => _treatmentNotesStatus;
+
+  /// Re-reads the treatment notes by themselves: on opening Treatment Notes,
+  /// pull-to-refresh, Retry, a realtime change, resume or reconnect. Rows are
+  /// replaced as a whole list keyed by id, so an edited note updates in place
+  /// and an archived one leaves.
+  Future<void> refreshTreatmentNotes({bool showLoading = false}) async {
+    final patientId = _patient?.id;
+    if (patientId == null) return;
+    if (showLoading || _treatmentNotesStatus.hasFailed) {
+      _treatmentNotesStatus = SectionStatus.loading;
+      notifyListeners();
+    }
+    try {
+      final notes = await PatientApi.fetchTreatmentNotes(patientId);
+      if (_patient?.id != patientId) return;
+      _treatmentNotes = notes;
+      _treatmentNotesStatus = SectionStatus.ready;
+    } catch (e) {
+      if (_patient?.id != patientId) return;
+      _treatmentNotesStatus = classifyFailure(e, context: 'PatientRepository.refreshTreatmentNotes');
+    }
+    notifyListeners();
+  }
 
   /// The support conversation with the clinic, oldest first and newest at the
   /// bottom — the order a chat is read in, whatever order the rows arrived in.
@@ -934,82 +992,40 @@ class PatientRepository extends ChangeNotifier {
     }
   }
 
-  /// Marks everything on the bell read, each kind where it keeps its state:
-  /// shared notices through `notif_mark_read`, app-only notices on the device,
-  /// and `notifications` rows on that table. Messages are not on the bell.
+  /// Marks everything on the bell read — only what the bell shows, as the
+  /// website's "Mark all as read" does.
   Future<void> markAllNotificationsRead() async {
-    if (unreadNotificationCount == 0) return;
+    final keys = [for (final n in _notifications) if (!n.isRead) n.id];
+    await _markRead(keys);
+  }
+
+  /// Marks one notice read on this account, so the website and the patient's
+  /// other devices see the same. Shown read at once; the write follows.
+  Future<void> markNotificationRead(String id) => _markRead([id]);
+
+  Future<void> _markRead(List<String> keys) async {
     final userId = SupabaseService.currentUserId;
-    if (userId == null) return;
-
-    final unread = [for (final n in _notifications) if (!n.isRead) n.id];
-    final shared = unread.where(NotificationFeed.isShared).toList();
-    final local = unread.where(NotificationFeed.isLocal).toList();
-    final hasTableRows = unread.any((id) => !NotificationFeed.isDerived(id));
-
-    if (hasTableRows) await PatientApi.markAllNotificationsRead(userId);
-
-    final readAt = DateTime.now().toUtc();
-    _tableNotifications = _tableNotifications
-        .map((n) => n.isRead ? n : n.copyWith(isRead: true, readAt: readAt))
-        .toList();
+    if (userId == null || keys.isEmpty) return;
+    final now = DateTime.now().toUtc();
     _notificationState = {
       ..._notificationState,
-      for (final key in [...shared, ...local])
+      for (final key in keys)
         key: NotificationState(
-          readAt: _notificationState[key]?.readAt ?? readAt,
+          // First read time wins, the rule `notif_mark_read` applies too.
+          readAt: _notificationState[key]?.readAt ?? now,
           dismissedAt: _notificationState[key]?.dismissedAt,
         ),
     };
     _rebuildNotifications(isFirstLoad: false);
     notifyListeners();
-
-    await Future.wait([
-      PatientApi.markSharedNoticesRead(userId, shared),
-      PatientApi.markLocalNoticesRead(userId, local),
-    ]);
+    await PatientApi.markNoticesRead(userId, keys);
   }
 
-  /// Marks one notice read where its kind keeps its read state, so the web
-  /// platform and the patient's other devices see the same thing.
-  Future<void> markNotificationRead(String id) async {
-    final userId = SupabaseService.currentUserId;
-    if (userId == null) return;
-
-    if (NotificationFeed.isShared(id)) {
-      _setNoticeState(id, read: true);
-      await PatientApi.markSharedNoticesRead(userId, [id]);
-      return;
-    }
-    if (NotificationFeed.isLocal(id)) {
-      _setNoticeState(id, read: true);
-      await PatientApi.markLocalNoticesRead(userId, [id]);
-      return;
-    }
-    await PatientApi.markNotificationRead(id, userId: userId);
-    applyNotificationReadState(id, isRead: true, readAt: DateTime.now().toUtc());
-  }
-
-  Future<void> markNotificationUnread(String id) async {
-    final userId = SupabaseService.currentUserId;
-    if (userId == null) return;
-    if (NotificationFeed.isDerived(id)) {
-      // The website's RPCs offer no unread write, so this only changes the
-      // device copy.
-      _setNoticeState(id, read: false);
-      await PatientApi.forgetLocalRead(userId, id);
-      return;
-    }
-    await PatientApi.markNotificationUnread(id, userId: userId);
-    applyNotificationReadState(id, isRead: false, readAt: null);
-  }
-
-  /// Removes a notice from the bell: through `notif_dismiss` for a shared
-  /// notice (the website hides it too), on the device for anything else.
-  /// A `notifications` row has no dismissed state.
+  /// Removes a notice from the bell here and on the website, through
+  /// `notif_dismiss` (which also marks it read).
   Future<void> dismissNotification(String id) async {
     final userId = SupabaseService.currentUserId;
-    if (userId == null || !NotificationFeed.isDerived(id)) return;
+    if (userId == null) return;
     final now = DateTime.now().toUtc();
     _notificationState = {
       ..._notificationState,
@@ -1017,11 +1033,18 @@ class PatientRepository extends ChangeNotifier {
     };
     _rebuildNotifications(isFirstLoad: false);
     notifyListeners();
-    if (NotificationFeed.isShared(id)) {
-      await PatientApi.dismissSharedNotices(userId, [id]);
-    } else {
-      await PatientApi.dismissLocalNotices(userId, [id]);
-    }
+    await PatientApi.dismissNotices(userId, [id]);
+  }
+
+  /// Changes the shared Settings → Notifications switches. Applied at once;
+  /// saved on the account so the website's bell counts the same.
+  Future<void> setNotificationPrefs(NotificationPrefs prefs) async {
+    final userId = SupabaseService.currentUserId;
+    if (userId == null || prefs == _notificationPrefs) return;
+    _notificationPrefs = prefs;
+    _rebuildNotifications(isFirstLoad: false);
+    notifyListeners();
+    await PatientApi.saveNotificationPrefs(userId, prefs);
   }
 
   /// Marks one clinic message read on its `patient_messages` row.
@@ -1037,50 +1060,6 @@ class PatientRepository extends ChangeNotifier {
     } catch (e) {
       debugPrint('Could not mark message read: $e');
     }
-  }
-
-  void _setNoticeState(String key, {required bool read}) {
-    _notificationState = {
-      ..._notificationState,
-      key: NotificationState(
-        // First read time wins, the same rule `notif_mark_read` applies.
-        readAt: read ? (_notificationState[key]?.readAt ?? DateTime.now().toUtc()) : null,
-        dismissedAt: _notificationState[key]?.dismissedAt,
-      ),
-    };
-    _rebuildNotifications(isFirstLoad: false);
-    notifyListeners();
-  }
-  /// Applies a read-state change that came from the database rather than from a
-  /// tap here — a realtime `UPDATE` raised by the web platform, or this device's
-  /// own write echoing back. No network call: the row is already the truth.
-  ///
-  /// Silently ignores an id this session does not hold, so an alert created
-  /// elsewhere does not appear half-built; [refreshNotifications] brings that in
-  /// whole instead.
-  void applyNotificationReadState(String id, {required bool isRead, DateTime? readAt}) {
-    var changed = false;
-    _tableNotifications = _tableNotifications.map((n) {
-      if (n.id != id || (n.isRead == isRead && n.readAt == readAt)) return n;
-      changed = true;
-      return n.copyWith(isRead: isRead, readAt: readAt);
-    }).toList();
-    if (!changed) return;
-    _rebuildNotifications(isFirstLoad: false);
-    notifyListeners();
-  }
-
-  /// Pulls one alert in by id, for a realtime `INSERT` — cheaper than refetching
-  /// the whole list, and it keeps the banner behaviour of [refreshNotifications].
-  Future<void> applyRemoteNotification(String id) async {
-    final userId = SupabaseService.currentUserId;
-    if (userId == null || _patient == null) return;
-    if (_tableNotifications.any((n) => n.id == id)) return;
-    final item = await PatientApi.fetchNotification(id: id, userId: userId);
-    if (item == null) return;
-    _tableNotifications = [item, ..._tableNotifications];
-    _rebuildNotifications(isFirstLoad: false);
-    notifyListeners();
   }
 
   /// Re-reads everything the clinic may have changed while the app was in the

@@ -1,20 +1,28 @@
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../app/theme.dart';
 import '../../app/theme_controller.dart';
+import '../../services/auth_service.dart';
 import '../../widgets/app_overlays.dart';
 import '../../widgets/app_toast.dart';
 
-/// Six-digit code entry, used to confirm a patient owns the number they signed
-/// up with.
+/// Six-digit code entry, used to confirm a patient owns the email address they
+/// signed up with.
+///
+/// The caller has already had Supabase email the code (sign-up, or a resend
+/// for an unconfirmed account). This screen checks it with the same
+/// `verifyOtp` type 'signup' call the website uses, which confirms the account
+/// and opens its session.
 ///
 /// Pops `true` once the code is accepted, so the caller decides what verifying
 /// unlocks rather than this screen hard-coding a destination.
 class OtpVerificationScreen extends StatefulWidget {
   /// Where the code was sent — shown back to the patient so a typo in the
-  /// previous screen is obvious before they wait for an SMS that cannot come.
+  /// previous screen is obvious before they wait for an email that cannot come.
   final String destination;
 
   const OtpVerificationScreen({super.key, required this.destination});
@@ -26,76 +34,110 @@ class OtpVerificationScreen extends StatefulWidget {
 class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
   static const int _length = 6;
 
-  final List<TextEditingController> _controllers =
-      List.generate(_length, (_) => TextEditingController());
-  final List<FocusNode> _focusNodes = List.generate(_length, (_) => FocusNode());
+  /// Matches the website's resend cooldown. Supabase enforces its own limit
+  /// on top, and that error is shown if it is hit anyway.
+  static const int _resendCooldownSeconds = 60;
+
+  // Sizes taken from assets/reference_ui/otp.webp, scaled to a 375pt screen.
+  static const double _gutter = 16;
+  static const double _boxGap = 8;
+  static const double _maxBoxWidth = 52;
+
+  /// One real field behind the six boxes. The boxes only draw its value, so
+  /// typing, backspace, paste and one-time-code autofill all behave like a
+  /// single input instead of six fields passing focus between them.
+  final TextEditingController _codeController = TextEditingController();
+  final FocusNode _codeFocus = FocusNode();
+
+  Timer? _cooldownTimer;
+  int _cooldown = 0;
+  bool _isResending = false;
+  bool _isVerifying = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _codeController.addListener(() => setState(() {}));
+    _codeFocus.addListener(() => setState(() {}));
+    // A code was sent just before this screen opened.
+    _startCooldown();
+  }
 
   @override
   void dispose() {
-    for (final controller in _controllers) {
-      controller.dispose();
-    }
-    for (final node in _focusNodes) {
-      node.dispose();
-    }
+    _cooldownTimer?.cancel();
+    _codeController.dispose();
+    _codeFocus.dispose();
     super.dispose();
   }
 
-  String get _code => _controllers.map((c) => c.text).join();
+  String get _code => _codeController.text;
 
   bool get _isComplete => _code.length == _length;
 
-  /// Advances on entry and retreats on delete, so the six boxes behave like
-  /// one field even though each holds a single digit.
-  void _onDigitChanged(int index, String value) {
-    if (value.length > 1) {
-      // A paste or an autofilled SMS code: spread it across the boxes.
-      _distribute(value);
-      return;
-    }
-    if (value.isNotEmpty && index < _length - 1) {
-      _focusNodes[index + 1].requestFocus();
-    } else if (value.isEmpty && index > 0) {
-      _focusNodes[index - 1].requestFocus();
-    }
-    setState(() {});
-  }
-
-  void _distribute(String raw) {
-    final digits = raw.replaceAll(RegExp(r'\D'), '');
-    for (var i = 0; i < _length; i++) {
-      _controllers[i].text = i < digits.length ? digits[i] : '';
-    }
-    final next = digits.length.clamp(0, _length - 1);
-    _focusNodes[next].requestFocus();
-    setState(() {});
-  }
-
   Future<void> _verify() async {
+    if (_isVerifying) return;
     if (!_isComplete) {
       showAppToast(context, 'Please enter all 6 digits of your code.', isError: true);
       return;
     }
 
     FocusScope.of(context).unfocus();
+    setState(() => _isVerifying = true);
     showBlockingLoader(context, 'Verifying code, please wait...');
 
-    // TODO: swap for the real check (POST /auth/verify-otp with _code) once
-    // the backend is ready, and only pop true on a 2xx response.
-    await Future.delayed(const Duration(milliseconds: 1400));
+    final result = await AuthService.verifySignupCode(
+      email: widget.destination,
+      code: _code,
+    );
     if (!mounted) return;
-
     hideBlockingLoader(context);
+    setState(() => _isVerifying = false);
+
+    if (!result.success) {
+      _clearCode();
+      showAppToast(context, result.message ?? 'Could not verify the code.', isError: true);
+      return;
+    }
     Navigator.pop(context, true);
   }
 
-  void _resend() {
-    for (final controller in _controllers) {
-      controller.clear();
+  Future<void> _resend() async {
+    if (_cooldown > 0 || _isResending) return;
+
+    setState(() => _isResending = true);
+    final result = await AuthService.resendSignupCode(widget.destination);
+    if (!mounted) return;
+    setState(() => _isResending = false);
+
+    if (!result.success) {
+      showAppToast(context, result.message ?? 'Could not send a new code.', isError: true);
+      return;
     }
-    _focusNodes.first.requestFocus();
-    setState(() {});
+    _clearCode();
+    _startCooldown();
     showAppToast(context, 'A new code is on its way to ${widget.destination}.');
+  }
+
+  void _clearCode() {
+    _codeController.clear();
+    _codeFocus.requestFocus();
+  }
+
+  /// Only ever one timer: a restart cancels the running one first, and
+  /// [dispose] cancels whatever is left.
+  void _startCooldown() {
+    _cooldownTimer?.cancel();
+    _cooldown = _resendCooldownSeconds;
+    _cooldownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      setState(() => _cooldown--);
+      if (_cooldown <= 0) timer.cancel();
+    });
+    if (mounted) setState(() {});
   }
 
   @override
@@ -111,147 +153,199 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
             onPressed: () => Navigator.pop(context, false),
           ),
         ),
+        // The content scrolls and the button stays pinned above the keyboard,
+        // so a short screen with the keyboard open never overflows.
         body: SafeArea(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Container(
-                  height: 72,
-                  width: 72,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: AppColors.primary.withOpacity(0.12),
-                  ),
-                  child: Icon(
-                    CupertinoIcons.device_phone_portrait,
-                    size: 32,
-                    color: AppColors.primary,
+          child: Column(
+            children: [
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(_gutter, 8, _gutter, 16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Enter 6-digit code',
+                        style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: -0.3,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Text.rich(
+                        TextSpan(
+                          text: 'We sent a verification code to\n',
+                          children: [
+                            TextSpan(
+                              text: widget.destination,
+                              style: TextStyle(color: AppColors.primary),
+                            ),
+                          ],
+                        ),
+                        style: TextStyle(
+                          fontSize: 14,
+                          height: 1.45,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                      const SizedBox(height: 32),
+                      _codeRow(),
+                      const SizedBox(height: 32),
+                      _resendRow(),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 24),
-                Text(
-                  'Verification Code',
-                  style: TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: -0.5,
-                    color: AppColors.textPrimary,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Enter the 6-digit code we sent to ${widget.destination}.',
-                  style: TextStyle(
-                    fontSize: 14,
-                    height: 1.45,
-                    color: AppColors.textSecondary,
-                  ),
-                ),
-                const SizedBox(height: 28),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    for (var i = 0; i < _length; i++)
-                      Flexible(child: _digitBox(i)),
-                  ],
-                ),
-                const SizedBox(height: 28),
-                SizedBox(
-                  height: 52,
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(_gutter, 8, _gutter, 16),
+                child: SizedBox(
+                  width: double.infinity,
+                  height: 50,
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primary,
+                      foregroundColor: Colors.white,
                       elevation: 0,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
+                      shape: const StadiumBorder(),
                     ),
-                    onPressed: _verify,
+                    onPressed: _isVerifying ? null : _verify,
                     child: const Text(
                       'Continue',
                       style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                     ),
                   ),
                 ),
-                const SizedBox(height: 16),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Flexible(
-                      child: Text(
-                        "Didn't receive code?",
-                        style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
-                      ),
-                    ),
-                    TextButton(
-                      onPressed: _resend,
-                      style: TextButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                        minimumSize: Size.zero,
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      ),
-                      child: Text(
-                        'Resend Code',
-                        style: TextStyle(
-                          color: AppColors.primary,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
     );
   }
 
-  Widget _digitBox(int index) {
-    final isFilled = _controllers[index].text.isNotEmpty;
-
-    return Padding(
-      padding: EdgeInsets.only(right: index == _length - 1 ? 0 : 8),
-      child: AspectRatio(
-        aspectRatio: 0.82,
-        child: TextField(
-          controller: _controllers[index],
-          focusNode: _focusNodes[index],
-          textAlign: TextAlign.center,
-          keyboardType: TextInputType.number,
-          // A box holds one digit, but paste and SMS autofill hand over all
-          // six at once, so the length cap lives in _onDigitChanged instead of
-          // an input formatter that would silently drop the rest.
-          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-            color: AppColors.textPrimary,
+  /// Six equal boxes filling the row, with no divider between the halves.
+  /// They grow up to the reference size and shrink together on narrow phones.
+  Widget _codeRow() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final fit = (constraints.maxWidth - _boxGap * (_length - 1)) / _length;
+        final width = fit.clamp(0.0, _maxBoxWidth);
+        final height = width * 1.08;
+        return SizedBox(
+          height: height,
+          child: Stack(
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  for (var i = 0; i < _length; i++)
+                    SizedBox(width: width, height: height, child: _digitBox(i)),
+                ],
+              ),
+              // The real input sits over the boxes, invisible, so a tap on any
+              // box opens the numeric keyboard and a long-press can paste.
+              Positioned.fill(child: _hiddenField()),
+            ],
           ),
-          decoration: InputDecoration(
-            counterText: '',
-            contentPadding: EdgeInsets.zero,
-            filled: true,
-            fillColor: AppColors.surface,
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(
-                color: isFilled ? AppColors.primary : AppColors.border,
-                width: isFilled ? 1.5 : 1,
+        );
+      },
+    );
+  }
+
+  Widget _hiddenField() {
+    return TextField(
+      controller: _codeController,
+      focusNode: _codeFocus,
+      autofocus: true,
+      keyboardType: TextInputType.number,
+      textInputAction: TextInputAction.done,
+      autofillHints: const [AutofillHints.oneTimeCode],
+      // digitsOnly first, so a pasted "123 456" or "Code: 123456" keeps its
+      // six digits before the length cap applies.
+      inputFormatters: [
+        FilteringTextInputFormatter.digitsOnly,
+        LengthLimitingTextInputFormatter(_length),
+      ],
+      showCursor: false,
+      enableSuggestions: false,
+      autocorrect: false,
+      style: const TextStyle(color: Colors.transparent, fontSize: 1),
+      cursorColor: Colors.transparent,
+      decoration: const InputDecoration(
+        border: InputBorder.none,
+        enabledBorder: InputBorder.none,
+        focusedBorder: InputBorder.none,
+        filled: false,
+        counterText: '',
+        contentPadding: EdgeInsets.zero,
+      ),
+      onSubmitted: (_) => _verify(),
+    );
+  }
+
+  Widget _digitBox(int index) {
+    final code = _code;
+    final digit = index < code.length ? code[index] : '';
+    // The box the next digit lands in; the last box stays marked once full.
+    final isActive = _codeFocus.hasFocus &&
+        (index == code.length || (code.length == _length && index == _length - 1));
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 120),
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: isActive ? AppColors.primary : AppColors.border,
+          width: isActive ? 1.5 : 1,
+        ),
+      ),
+      child: Text(
+        digit,
+        style: TextStyle(
+          fontSize: 20,
+          fontWeight: FontWeight.w500,
+          color: AppColors.textPrimary,
+        ),
+      ),
+    );
+  }
+
+  Widget _resendRow() {
+    final waiting = _cooldown > 0;
+    final disabled = waiting || _isResending;
+    return Center(
+      child: Wrap(
+        alignment: WrapAlignment.center,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          Text(
+            "Didn't receive any code? ",
+            style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+          ),
+          GestureDetector(
+            onTap: disabled ? null : _resend,
+            behavior: HitTestBehavior.opaque,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Text(
+                _isResending
+                    ? 'Sending...'
+                    : waiting
+                        ? 'Resend code (${_cooldown}s)'
+                        : 'Resend code',
+                style: TextStyle(
+                  color: disabled ? AppColors.textSecondary : AppColors.primary,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                ),
               ),
             ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: AppColors.primary, width: 2),
-            ),
           ),
-          onChanged: (value) => _onDigitChanged(index, value),
-        ),
+        ],
       ),
     );
   }

@@ -5,7 +5,6 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../repositories/clinic_api.dart';
 import '../repositories/patient_repository.dart';
-import 'network_service.dart';
 import 'supabase_service.dart';
 
 /// Keeps this device's copy of the patient's record in step with the database
@@ -34,6 +33,10 @@ class RealtimeSyncService {
     'invoices': SyncSection.billing,
     'payment_receipts': SyncSection.billing,
     'wallet_transactions': SyncSection.wallet,
+    // A checkout settling, and the clinic sending, paying or withdrawing a
+    // bill for the patient's account.
+    'wallet_topup_requests': SyncSection.wallet,
+    'visit_payment_requests': SyncSection.wallet,
     'dental_records': SyncSection.chart,
     'tooth_records': SyncSection.chart,
     'treatment_notes': SyncSection.chart,
@@ -47,6 +50,7 @@ class RealtimeSyncService {
   static const Map<String, SyncSection> _childTables = {
     'appointment_services': SyncSection.appointments,
     'invoice_items': SyncSection.billing,
+    'receipt_items': SyncSection.billing,
     'treatment_plan_items': SyncSection.treatmentPlan,
   };
 
@@ -118,7 +122,7 @@ class RealtimeSyncService {
         event: PostgresChangeEvent.insert,
         column: 'recipient_id',
         value: userId,
-        callback: _onNotificationInsert,
+        callback: (_) => _scheduleNotificationRefresh(),
       ),
       _subscribe(
         name: 'patient-notifications-update:$userId',
@@ -126,11 +130,21 @@ class RealtimeSyncService {
         event: PostgresChangeEvent.update,
         column: 'recipient_id',
         value: userId,
-        callback: _onNotificationUpdate,
+        callback: (_) => _scheduleNotificationRefresh(),
       ),
       _subscribe(
         name: 'patient-notification-state:$userId',
         table: 'notification_state',
+        event: PostgresChangeEvent.all,
+        column: 'user_id',
+        value: userId,
+        callback: (_) => _scheduleNotificationRefresh(),
+      ),
+      // Settings → Notifications switched on the website (or another phone):
+      // the categories change what the bell counts.
+      _subscribe(
+        name: 'patient-notification-prefs:$userId',
+        table: 'notification_prefs',
         event: PostgresChangeEvent.all,
         column: 'user_id',
         value: userId,
@@ -223,13 +237,20 @@ class RealtimeSyncService {
             ),
       callback: callback,
     );
+    var wasDown = false;
     channel.subscribe((status, error) {
-      if (error == null) return;
-      if (NetworkService.isConnectionFailure(error)) {
-        // The Realtime client reconnects on its own; invalidate the HTTP
-        // reachability cache so a manual section retry probes again first.
-        NetworkService.invalidateReachabilityCache();
+      if (status == RealtimeSubscribeStatus.subscribed) {
+        // Back after a drop: events sent while the socket was down are not
+        // replayed, so read the bell again rather than trust it.
+        if (wasDown && _userId != null) {
+          _scheduleNotificationRefresh();
+          _scheduleNotesRefresh();
+        }
+        wasDown = false;
+        return;
       }
+      wasDown = true;
+      if (error == null) return;
       // Never put a socket error, endpoint, or server response in the browser
       // console. The page's section state offers the patient a safe retry.
       debugPrint('Realtime subscription unavailable.');
@@ -273,6 +294,16 @@ class RealtimeSyncService {
     });
   }
 
+  Timer? _notesDebounce;
+
+  /// Every channel reports its own reconnect; one read covers them all.
+  void _scheduleNotesRefresh() {
+    _notesDebounce?.cancel();
+    _notesDebounce = Timer(const Duration(milliseconds: 600), () {
+      unawaited(PatientRepository().refreshTreatmentNotes());
+    });
+  }
+
   void _scheduleNotificationRefresh() {
     _notificationDebounce?.cancel();
     _notificationDebounce = Timer(const Duration(milliseconds: 400), () {
@@ -291,6 +322,8 @@ class RealtimeSyncService {
     _profileDebounce = null;
     _notificationDebounce?.cancel();
     _notificationDebounce = null;
+    _notesDebounce?.cancel();
+    _notesDebounce = null;
     for (final timer in _sectionDebounce.values) {
       timer.cancel();
     }
@@ -313,27 +346,6 @@ class RealtimeSyncService {
     }
   }
 
-  void _onNotificationInsert(PostgresChangePayload payload) {
-    final id = payload.newRecord['id']?.toString();
-    if (id == null || id.isEmpty) return;
-    unawaited(PatientRepository().applyRemoteNotification(id));
-  }
-
-  /// An alert changed on the row — most often marked read on the other platform.
-  void _onNotificationUpdate(PostgresChangePayload payload) {
-    final record = payload.newRecord;
-    final id = record['id']?.toString();
-    if (id == null || id.isEmpty) return;
-    PatientRepository().applyNotificationReadState(
-      id,
-      isRead: record['is_read'] == true,
-      readAt: DateTime.tryParse(record['read_at']?.toString() ?? '')?.toUtc(),
-    );
-  }
-
-  /// A profile or chart edit (including the clinic approving the account).
-  /// Reloads the whole record rather than patching fields: the chart feeds the
-  /// appointments, billing and odontogram views too.
   void _scheduleProfileReload() {
     _profileDebounce?.cancel();
     _profileDebounce = Timer(const Duration(milliseconds: 600), () {

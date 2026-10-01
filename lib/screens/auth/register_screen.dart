@@ -50,18 +50,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
   }
 
-  /// The account is only created once the code lands. Verifying first means a
-  /// mistyped number never becomes a patient record nobody can reach.
+  /// Same order as the website: sign-up leaves a pending auth user and makes
+  /// Supabase email the 6-digit code, then the code screen confirms it. The
+  /// profile and patient row are only written at confirmation, so a mistyped
+  /// or abandoned address never becomes a record nobody can reach.
   void _handleRegister() async {
     if (!_formKey.currentState!.validate()) return;
 
-    final email = _emailController.text.trim();
-    final verified = await Navigator.push<bool>(
-      context,
-      MaterialPageRoute(builder: (_) => OtpVerificationScreen(destination: email)),
-    );
-    if (!mounted || verified != true) return;
-
+    final email = _emailController.text.trim().toLowerCase();
     setState(() => _isLoading = true);
 
     // Sign-up captures name and email only. Phone, date of birth, gender and
@@ -82,22 +78,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return;
     }
 
-    // With email confirmation switched on in Supabase, sign-up creates the
-    // account but opens no session. Sending the patient to the dashboard then
-    // would land them on a page with no JWT behind it, so say what is left to
-    // do and put them back on Login.
-    if (result.needsEmailConfirmation) {
-      await showSuccessOverlay(
-        context,
-        message:
-            'Your account is created. Open the confirmation link we emailed to '
-            '$email, then sign in.',
-      );
-      if (!mounted) return;
-      // Back to the gate, which shows Login because sign-up opened no session.
-      Navigator.of(context).popUntil((route) => route.isFirst);
-      return;
-    }
+    // Sign-up opened no session: the account is pending and the confirmation
+    // email carries the code. Registration completes only when that code is
+    // verified, which confirms the address, opens the session and lets the
+    // on_auth_user_email_confirmed trigger create the profile and patient row.
+    final verified = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => OtpVerificationScreen(destination: email),
+      ),
+    );
+    // Backing out leaves registration incomplete: no session, no profile, no
+    // patient row. Submitting this form again sends a fresh code.
+    if (!mounted || verified != true) return;
 
     await showSuccessOverlay(
       context,
@@ -115,22 +108,33 @@ class _RegisterScreenState extends State<RegisterScreen> {
   @override
   Widget build(BuildContext context) {
     final double statusBarHeight = MediaQuery.of(context).padding.top;
+    final double bottomInset = MediaQuery.of(context).padding.bottom;
+    final double topPadding =
+        statusBarHeight + 32; // Added top spacing above top branding
+    final double bottomPadding = bottomInset + 16;
+    // Sized from the full screen, not the space left above the keyboard, so
+    // opening the keyboard makes the page scroll instead of lifting the terms
+    // up to sit on top of it.
+    final double minContentHeight =
+        MediaQuery.of(context).size.height - topPadding - bottomPadding;
 
     return ListenableBuilder(
       listenable: ThemeController(),
       builder: (context, _) => Scaffold(
         backgroundColor: AppColors.background,
-        body: Column(
-          children: [
-            Expanded(
-              child: SingleChildScrollView(
-                padding: EdgeInsets.only(
-                  top: statusBarHeight + 32, // Added top spacing above top branding
-                  left: 24.0,
-                  right: 24.0,
-                  bottom: 16.0,
-                ),
-                child: Form(
+        body: SingleChildScrollView(
+          padding: EdgeInsets.only(
+            top: topPadding,
+            left: 24.0,
+            right: 24.0,
+            bottom: bottomPadding,
+          ),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: minContentHeight),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Form(
                   key: _formKey,
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.start,
@@ -150,7 +154,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                 child: Text(
                                   'Mariano & Bolasoc',
                                   style: TextStyle(
-                                    fontSize: 30, // Scaled larger than Create Account (26px)
+                                    fontSize:
+                                        30, // Scaled larger than Create Account (26px)
                                     fontWeight: FontWeight.w800,
                                     letterSpacing: -0.5,
                                     height: 1.0,
@@ -199,7 +204,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             const Text(
                               'Create Account',
                               style: TextStyle(
-                                fontSize: 24, // Proportionately sized under branding
+                                fontSize:
+                                    24, // Proportionately sized under branding
                                 fontWeight: FontWeight.w700,
                                 letterSpacing: -0.5,
                                 color: _tealColor,
@@ -280,12 +286,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           prefixIcon: fieldIcon(FieldKind.password),
                           suffixIcon: IconButton(
                             icon: Icon(
-                              _isPasswordVisible ? TablerIcons.eye_off : TablerIcons.eye,
+                              _isPasswordVisible
+                                  ? TablerIcons.eye_off
+                                  : TablerIcons.eye,
                               color: AppColors.textSecondary,
                               size: 24,
                             ),
                             onPressed: () {
-                              setState(() => _isPasswordVisible = !_isPasswordVisible);
+                              setState(
+                                () => _isPasswordVisible = !_isPasswordVisible,
+                              );
                             },
                           ),
                           border: OutlineInputBorder(
@@ -323,7 +333,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             ),
                             onPressed: () {
                               setState(
-                                () => _isConfirmPasswordVisible = !_isConfirmPasswordVisible,
+                                () => _isConfirmPasswordVisible =
+                                    !_isConfirmPasswordVisible,
                               );
                             },
                           ),
@@ -353,14 +364,21 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           style: ElevatedButton.styleFrom(
                             backgroundColor: _tealColor,
                             elevation: 0,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
                           ),
                           onPressed: _isLoading ? null : _handleRegister,
                           child: _isLoading
-                              ? const CupertinoActivityIndicator(color: Colors.white)
+                              ? const CupertinoActivityIndicator(
+                                  color: Colors.white,
+                                )
                               : const Text(
                                   'Create Account',
-                                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                  ),
                                 ),
                         ),
                       ),
@@ -374,13 +392,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               "Already have an account?",
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+                              style: TextStyle(
+                                color: AppColors.textSecondary,
+                                fontSize: 13,
+                              ),
                             ),
                           ),
                           TextButton(
                             onPressed: () => Navigator.pop(context),
                             style: TextButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(horizontal: 8),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                              ),
                               minimumSize: Size.zero,
                               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                             ),
@@ -401,22 +424,25 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       const SizedBox(height: 20),
 
                       SocialAuthRow(
-                        onGoogle: () => _launchSocialUrl('https://accounts.google.com/signup'),
-                        onFacebook: () => _launchSocialUrl('https://www.facebook.com/r.php'),
+                        onGoogle: () => _launchSocialUrl(
+                          'https://accounts.google.com/signup',
+                        ),
+                        onFacebook: () =>
+                            _launchSocialUrl('https://www.facebook.com/r.php'),
                       ),
                     ],
                   ),
                 ),
-              ),
+                // Bottom of the page, below the form: the spare height above
+                // pushes it down on tall screens, and it scrolls with the form
+                // when the keyboard is open.
+                const Padding(
+                  padding: EdgeInsets.only(top: 24),
+                  child: TermsNotice(leadIn: 'By signing up you agree to our'),
+                ),
+              ],
             ),
-            const SafeArea(
-              top: false,
-              child: Padding(
-                padding: EdgeInsets.fromLTRB(24, 8, 24, 16),
-                child: TermsNotice(leadIn: 'By signing up, you agree to our'),
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );

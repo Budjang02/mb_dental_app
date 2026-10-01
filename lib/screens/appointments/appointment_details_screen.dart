@@ -1,16 +1,18 @@
+import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_tabler_icons/flutter_tabler_icons.dart';
 import 'package:printing/printing.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'package:mb_dental_app/app/messages.dart';
 import 'package:mb_dental_app/app/theme.dart';
+import 'package:mb_dental_app/app/theme_controller.dart';
 import 'package:mb_dental_app/models/appointment.dart';
-import 'package:mb_dental_app/models/dental_service.dart';
 import 'package:mb_dental_app/repositories/clinic_documents_api.dart';
 import 'package:mb_dental_app/repositories/load_state.dart';
 import 'package:mb_dental_app/repositories/patient_repository.dart';
@@ -33,9 +35,46 @@ void openAppointmentDetails(BuildContext context, Appointment appointment) {
   );
 }
 
-/// One appointment on a page of its own, laid out like the web portal's
-/// details view: status, confirmation code and check-in QR, the visit itself,
-/// what has been paid, and why it was cancelled when it was.
+/// The website's peso format (`_padPeso`): no `.00` on a whole amount,
+/// two decimals when there are centavos — `₱500`, `₱1,250.50`.
+String padPeso(double v) {
+  final whole = v == v.roundToDouble();
+  final fixed = v.abs().toStringAsFixed(whole ? 0 : 2);
+  final parts = fixed.split('.');
+  final digits = parts[0];
+  final b = StringBuffer();
+  for (var i = 0; i < digits.length; i++) {
+    if (i > 0 && (digits.length - i) % 3 == 0) b.write(',');
+    b.write(digits[i]);
+  }
+  return '${v < 0 ? '-' : ''}₱$b${parts.length > 1 ? '.${parts[1]}' : ''}';
+}
+
+/// `₱500`, or `₱500 – ₱800` when the rate card gives a range (`_padRange`).
+String pesoRange(double min, double max) {
+  final lo = min < 0 ? 0.0 : min;
+  final hi = max > lo ? max : lo;
+  return hi > lo ? '${padPeso(lo)} – ${padPeso(hi)}' : padPeso(lo);
+}
+
+/// The website's appointment-detail colours, light and dark.
+class _Tone {
+  final bool dark = ThemeController().isDark;
+  Color get background => dark ? const Color(0xFF0F172A) : Colors.white;
+  Color get text => dark ? const Color(0xFFF1F5F9) : const Color(0xFF0F172A);
+  Color get label => dark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
+  Color get divider => dark ? const Color(0xFF1E293B) : const Color(0xFFE2E8F0);
+  Color get qrSurface => dark ? const Color(0x991E293B) : const Color(0xFFF8FAFC);
+  Color get buttonBorder => dark ? const Color(0xFF334155) : const Color(0xFFE2E8F0);
+  Color get docText => dark ? const Color(0xFF2DD4BF) : const Color(0xFF0D9488);
+  Color get downPayment => dark ? const Color(0xFFCBD5E1) : const Color(0xFF334155);
+  Color get balance => dark ? Colors.white : const Color(0xFF0F172A);
+  static const red = Color(0xFFDC2626);
+}
+
+/// One appointment on a page of its own, laid out like the website's
+/// details view: QR and confirmation code, Appointment Information, Payment
+/// Summary, its documents, then Reschedule and Cancel when allowed.
 class AppointmentDetailsPage extends StatefulWidget {
   /// The appointment's id or its confirmation code.
   final String appointmentId;
@@ -50,30 +89,75 @@ class AppointmentDetailsPage extends StatefulWidget {
   State<AppointmentDetailsPage> createState() => _AppointmentDetailsPageState();
 }
 
-class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
+class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> with WidgetsBindingObserver {
   final PatientRepository _repository = PatientRepository();
 
-  /// Wraps the QR card so "Save QR Image" captures exactly what is on screen.
+  /// Wraps the QR so "Save QR Image" captures it with its white margin.
   final GlobalKey _qrBoundaryKey = GlobalKey();
 
   Appointment? _appointment;
   SectionStatus _status = SectionStatus.loading;
   bool _notFound = false;
   bool _isSavingQr = false;
+  bool _copied = false;
+  Timer? _copiedTimer;
 
-  /// Which document is being drawn — 'deposit', 'receipt' or 'invoice' — so
-  /// its button shows a spinner and the others stay usable.
+  /// Which document is being drawn — 'deposit', 'receipt' or 'invoice'.
   String? _buildingDocument;
 
-  /// The invoice and receipt on file for a completed visit, looked up from
-  /// its billing records. Null until looked up.
+  /// The issued invoice and receipt for the visit. Null while checking.
   AppointmentDocuments? _documents;
   bool _documentsFailed = false;
   String? _documentsFor;
 
-  /// The payment figures, read from the appointment and its bill the way the
-  /// website reads them. Null until loaded; the row copy stands in meanwhile.
+  /// The payment figures, read the way the website reads them.
   AppointmentMoney? _money;
+
+  /// Bumped per fetch, so a slow answer for an earlier request (or another
+  /// appointment) never replaces what is on screen.
+  int _fetchSeq = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _appointment = widget.initial ?? _cached(widget.appointmentId);
+    _repository.addListener(_onRepositoryChanged);
+    WidgetsBinding.instance.addObserver(this);
+    _fetch();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _repository.removeListener(_onRepositoryChanged);
+    _copiedTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _fetch(quiet: true);
+  }
+
+  Appointment? _cached(String idOrCode) {
+    for (final a in _repository.appointments) {
+      if (a.id == idOrCode || a.confirmationCode == idOrCode) return a;
+    }
+    return null;
+  }
+
+  /// A realtime change, a payment, a cancel or a reschedule updates the
+  /// repository's copy; following it keeps the page in step.
+  void _onRepositoryChanged() {
+    final current = _appointment;
+    if (current == null) return;
+    final updated = _cached(current.id);
+    if (updated != null && !identical(updated, current)) {
+      setState(() => _appointment = updated);
+      _loadDocuments(force: true);
+      _loadMoney();
+    }
+  }
 
   Future<void> _loadMoney() async {
     final appointment = _appointment;
@@ -87,46 +171,14 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
     }
   }
 
-  @override
-  void initState() {
-    super.initState();
-    _appointment = widget.initial ?? _cached(widget.appointmentId);
-    _repository.addListener(_onRepositoryChanged);
-    _fetch();
-  }
-
-  @override
-  void dispose() {
-    _repository.removeListener(_onRepositoryChanged);
-    super.dispose();
-  }
-
-  Appointment? _cached(String idOrCode) {
-    for (final a in _repository.appointments) {
-      if (a.id == idOrCode || a.confirmationCode == idOrCode) return a;
-    }
-    return null;
-  }
-
-  /// A cancel or reschedule made from this page updates the repository's copy;
-  /// following it keeps the page in step without a second round trip.
-  void _onRepositoryChanged() {
-    final current = _appointment;
-    if (current == null) return;
-    final updated = _cached(current.id);
-    if (updated != null && !identical(updated, current)) {
-      setState(() => _appointment = updated);
-      _loadDocumentsIfCompleted();
-      _loadMoney();
-    }
-  }
-
-  /// A completed visit's invoice and receipt are looked up once per
-  /// appointment (and again on pull-to-refresh); nothing is created.
-  Future<void> _loadDocumentsIfCompleted({bool force = false}) async {
+  /// Confirmed and completed visits look up their issued invoice (and
+  /// receipt); nothing is created.
+  Future<void> _loadDocuments({bool force = false}) async {
     final appointment = _appointment;
-    if (appointment == null || appointment.status != AppointmentStatus.completed) return;
-    if (!force && _documentsFor == appointment.id) return;
+    if (appointment == null) return;
+    final wanted = appointment.status == AppointmentStatus.completed || appointment.status == AppointmentStatus.confirmed;
+    if (!wanted) return;
+    if (!force && _documentsFor == appointment.id && _documents != null && !_documentsFailed) return;
     _documentsFor = appointment.id;
     setState(() {
       _documents = null;
@@ -146,19 +198,20 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
     }
   }
 
-  Future<void> _fetch() async {
-    setState(() => _status = SectionStatus.loading);
+  Future<void> _fetch({bool quiet = false}) async {
+    final seq = ++_fetchSeq;
+    if (!quiet) setState(() => _status = SectionStatus.loading);
     try {
       final fresh = await _repository.fetchAppointment(widget.appointmentId);
-      if (!mounted) return;
+      if (!mounted || seq != _fetchSeq) return;
       setState(() {
         _notFound = fresh == null;
         if (fresh != null) _appointment = fresh;
         _status = SectionStatus.ready;
       });
-      await Future.wait([_loadDocumentsIfCompleted(force: true), _loadMoney()]);
+      await Future.wait([_loadDocuments(force: true), _loadMoney()]);
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || seq != _fetchSeq) return;
       setState(() => _status = classifyFailure(e, context: 'appointment'));
     }
   }
@@ -169,7 +222,11 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
   Future<void> _copyCode(String code) async {
     await Clipboard.setData(ClipboardData(text: code));
     if (!mounted) return;
-    showAppToast(context, 'Confirmation code copied');
+    _copiedTimer?.cancel();
+    setState(() => _copied = true);
+    _copiedTimer = Timer(const Duration(seconds: 2), () {
+      if (mounted) setState(() => _copied = false);
+    });
   }
 
   Future<void> _saveQrImage(Appointment appointment) async {
@@ -178,7 +235,7 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
     try {
       final boundary = _qrBoundaryKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
       if (boundary == null) throw StateError('QR code is not on screen');
-      final image = await boundary.toImage(pixelRatio: 3);
+      final image = await boundary.toImage(pixelRatio: 4);
       final data = await image.toByteData(format: ui.ImageByteFormat.png);
       image.dispose();
       if (data == null) throw StateError('QR code could not be encoded');
@@ -199,10 +256,38 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
     }
   }
 
-  /// Draws one of the visit's documents — the Deposit Receipt, or a
-  /// completed visit's Payment Receipt or Invoice — from its saved records
-  /// and opens it in [ClinicDocumentPreview]. Read-only: the documents are
-  /// redrawn from what the clinic issued, never issued again.
+  void _enlargeQr(String payload) {
+    showDialog<void>(
+      context: context,
+      builder: (dialog) => Dialog(
+        backgroundColor: Colors.white,
+        insetPadding: const EdgeInsets.all(16),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 8, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Align(
+                alignment: Alignment.centerRight,
+                child: IconButton(
+                  tooltip: 'Close',
+                  onPressed: () => Navigator.pop(dialog),
+                  icon: const Icon(TablerIcons.x, size: 20, color: Color(0xFF0F172A)),
+                ),
+              ),
+              LayoutBuilder(
+                builder: (context, box) => CheckInQr(payload: payload, size: box.maxWidth.clamp(0, 360) - 8),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Draws one of the visit's documents from its saved records and opens it
+  /// in [ClinicDocumentPreview]. Read-only: redrawn, never issued again.
   Future<void> _openDocument(Appointment appointment, String kind) async {
     if (_buildingDocument != null) return;
     setState(() => _buildingDocument = kind);
@@ -249,10 +334,10 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
     );
   }
 
-  void _reschedule(Appointment appointment) {
-    Navigator.of(
-      context,
-    ).push(MaterialPageRoute(builder: (_) => RescheduleAppointmentScreen(appointment: appointment)));
+  Future<void> _reschedule(Appointment appointment) async {
+    await Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => RescheduleAppointmentScreen(appointment: appointment)));
+    if (mounted) _fetch(quiet: true);
   }
 
   static String _fileSafe(String value) => value.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '');
@@ -262,20 +347,28 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        leading: IconButton(
-          icon: const Icon(CupertinoIcons.back),
-          tooltip: 'Back',
-          onPressed: () => Navigator.of(context).maybePop(),
-        ),
-        title: const Text('Appointment Details'),
-      ),
-      body: SafeArea(top: false, child: _buildBody()),
+    return ListenableBuilder(
+      listenable: ThemeController(),
+      builder: (context, _) {
+        final tone = _Tone();
+        return Scaffold(
+          backgroundColor: tone.background,
+          appBar: AppBar(
+            backgroundColor: tone.background,
+            leading: IconButton(
+              icon: const Icon(CupertinoIcons.back),
+              tooltip: 'Back',
+              onPressed: () => Navigator.of(context).maybePop(),
+            ),
+            title: const Text('Appointment Details'),
+          ),
+          body: SafeArea(top: false, child: _buildBody(tone)),
+        );
+      },
     );
   }
 
-  Widget _buildBody() {
+  Widget _buildBody(_Tone tone) {
     final appointment = _appointment;
 
     if (appointment == null) {
@@ -297,121 +390,80 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
       );
     }
 
-    final isUpcoming =
-        appointment.status == AppointmentStatus.pending || appointment.status == AppointmentStatus.confirmed;
-    // The reason saved on the row by the patient, the clinic or the system —
-    // or, when none was saved, the website's reading of who cancelled.
-    final reason = appointment.cancellationReasonLabel(myUserId: SupabaseService.currentUserId);
-    final notes = appointment.notes?.trim() ?? '';
-    final canChange = canPatientChange(appointment);
-    final canMove = canRescheduleOnline(appointment);
     final money = _money ?? AppointmentMoney.fromAppointment(appointment);
+    final qr = _QrCard(
+      appointment: appointment,
+      tone: tone,
+      boundaryKey: _qrBoundaryKey,
+      saving: _isSavingQr,
+      copied: _copied,
+      onCopy: _copyCode,
+      onSave: () => _saveQrImage(appointment),
+      onEnlarge: _enlargeQr,
+    );
+    final details = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _InfoSection(appointment: appointment, tone: tone),
+        const SizedBox(height: 24),
+        _PaymentSection(money: money, tone: tone, onRetry: _loadMoney),
+        const SizedBox(height: 20),
+        _DocumentsSection(
+          appointment: appointment,
+          money: money,
+          tone: tone,
+          documents: _documents,
+          failed: _documentsFailed,
+          building: _buildingDocument,
+          onOpen: (kind) => _openDocument(appointment, kind),
+          onRetry: () => _loadDocuments(force: true),
+        ),
+        _Footer(
+          appointment: appointment,
+          money: money,
+          tone: tone,
+          onReschedule: () => _reschedule(appointment),
+        ),
+      ],
+    );
 
     return RefreshIndicator(
       color: AppColors.primary,
       onRefresh: _fetch,
-      child: ListView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
-        children: [
-          // A failed refresh keeps the copy already on screen and says so.
-          if (_status.hasFailed) ...[SectionErrorLine(status: _status, onRetry: _fetch), const SizedBox(height: 12)],
-          if (_notFound) ...[
-            const _Banner(
-              color: AppColors.warning,
-              icon: CupertinoIcons.exclamationmark_triangle,
-              title: 'No longer available',
-              message: 'The clinic may have removed this appointment. Showing the last copy saved on this device.',
-            ),
-            const SizedBox(height: 12),
-          ],
-
-          _ConfirmationCard(
-            appointment: appointment,
-            isUpcoming: isUpcoming,
-            qrBoundaryKey: _qrBoundaryKey,
-            isSavingQr: _isSavingQr,
-            onCopy: _copyCode,
-            onSaveQr: () => _saveQrImage(appointment),
-          ),
-          const SizedBox(height: 20),
-
-          _KeyValueRow(
-            label: 'Status',
-            value: statusLabel(appointment.status),
-            trailing: _StatusBadge(status: appointment.status),
-          ),
-          const _RowDivider(),
-          if (reason != null) ...[
-            _KeyValueRow(label: 'Cancellation Reason', value: reason, valueColor: AppColors.error),
-            const _RowDivider(),
-          ],
-          _KeyValueRow(label: 'Date', value: formatAppointmentDate(appointment.date)),
-          const _RowDivider(),
-          _KeyValueRow(
-            label: 'Time',
-            value: '${appointment.timeRangeLabel} (${formatDuration(appointment.durationMinutes)})',
-          ),
-          const _RowDivider(),
-          _KeyValueRow(label: 'Dentist', value: doctorLabel(appointment.doctorName)),
-          const _RowDivider(),
-          _KeyValueRow(label: 'Service', value: appointment.serviceName),
-          const SizedBox(height: 20),
-
-          _PaymentSummaryCard(
-            appointment: appointment,
-            money: money,
-            documents: _documents,
-            documentsFailed: _documentsFailed,
-            buildingDocument: _buildingDocument,
-            onOpenDocument: (kind) => _openDocument(appointment, kind),
-          ),
-
-          if (notes.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            _Banner(color: AppColors.primary, icon: CupertinoIcons.doc_text, title: 'Note', message: notes),
-          ],
-
-          // Scheduled or Confirmed, and not in the past — the website's rule.
-          // Rescheduling closes on the appointment's own day; Cancel stays.
-          if (canChange) ...[
-            const SizedBox(height: 24),
-            Row(
-              children: [
-                Expanded(
-                  child: _ActionButton(
-                    label: 'Reschedule',
-                    color: AppColors.primary,
-                    onPressed: canMove ? () => _reschedule(appointment) : null,
-                  ),
+      child: LayoutBuilder(
+        builder: (context, box) {
+          final wide = box.maxWidth >= 720;
+          return ListView(
+            // A fresh scroll position per appointment: it always opens at the top.
+            key: PageStorageKey('appointment-${appointment.id}'),
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: EdgeInsets.fromLTRB(20, 12, 20, 24 + MediaQuery.paddingOf(context).bottom),
+            children: [
+              if (_status.hasFailed) ...[SectionErrorLine(status: _status, onRetry: _fetch), const SizedBox(height: 12)],
+              if (_notFound) ...[
+                Text(
+                  'The clinic may have removed this appointment. Showing the last copy saved on this device.',
+                  style: TextStyle(fontSize: 13, color: tone.label),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _ActionButton(
-                    label: 'Cancel',
-                    color: AppColors.error,
-                    onPressed: () => confirmCancelAppointment(context, appointment),
-                  ),
-                ),
+                const SizedBox(height: 12),
               ],
-            ),
-            if (!canMove) ...[
-              const SizedBox(height: 8),
-              Text(
-                kSameDayRescheduleMessage,
-                style: TextStyle(fontSize: 12, height: 1.35, color: AppColors.textSecondary),
-              ),
+              if (wide)
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(width: 300, child: qr),
+                    const SizedBox(width: 28),
+                    Expanded(child: details),
+                  ],
+                )
+              else ...[
+                qr,
+                const SizedBox(height: 24),
+                details,
+              ],
             ],
-            if (money.down > 0) ...[
-              const SizedBox(height: 10),
-              Text(
-                'Rescheduling deducts a $kRescheduleFeePercent% administrative fee from your deposit. '
-                'Cancelling forfeits the 20% down payment.',
-                style: TextStyle(fontSize: 12, height: 1.35, color: AppColors.textSecondary),
-              ),
-            ],
-          ],
-        ],
+          );
+        },
       ),
     );
   }
@@ -420,259 +472,339 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
 // -----------------------------------------------------------------------------
 // Sections
 
-class _StatusBadge extends StatelessWidget {
-  final AppointmentStatus status;
-
-  const _StatusBadge({required this.status});
-
-  @override
-  Widget build(BuildContext context) {
-    final color = statusColor(status);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.12),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color.withOpacity(0.4)),
-      ),
-      child: Text(
-        statusLabel(status),
-        style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: color),
-      ),
-    );
-  }
-}
-
-/// The check-in QR first, then the confirmation code under it, then the
-/// arrival instruction while the visit is still ahead.
-class _ConfirmationCard extends StatelessWidget {
+/// The QR (tap to enlarge), Save QR Image, a rule, then the confirmation code
+/// with Copy — the website's QR card.
+class _QrCard extends StatelessWidget {
   final Appointment appointment;
-
-  /// Shows the "show this at the clinic" instruction. The QR itself is always
-  /// drawn, so a past visit can still be looked up by the front desk.
-  final bool isUpcoming;
-  final GlobalKey qrBoundaryKey;
-  final bool isSavingQr;
+  final _Tone tone;
+  final GlobalKey boundaryKey;
+  final bool saving;
+  final bool copied;
   final ValueChanged<String> onCopy;
-  final VoidCallback onSaveQr;
+  final VoidCallback onSave;
+  final ValueChanged<String> onEnlarge;
 
-  const _ConfirmationCard({
+  const _QrCard({
     required this.appointment,
-    required this.isUpcoming,
-    required this.qrBoundaryKey,
-    required this.isSavingQr,
+    required this.tone,
+    required this.boundaryKey,
+    required this.saving,
+    required this.copied,
     required this.onCopy,
-    required this.onSaveQr,
+    required this.onSave,
+    required this.onEnlarge,
   });
 
   @override
   Widget build(BuildContext context) {
     final code = appointment.confirmationCode?.trim() ?? '';
-    final qrPayload = appointment.checkInQrPayload;
+    final payload = appointment.checkInQrPayload;
+    final secondary = OutlinedButton.styleFrom(
+      foregroundColor: tone.text,
+      side: BorderSide(color: tone.buttonBorder),
+      minimumSize: const Size(0, 40),
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+    );
 
     return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(16, 18, 16, 16),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.border),
-      ),
+      padding: const EdgeInsets.fromLTRB(16, 18, 16, 18),
+      decoration: BoxDecoration(color: tone.qrSurface, borderRadius: BorderRadius.circular(12)),
       child: Column(
         children: [
-          if (qrPayload != null) ...[
-            // The website's verification link (/verify/?t=<qr_token>), at
-            // level M with the standard quiet zone. Dark on white in either
-            // theme, so it scans and saves the same everywhere. Keyed by the
-            // token so a different appointment always redraws.
-            RepaintBoundary(
-              key: qrBoundaryKey,
-              child: AppointmentQr(key: ValueKey(appointment.qrToken), qrToken: appointment.qrToken!),
+          if (payload != null) ...[
+            Semantics(
+              button: true,
+              label: 'Enlarge QR code',
+              child: GestureDetector(
+                onTap: () => onEnlarge(payload),
+                // White margin round the code, so the saved image keeps its
+                // quiet space on any background.
+                child: RepaintBoundary(
+                  key: boundaryKey,
+                  child: Container(
+                    color: Colors.white,
+                    padding: const EdgeInsets.all(8),
+                    child: CheckInQr(key: ValueKey(payload), payload: payload, size: 200),
+                  ),
+                ),
+              ),
             ),
-            TextButton.icon(
-              onPressed: isSavingQr ? null : onSaveQr,
-              icon: isSavingQr
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              style: secondary,
+              onPressed: saving ? null : onSave,
+              icon: saving
                   ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Icon(CupertinoIcons.arrow_down_to_line, size: 15),
+                  : const Icon(TablerIcons.download, size: 16),
               label: const Text('Save QR Image', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-              style: TextButton.styleFrom(foregroundColor: AppColors.primary),
             ),
           ] else
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 12),
               child: Text(
-                code.isEmpty
-                    ? 'Your check-in QR code appears here once the clinic issues your confirmation code.'
-                    : 'Your check-in QR code is not ready yet. Pull down to refresh, or give your '
-                        'confirmation code at the front desk.',
+                'Your check-in QR code appears here once the clinic issues your confirmation code.',
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 12.5, height: 1.35, color: AppColors.textSecondary),
+                style: TextStyle(fontSize: 12.5, height: 1.35, color: tone.label),
               ),
             ),
-          const SizedBox(height: 6),
-          const _RowDivider(),
           const SizedBox(height: 14),
-          const _Eyebrow('Confirmation Code'),
-          const SizedBox(height: 6),
+          Divider(height: 1, color: tone.divider),
+          const SizedBox(height: 14),
+          Text('CONFIRMATION CODE',
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, letterSpacing: 0.8, color: tone.label)),
+          const SizedBox(height: 8),
           if (code.isEmpty)
-            Text('Not issued yet', style: TextStyle(fontSize: 15, color: AppColors.textSecondary))
+            Text('Not issued yet', style: TextStyle(fontSize: 15, color: tone.label))
           else
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
+            Wrap(
+              alignment: WrapAlignment.center,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 10,
+              runSpacing: 8,
               children: [
-                Flexible(
-                  child: FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: Text(
-                      code,
-                      style: TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 1.2,
-                        color: AppColors.textPrimary,
-                      ),
-                    ),
+                SelectableText(
+                  code,
+                  style: TextStyle(
+                    fontFamily: 'monospace',
+                    fontFamilyFallback: const ['Courier', 'RobotoMono'],
+                    fontSize: 22,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 1.5,
+                    color: tone.text,
                   ),
                 ),
-                const SizedBox(width: 10),
-                SizedBox(
-                  height: 30,
-                  child: OutlinedButton.icon(
-                    onPressed: () => onCopy(code),
-                    icon: const Icon(CupertinoIcons.doc_on_doc, size: 14),
-                    label: const Text('Copy', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.primary,
-                      side: BorderSide(color: AppColors.border),
-                      padding: const EdgeInsets.symmetric(horizontal: 10),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                    ),
-                  ),
+                OutlinedButton.icon(
+                  style: secondary,
+                  onPressed: () => onCopy(code),
+                  icon: Icon(copied ? TablerIcons.check : TablerIcons.copy, size: 16),
+                  label: Text(copied ? 'Copied!' : 'Copy',
+                      style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
                 ),
               ],
             ),
-          if (isUpcoming && qrPayload != null) ...[
-            const SizedBox(height: 12),
-            Text(
-              'Show this QR code to clinic staff upon arrival for instant check-in.',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 12, height: 1.35, color: AppColors.textSecondary),
-            ),
-          ],
         ],
       ),
     );
   }
 }
 
-class _PaymentSummaryCard extends StatelessWidget {
-  final Appointment appointment;
+/// Section heading, as the website writes them.
+class _Heading extends StatelessWidget {
+  final String text;
+  final _Tone tone;
 
-  /// The payment figures, worked out as the website's details dialog does.
-  final AppointmentMoney money;
+  const _Heading(this.text, this.tone);
 
-  /// A completed visit's invoice and receipt on file; null while looking.
-  final AppointmentDocuments? documents;
-  final bool documentsFailed;
-  final String? buildingDocument;
-  final ValueChanged<String> onOpenDocument;
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: Text(text, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: tone.text)),
+      );
+}
 
-  const _PaymentSummaryCard({
-    required this.appointment,
-    required this.money,
-    required this.documents,
-    required this.documentsFailed,
-    required this.buildingDocument,
-    required this.onOpenDocument,
-  });
+/// A ruled label / value row on the page background.
+class _Row extends StatelessWidget {
+  final String label;
+  final Widget value;
+  final _Tone tone;
+
+  const _Row(this.label, this.value, this.tone);
 
   @override
   Widget build(BuildContext context) {
-    final isCompleted = appointment.status == AppointmentStatus.completed;
-    // Only a down payment the server recorded as paid earns a deposit receipt.
-    final hasVerifiedDeposit = money.paid;
-    final downText = money.paid
-        ? formatPeso(money.down)
-        : money.down > 0
-            ? '${formatPeso(money.down)} (not yet paid)'
-            : formatPeso(0);
-
     return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Column(
+      padding: const EdgeInsets.symmetric(vertical: 11),
+      decoration: BoxDecoration(border: Border(bottom: BorderSide(color: tone.divider))),
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const _Eyebrow('Payment Summary'),
-          const SizedBox(height: 4),
-          _KeyValueRow(label: 'Payment Method', value: paymentMethodLabel(money.method, paid: money.paid)),
-          const _RowDivider(),
-          _KeyValueRow(
-            label: 'Service Price',
-            value: money.priceMin > 0 ? pesoRange(money.priceMin, money.priceMax) : '—',
-          ),
-          const _RowDivider(),
-          _KeyValueRow(
-            label: 'Down Payment',
-            value: downText,
-            valueColor: money.paid ? AppColors.success : null,
-          ),
-          if (money.feeTotal > 0) ...[
-            const _RowDivider(),
-            _KeyValueRow(label: 'Reschedule Fees', value: '-${formatPeso(money.feeTotal)}', valueColor: AppColors.error),
-            const _RowDivider(),
-            _KeyValueRow(label: 'Deposit Credited to Final Bill', value: formatPeso(money.credited)),
-          ],
-          if (money.priceMin > 0) ...[
-            const _RowDivider(),
-            _KeyValueRow(
-              label: money.billed ? 'Balance Due at Clinic' : 'Estimated Balance Due at Clinic',
-              value: pesoRange(money.balanceMin, money.balanceMax),
-              valueColor: AppColors.primary,
-              emphasize: true,
-            ),
-          ],
-          if (isCompleted) ...[
-            const _RowDivider(),
-            const SizedBox(height: 12),
-            _completedDocuments(),
-            const SizedBox(height: 8),
-          ] else if (hasVerifiedDeposit) ...[
-            const _RowDivider(),
-            const SizedBox(height: 12),
-            // Full width, outlined in teal: the same button as the completed
-            // visit's receipt and invoice.
-            SizedBox(
-              width: double.infinity,
-              child: _DocumentButton(
-                label: 'Download Deposit Receipt',
-                icon: CupertinoIcons.arrow_down_to_line,
-                busy: buildingDocument == 'deposit',
-                onPressed: buildingDocument == null ? () => onOpenDocument('deposit') : null,
-              ),
-            ),
-            const SizedBox(height: 8),
-          ] else
-            const SizedBox(height: 8),
+          Expanded(flex: 2, child: Text(label, style: TextStyle(fontSize: 13.5, color: tone.label))),
+          const SizedBox(width: 16),
+          Expanded(flex: 3, child: Align(alignment: Alignment.centerRight, child: value)),
         ],
       ),
     );
   }
+}
 
-  /// Download Receipt and Download Invoice, side by side. A button is live
-  /// only once the clinic has issued that document.
+Text _value(String text, _Tone tone, {Color? color, double size = 14, FontWeight weight = FontWeight.w600}) =>
+    Text(text, textAlign: TextAlign.right, style: TextStyle(fontSize: size, fontWeight: weight, color: color ?? tone.text));
+
+/// Status pill colours (light text, dark text, background).
+(Color, Color, Color) _statusColors(String raw, bool dark) {
+  final s = raw.toLowerCase();
+  if (s == 'confirmed') {
+    return (const Color(0xFF059669), const Color(0xFF34D399), const Color(0xFF10B981).withValues(alpha: 0.10));
+  }
+  if (s.startsWith('pending') || s == 'scheduled') {
+    return (const Color(0xFFD97706), const Color(0xFFFBBF24), const Color(0xFFF59E0B).withValues(alpha: 0.10));
+  }
+  if (s == 'ongoing') {
+    return (const Color(0xFF0D9488), const Color(0xFF2DD4BF), const Color(0xFF14B8A6).withValues(alpha: 0.10));
+  }
+  if (s == 'cancelled' || s == 'no-show' || s == 'no show') {
+    return (const Color(0xFFDC2626), const Color(0xFFF87171), const Color(0xFFEF4444).withValues(alpha: 0.10));
+  }
+  return (const Color(0xFF475569), const Color(0xFFCBD5E1), dark ? const Color(0xFF1E293B) : const Color(0xFFF1F5F9));
+}
+
+class _StatusPill extends StatelessWidget {
+  final Appointment appointment;
+  final _Tone tone;
+
+  const _StatusPill(this.appointment, this.tone);
+
+  @override
+  Widget build(BuildContext context) {
+    final raw = appointment.rawStatus.trim().isNotEmpty ? appointment.rawStatus.trim() : statusLabel(appointment.status);
+    final (light, dark, bg) = _statusColors(raw, tone.dark);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(999)),
+      child: Text(raw, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: tone.dark ? dark : light)),
+    );
+  }
+}
+
+const _monthsLong = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+class _InfoSection extends StatelessWidget {
+  final Appointment appointment;
+  final _Tone tone;
+
+  const _InfoSection({required this.appointment, required this.tone});
+
+  @override
+  Widget build(BuildContext context) {
+    final a = appointment;
+    final reason = a.cancellationReasonLabel(myUserId: SupabaseService.currentUserId);
+    final notes = a.notes?.trim() ?? '';
+    // `appointment_date` is a calendar date: read as written, never shifted
+    // through UTC.
+    final day = DateTime.tryParse(a.rawDate);
+    final date = day == null ? formatAppointmentDate(a.date) : '${_monthsLong[day.month - 1]} ${day.day}, ${day.year}';
+    final time = a.rawTime.trim().isEmpty ? 'To be confirmed' : a.timeRangeLabel;
+    final doctor = a.doctorName.trim();
+    final dentist = doctor.isEmpty || doctor == kUnassignedDoctor ? 'To be assigned' : doctor;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _Heading('Appointment Information', tone),
+        _Row('Status', _StatusPill(a, tone), tone),
+        if (reason != null) _Row('Cancellation Reason', _value(reason, tone), tone),
+        _Row('Date', _value(date, tone), tone),
+        _Row('Time', _value(time, tone), tone),
+        _Row('Dentist', _value(dentist, tone), tone),
+        _Row('Service', _value(a.serviceName, tone), tone),
+        if (notes.isNotEmpty) _Row('Notes', _value(notes, tone, weight: FontWeight.w400), tone),
+      ],
+    );
+  }
+}
+
+class _PaymentSection extends StatelessWidget {
+  final AppointmentMoney money;
+  final _Tone tone;
+  final VoidCallback onRetry;
+
+  const _PaymentSection({required this.money, required this.tone, required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    final m = money;
+    // A positive amount alone is not a payment: only a down payment the server
+    // stamped paid (and not forfeited) is shown as received and deducted.
+    final String downText;
+    if (m.down <= 0) {
+      downText = padPeso(0);
+    } else if (m.forfeited) {
+      downText = '${padPeso(m.down)} (forfeited)';
+    } else if (m.paid) {
+      downText = padPeso(m.down);
+    } else {
+      downText = '${padPeso(m.down)} (not yet verified)';
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _Heading('Payment Summary', tone),
+        _Row('Payment Method', _value(paymentMethodLabel(m.method, paid: m.paid), tone), tone),
+        _Row('Service Price', _value(m.priceMin > 0 ? pesoRange(m.priceMin, m.priceMax) : '—', tone), tone),
+        _Row('Down Payment', _value(downText, tone, color: tone.downPayment), tone),
+        if (m.feeTotal > 0) _Row('Reschedule Fees', _value('-${padPeso(m.feeTotal)}', tone), tone),
+        if (m.paid && m.feeTotal > 0)
+          _Row('Deposit Credited to Final Bill', _value(padPeso(m.credited), tone), tone),
+        if (m.priceMin > 0)
+          _Row(
+            m.billed ? 'Balance Due at Clinic' : 'Estimated Balance Due at Clinic',
+            _value(pesoRange(m.balanceMin, m.balanceMax), tone, color: tone.balance, size: 17.5, weight: FontWeight.w800),
+            tone,
+          ),
+        if (m.billingFailed) ...[
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  "We could not check the clinic's bill for this visit, so these figures are estimates.",
+                  style: TextStyle(fontSize: 12, height: 1.35, color: tone.label),
+                ),
+              ),
+              TextButton(onPressed: onRetry, child: const Text('Retry')),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+/// The visit's documents. Confirmed: the issued invoice only — no deposit
+/// receipt, no pro-forma. Completed: invoice and payment receipt. Otherwise a
+/// verified deposit keeps its Deposit Receipt.
+class _DocumentsSection extends StatelessWidget {
+  final Appointment appointment;
+  final AppointmentMoney money;
+  final _Tone tone;
+  final AppointmentDocuments? documents;
+  final bool failed;
+  final String? building;
+  final ValueChanged<String> onOpen;
+  final VoidCallback onRetry;
+
+  const _DocumentsSection({
+    required this.appointment,
+    required this.money,
+    required this.tone,
+    required this.documents,
+    required this.failed,
+    required this.building,
+    required this.onOpen,
+    required this.onRetry,
+  });
+
+  Widget _button(String label, String kind) => _DocAction(
+        label: label,
+        tone: tone,
+        busy: building == kind,
+        onPressed: building == null ? () => onOpen(kind) : null,
+      );
+
+  /// Download Receipt and Download Invoice side by side, outlined in teal; a
+  /// button is live only once the clinic has issued that document.
   Widget _completedDocuments() {
-    final looking = documents == null;
+    final looking = documents == null && !failed;
     final hasReceipt = documents?.receiptId != null;
     final hasInvoice = documents?.invoiceId != null;
 
     String? note;
-    if (documentsFailed) {
+    if (failed) {
       note = 'We could not check your receipt and invoice. Pull down to try again.';
     } else if (!looking && !hasReceipt && !hasInvoice) {
       note = 'Your receipt and invoice will be available here once the clinic issues them.';
@@ -691,8 +823,8 @@ class _PaymentSummaryCard extends StatelessWidget {
               child: _DocumentButton(
                 label: 'Download Receipt',
                 icon: CupertinoIcons.doc_text,
-                busy: looking || buildingDocument == 'receipt',
-                onPressed: hasReceipt && buildingDocument == null ? () => onOpenDocument('receipt') : null,
+                busy: looking || building == 'receipt',
+                onPressed: hasReceipt && building == null ? () => onOpen('receipt') : null,
               ),
             ),
             const SizedBox(width: 10),
@@ -700,22 +832,69 @@ class _PaymentSummaryCard extends StatelessWidget {
               child: _DocumentButton(
                 label: 'Download Invoice',
                 icon: CupertinoIcons.doc_plaintext,
-                busy: looking || buildingDocument == 'invoice',
-                onPressed: hasInvoice && buildingDocument == null ? () => onOpenDocument('invoice') : null,
+                busy: looking || building == 'invoice',
+                onPressed: hasInvoice && building == null ? () => onOpen('invoice') : null,
               ),
             ),
           ],
         ),
         if (note != null) ...[
           const SizedBox(height: 8),
-          Text(note, style: TextStyle(fontSize: 11.5, height: 1.35, color: AppColors.textSecondary)),
+          Text(note, style: TextStyle(fontSize: 11.5, height: 1.35, color: tone.label)),
         ],
       ],
     );
   }
+
+  Widget _note(String text) =>
+      Padding(padding: const EdgeInsets.only(top: 4), child: Text(text, style: TextStyle(fontSize: 12.5, color: tone.label)));
+
+  @override
+  Widget build(BuildContext context) {
+    final children = <Widget>[];
+    final checking = documents == null && !failed;
+    final retry = Align(
+      alignment: Alignment.centerLeft,
+      child: TextButton.icon(
+        onPressed: onRetry,
+        icon: const Icon(TablerIcons.refresh, size: 16),
+        label: Text(appointment.status == AppointmentStatus.confirmed ? 'Retry loading invoice' : 'Retry loading documents'),
+      ),
+    );
+
+    switch (appointment.status) {
+      case AppointmentStatus.confirmed:
+        // A deposit the server recorded as received keeps its receipt.
+        if (money.down > 0 && money.paid) {
+          children.add(_button('Download Deposit Receipt', 'deposit'));
+          children.add(const SizedBox(height: 8));
+        }
+        if (checking) {
+          children.add(_note('Checking invoice…'));
+        } else if (failed) {
+          children.add(retry);
+        } else if (documents?.invoiceId != null) {
+          children.add(_button('Download Invoice', 'invoice'));
+        }
+      case AppointmentStatus.completed:
+        children.add(_completedDocuments());
+      case AppointmentStatus.pending:
+      case AppointmentStatus.cancelled:
+        // Only money the server recorded as received earns a receipt.
+        if (money.down > 0 && (money.paid || money.forfeited)) {
+          children.add(_button('Download Deposit Receipt', 'deposit'));
+        }
+        if (money.forfeited) children.add(_note('This deposit was forfeited when the appointment was cancelled.'));
+    }
+    if (children.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 20),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: children),
+    );
+  }
 }
 
-/// A full-width outlined download button, as on the website's details view.
+/// The completed visit's outlined teal download button.
 class _DocumentButton extends StatelessWidget {
   final String label;
   final IconData icon;
@@ -751,9 +930,86 @@ class _DocumentButton extends StatelessWidget {
   }
 }
 
+class _DocAction extends StatelessWidget {
+  final String label;
+  final _Tone tone;
+  final bool busy;
+  final VoidCallback? onPressed;
+
+  const _DocAction({required this.label, required this.tone, required this.busy, required this.onPressed});
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton.icon(
+      onPressed: busy ? null : onPressed,
+      style: OutlinedButton.styleFrom(
+        foregroundColor: tone.docText,
+        side: BorderSide(color: tone.buttonBorder),
+        minimumSize: const Size.fromHeight(46),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+      icon: busy
+          ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+          : const Icon(TablerIcons.download, size: 16),
+      label: Text(label, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600)),
+    );
+  }
+}
+
+/// Reschedule (neutral) and Cancel Appointment (red), when the status and
+/// schedule allow them, with any limit said in words.
+class _Footer extends StatelessWidget {
+  final Appointment appointment;
+  final AppointmentMoney money;
+  final _Tone tone;
+  final VoidCallback onReschedule;
+
+  const _Footer({required this.appointment, required this.money, required this.tone, required this.onReschedule});
+
+  @override
+  Widget build(BuildContext context) {
+    if (!canPatientChange(appointment)) return const SizedBox.shrink();
+    final canMove = canRescheduleOnline(appointment);
+    ButtonStyle outlined(Color fg, Color border) => OutlinedButton.styleFrom(
+          foregroundColor: fg,
+          side: BorderSide(color: border),
+          minimumSize: const Size.fromHeight(46),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Divider(height: 1, color: tone.divider),
+        const SizedBox(height: 16),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                style: outlined(tone.text, tone.buttonBorder),
+                onPressed: canMove ? onReschedule : null,
+                child: const Text('Reschedule', style: TextStyle(fontWeight: FontWeight.w600)),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: OutlinedButton(
+                style: outlined(_Tone.red, _Tone.red),
+                onPressed: () => confirmCancelAppointment(context, appointment),
+                child: const FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text('Cancel Appointment', style: TextStyle(fontWeight: FontWeight.w600)),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
 /// Full-screen preview of a clinic document — Deposit Receipt, Payment
-/// Receipt or Invoice — with its own save and close actions, so the patient
-/// sees the document before keeping it.
+/// Receipt or Invoice — with its own save and close actions.
 class ClinicDocumentPreview extends StatelessWidget {
   final String title;
   final Uint8List bytes;
@@ -781,14 +1037,14 @@ class ClinicDocumentPreview extends StatelessWidget {
         actions: [
           TextButton.icon(
             onPressed: () => _save(context),
-            icon: const Icon(CupertinoIcons.arrow_down_to_line, size: 17),
+            icon: const Icon(TablerIcons.download, size: 17),
             label: const Text('Save to Device', style: TextStyle(fontWeight: FontWeight.w600)),
             style: TextButton.styleFrom(foregroundColor: AppColors.primary),
           ),
           IconButton(
             tooltip: 'Close',
             onPressed: () => Navigator.of(context).pop(),
-            icon: const Icon(CupertinoIcons.xmark),
+            icon: const Icon(TablerIcons.x),
           ),
           const SizedBox(width: 4),
         ],
@@ -816,152 +1072,6 @@ String paymentMethodLabel(String method, {required bool paid}) {
   return m == 'Cash' && !paid ? '$label (pay at clinic)' : label;
 }
 
-/// `₱500.00`, or `₱500.00 – ₱800.00` when the rate card gives a range.
-String pesoRange(double min, double max) =>
-    max > min ? '${formatPeso(min)} – ${formatPeso(max)}' : formatPeso(min);
-
-// -----------------------------------------------------------------------------
-// Building blocks
-
-/// Small uppercase section label, muted, like the web portal's.
-class _Eyebrow extends StatelessWidget {
-  final String text;
-
-  const _Eyebrow(this.text);
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      text.toUpperCase(),
-      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, letterSpacing: 0.8, color: AppColors.textSecondary),
-    );
-  }
-}
-
-/// Label on the left, value on the right, no icons.
-class _KeyValueRow extends StatelessWidget {
-  final String label;
-  final String value;
-  final Color? valueColor;
-  final bool emphasize;
-
-  /// Drawn in place of the plain [value] text, e.g. the status badge.
-  final Widget? trailing;
-
-  const _KeyValueRow({
-    required this.label,
-    required this.value,
-    this.valueColor,
-    this.emphasize = false,
-    this.trailing,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 12),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            flex: 2,
-            child: Text(label, style: TextStyle(fontSize: 13.5, color: AppColors.textSecondary)),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            flex: 3,
-            child: trailing != null
-                ? Align(alignment: Alignment.centerRight, child: trailing)
-                : Text(
-                    value,
-                    textAlign: TextAlign.right,
-                    style: TextStyle(
-                      fontSize: emphasize ? 16 : 14,
-                      fontWeight: emphasize ? FontWeight.w800 : FontWeight.w600,
-                      color: valueColor ?? AppColors.textPrimary,
-                    ),
-                  ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _RowDivider extends StatelessWidget {
-  const _RowDivider();
-
-  @override
-  Widget build(BuildContext context) => Divider(height: 1, thickness: 1, color: AppColors.border);
-}
-
-class _Banner extends StatelessWidget {
-  final Color color;
-  final IconData icon;
-  final String title;
-  final String message;
-
-  const _Banner({required this.color, required this.icon, required this.title, required this.message});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.08),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withOpacity(0.35)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, size: 19, color: color),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: color),
-                ),
-                const SizedBox(height: 3),
-                Text(message, style: TextStyle(fontSize: 13, height: 1.35, color: AppColors.textPrimary)),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ActionButton extends StatelessWidget {
-  final String label;
-  final Color color;
-  /// Null draws the button disabled.
-  final VoidCallback? onPressed;
-
-  const _ActionButton({required this.label, required this.color, required this.onPressed});
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: 46,
-      child: OutlinedButton(
-        style: OutlinedButton.styleFrom(
-          foregroundColor: color,
-          side: BorderSide(color: onPressed == null ? AppColors.border : color),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        ),
-        onPressed: onPressed,
-        child: Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
-      ),
-    );
-  }
-}
-
 class _DetailsSkeleton extends StatelessWidget {
   const _DetailsSkeleton();
 
@@ -972,7 +1082,7 @@ class _DetailsSkeleton extends StatelessWidget {
         physics: const NeverScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
         children: const [
-          SkeletonBox(height: 190, radius: 16),
+          SkeletonBox(height: 280, radius: 12),
           SizedBox(height: 24),
           SkeletonBox(height: 18),
           SizedBox(height: 22),
@@ -982,7 +1092,7 @@ class _DetailsSkeleton extends StatelessWidget {
           SizedBox(height: 22),
           SkeletonBox(height: 18),
           SizedBox(height: 24),
-          SkeletonBox(height: 170, radius: 16),
+          SkeletonBox(height: 170, radius: 12),
         ],
       ),
     );

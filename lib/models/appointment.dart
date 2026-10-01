@@ -198,12 +198,16 @@ class Appointment {
         {'t': qrToken},
       ).toString();
 
-  /// What the check-in QR encodes: the verification link for [qrToken]. Null
-  /// when there is no valid token — the app then shows no QR rather than one
-  /// that would not verify, and never builds one from the confirmation code.
+  /// What the check-in QR encodes — the website's `padQrUrl`: the
+  /// verification link for [qrToken]; for a legacy booking with no token, the
+  /// older `/verify?code=<CODE>` link the desk scanner still reads. Null when
+  /// there is neither. Never a new token, never patient details.
   String? get checkInQrPayload {
     final token = qrToken;
-    return token == null ? null : verifyUrlFor(token);
+    if (token != null) return verifyUrlFor(token);
+    final code = (confirmationCode ?? '').trim().toUpperCase();
+    if (code.isEmpty) return null;
+    return Uri.https(verifyHost, '/verify', {'code': code}).toString();
   }
 
   /// The reference printed on the receipt and in saved file names: the

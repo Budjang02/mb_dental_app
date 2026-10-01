@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-import 'package:flutter_tabler_icons/flutter_tabler_icons.dart';
 import 'package:mb_dental_app/app/theme.dart';
 import 'package:mb_dental_app/app/theme_controller.dart';
 import 'package:mb_dental_app/repositories/wallet_topup_api.dart';
+import 'package:mb_dental_app/widgets/wallet_txn_widgets.dart';
 import 'package:url_launcher/url_launcher.dart';
+
+import 'wallet_topup_return.dart';
 
 /// Kept as a compatibility helper for any older callers. Cash In is now a
 /// route, never a pop-up.
@@ -14,13 +16,21 @@ Future<bool> showCashInDialog(BuildContext context) async {
 }
 
 class CashInScreen extends StatefulWidget {
-  const CashInScreen({super.key});
+  /// Prefilled amount in pesos, e.g. the shortfall a booking needs.
+  final double? initialAmount;
+
+  /// Opened from a booking: after checkout this screen stays open, confirms
+  /// the payment when the patient comes back, and then returns to the booking
+  /// (popping `true`) instead of leaving them on the Wallet.
+  final bool returnToCaller;
+
+  const CashInScreen({super.key, this.initialAmount, this.returnToCaller = false});
 
   @override
   State<CashInScreen> createState() => _CashInScreenState();
 }
 
-class _CashInScreenState extends State<CashInScreen> {
+class _CashInScreenState extends State<CashInScreen> with WidgetsBindingObserver, WalletTopupReturn {
   static const _quickAmounts = <(int, String)>[(500, '₱500'), (1000, '₱1,000'), (2000, '₱2,000'), (5000, '₱5,000')];
 
   // Owned by this State so it is disposed only after the window's closing
@@ -29,6 +39,29 @@ class _CashInScreenState extends State<CashInScreen> {
   String? _rail = kCashInRails.first.id;
   String? _error;
   bool _busy = false;
+
+  /// True once a checkout from a booking is open, so this screen — not the
+  /// Wallet — confirms it.
+  bool _awaiting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final amount = widget.initialAmount;
+    if (amount != null && amount > 0) _amount.text = amount.toStringAsFixed(2);
+  }
+
+  @override
+  Future<void> walletCheckReturn() async {
+    if (_awaiting) await super.walletCheckReturn();
+  }
+
+  @override
+  void onTopupSettled(TopupState state) {
+    if (widget.returnToCaller && state.status == 'paid' && state.purpose == 'wallet') {
+      Navigator.pop(context, true);
+    }
+  }
 
   @override
   void dispose() {
@@ -66,6 +99,15 @@ class _CashInScreenState extends State<CashInScreen> {
         setState(() {
           _busy = false;
           _error = 'The checkout page could not be opened.';
+        });
+        return;
+      }
+      if (widget.returnToCaller) {
+        // Stay: the booking is waiting on this money.
+        setState(() {
+          _busy = false;
+          _awaiting = true;
+          topupBanner = const TopupBanner(TopupBannerKind.confirming, 'Waiting for your payment…', busy: true);
         });
         return;
       }
@@ -111,9 +153,34 @@ class _CashInScreenState extends State<CashInScreen> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          if (topupBanner != null) ...[
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: BoxDecoration(
+                color: topupBanner!.color.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                children: [
+                  if (topupBanner!.busy) ...[
+                    SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: topupBanner!.color),
+                    ),
+                    const SizedBox(width: 10),
+                  ],
+                  Expanded(
+                    child: Text(topupBanner!.message,
+                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: topupBanner!.color)),
+                  ),
+                ],
+              ),
+            ),
+          ],
           if (_error != null) ...[
             const SizedBox(height: 12),
-            Text(_error!, style: TextStyle(fontSize: 13, color: AppColors.error)),
+            Text(_error!, style: const TextStyle(fontSize: 13, color: Color(0xFFDC2626))),
           ],
           const SizedBox(height: 18),
           Text('Amount', style: label),
@@ -237,7 +304,7 @@ class _CashInScreenState extends State<CashInScreen> {
                 SizedBox(
                   width: 20,
                   height: 20,
-                  child: selected ? Icon(TablerIcons.check, size: 20, color: AppColors.primary) : null,
+                  child: selected ? WalletGlyphIcon(WalletGlyph.check, size: 20, color: AppColors.primary) : null,
                 ),
               ],
             ),

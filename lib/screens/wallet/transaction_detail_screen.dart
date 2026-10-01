@@ -6,7 +6,9 @@ import 'package:mb_dental_app/app/theme_controller.dart';
 import 'package:mb_dental_app/models/wallet_transaction.dart';
 import 'package:mb_dental_app/widgets/wallet_txn_widgets.dart';
 
-/// Full-screen receipt for a wallet transaction.
+/// Transaction Details for one ledger row — the website's `openWalletTxn`:
+/// icon and title, signed amount, payment method, description, date and time
+/// in Manila, the 13-digit reference, and what it did to the balance.
 class TransactionDetailScreen extends StatelessWidget {
   final WalletTransaction transaction;
 
@@ -14,62 +16,66 @@ class TransactionDetailScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final dark = ThemeController().isDark;
-    final strong = dark ? const Color(0xFFF1F5F9) : AppColors.textPrimary;
+    ThemeController();
+    final t = transaction;
+    final (tone, _) = txnTone(t.kind);
+    final description = t.description.trim();
+    final ref = walletRef13(t.referenceNo);
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(title: const Text('Transaction Details')),
       body: SafeArea(
         top: false,
         child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 28, 20, 32),
-          child: Column(
-            children: [
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.fromLTRB(20, 24, 20, 18),
-                decoration: BoxDecoration(
-                  color: AppColors.surface,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: AppColors.border),
+          padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(20, 24, 20, 18),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: AppColors.border),
+            ),
+            child: Column(
+              children: [
+                WalletTxnIcon(txn: t, size: 56, iconSize: 28),
+                const SizedBox(height: 14),
+                Text(
+                  txnTitle(t),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 19, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
                 ),
-                child: Column(
-                  children: [
-                    WalletTxnIcon(isCredit: transaction.isCredit, size: 56, iconSize: 28),
-                    const SizedBox(height: 14),
-                    Text(
-                      txnDetailTitle(transaction),
-                      textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 19, fontWeight: FontWeight.bold, color: strong),
-                    ),
-                    const SizedBox(height: 22),
-                    Divider(height: 1, color: AppColors.border),
-                    const SizedBox(height: 8),
-                    _DetailRow(
-                      label: 'Amount',
-                      value: txnAmountLabel(transaction, spaced: false),
-                      valueColor: transaction.isCredit ? txnInColor : strong,
-                    ),
-                    _DetailRow(label: 'Date & Time', value: formatTxnDateTime(transaction.dateTime), valueColor: strong),
-                    _DetailRow(
-                      label: 'Reference Number',
-                      value: walletRef13(transaction.referenceNo),
-                      valueColor: strong,
-                      trailing: IconButton(
-                        tooltip: 'Copy reference number',
-                        constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
-                        padding: EdgeInsets.zero,
-                        icon: Icon(TablerIcons.copy, size: 19, color: AppColors.primary),
-                        onPressed: () {
-                          Clipboard.setData(ClipboardData(text: walletRef13(transaction.referenceNo)));
-                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Reference number copied.')));
-                        },
-                      ),
-                    ),
-                  ],
+                const SizedBox(height: 20),
+                Divider(height: 1, color: AppColors.border),
+                const SizedBox(height: 6),
+                _Row('Amount', txnAmountLabel(t)),
+                _Row('Payment Method', txnMethodLabel(t)),
+                if (description.isNotEmpty) _Row('Description', description),
+                _Row('Date & Time', formatTxnDateTime(t.dateTime)),
+                _Row(
+                  'Reference Number',
+                  ref,
+                  trailing: ref == '—'
+                      ? null
+                      : IconButton(
+                          tooltip: 'Copy reference number',
+                          constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                          padding: EdgeInsets.zero,
+                          icon: Icon(TablerIcons.copy, size: 19, color: AppColors.primary),
+                          onPressed: () {
+                            Clipboard.setData(ClipboardData(text: ref));
+                            ScaffoldMessenger.of(context)
+                                .showSnackBar(const SnackBar(content: Text('Reference number copied.')));
+                          },
+                        ),
                 ),
-              ),
-            ],
+                const SizedBox(height: 12),
+                Text(
+                  txnNote(t),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: tone),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -77,20 +83,19 @@ class TransactionDetailScreen extends StatelessWidget {
   }
 }
 
-class _DetailRow extends StatelessWidget {
+class _Row extends StatelessWidget {
   final String label;
   final String value;
-  final Color valueColor;
   final Widget? trailing;
 
-  const _DetailRow({required this.label, required this.value, required this.valueColor, this.trailing});
+  const _Row(this.label, this.value, {this.trailing});
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 10),
+      padding: const EdgeInsets.symmetric(vertical: 9),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(label, style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
           const SizedBox(width: 16),
@@ -98,10 +103,10 @@ class _DetailRow extends StatelessWidget {
             child: Text(
               value,
               textAlign: TextAlign.end,
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: valueColor),
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
             ),
           ),
-          if (trailing != null) ...[const SizedBox(width: 6), trailing!],
+          if (trailing != null) ...[const SizedBox(width: 4), trailing!],
         ],
       ),
     );

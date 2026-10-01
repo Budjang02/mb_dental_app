@@ -1,39 +1,24 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_tabler_icons/flutter_tabler_icons.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:mb_dental_app/app/messages.dart';
 import 'package:mb_dental_app/app/theme.dart';
 import 'package:mb_dental_app/app/theme_controller.dart';
-import 'package:mb_dental_app/app/messages.dart';
-import 'package:mb_dental_app/models/wallet_transaction.dart';
-import 'package:mb_dental_app/repositories/patient_api.dart';
 import 'package:mb_dental_app/repositories/patient_repository.dart';
 import 'package:mb_dental_app/widgets/section_states.dart';
-import 'package:mb_dental_app/widgets/wallet_txn_widgets.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
 import 'cash_in_dialog.dart';
-import 'transaction_detail_screen.dart';
+import 'pay_screens.dart';
 import 'scan_to_pay_screen.dart';
 import 'transaction_history_screen.dart';
+import 'wallet_history.dart';
 import 'wallet_topup_return.dart';
 
-enum _WalletDateFilter { all, today, last7Days, last30Days, last60Days, last90Days }
-
-enum _WalletTypeFilter { all, moneyIn, moneyOut }
-
-const _walletDateLabels = <_WalletDateFilter, String>{
-  _WalletDateFilter.all: 'All Dates',
-  _WalletDateFilter.today: 'Today',
-  _WalletDateFilter.last7Days: 'Last 7 days',
-  _WalletDateFilter.last30Days: 'Last 30 Days',
-  _WalletDateFilter.last60Days: 'Last 60 Days',
-  _WalletDateFilter.last90Days: 'Last 90 Days',
-};
-
-const _walletTypeLabels = <_WalletTypeFilter, String>{
-  _WalletTypeFilter.all: 'All Types',
-  _WalletTypeFilter.moneyIn: 'Money In',
-  _WalletTypeFilter.moneyOut: 'Money Out',
-};
-
+/// My Wallet, as on the website (js/patient-wallet.js): the clinic's pending
+/// payment requests, the Available Balance card with Cash In and Pay Bill, and
+/// the Transaction History.
 class WalletScreen extends StatefulWidget {
   const WalletScreen({super.key});
 
@@ -41,87 +26,32 @@ class WalletScreen extends StatefulWidget {
   State<WalletScreen> createState() => _WalletScreenState();
 }
 
-class _WalletScreenState extends State<WalletScreen> with WidgetsBindingObserver, WalletTopupReturn {
+class _WalletScreenState extends State<WalletScreen>
+    with WidgetsBindingObserver, WalletTopupReturn {
   final PatientRepository _repository = PatientRepository();
+
+  /// Remembered per device under the website's own key name, like dark mode:
+  /// the flag hides nothing itself, only what it covers.
+  static const _hiddenKey = 'mbWalletHidden';
   bool _balanceHidden = false;
-  _WalletDateFilter _dateFilter = _WalletDateFilter.all;
-  _WalletTypeFilter _typeFilter = _WalletTypeFilter.all;
 
-  Future<void> _openCashIn() async {
-    await Navigator.push<bool>(context, MaterialPageRoute(builder: (_) => const CashInScreen()));
+  @override
+  void initState() {
+    super.initState();
+    SharedPreferences.getInstance()
+        .then((prefs) {
+          if (mounted)
+            setState(() => _balanceHidden = prefs.getBool(_hiddenKey) ?? false);
+        })
+        .catchError((_) {});
   }
 
-  List<WalletTransaction> _filteredTransactions(List<WalletTransaction> transactions) {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    return transactions.where((transaction) {
-      final transactionDate = transaction.dateTime.toLocal();
-      final day = DateTime(transactionDate.year, transactionDate.month, transactionDate.day);
-      final daysAgo = today.difference(day).inDays;
-      final dateMatches = switch (_dateFilter) {
-        _WalletDateFilter.all => true,
-        _WalletDateFilter.today => daysAgo == 0,
-        _WalletDateFilter.last7Days => daysAgo >= 0 && daysAgo < 7,
-        _WalletDateFilter.last30Days => daysAgo >= 0 && daysAgo < 30,
-        _WalletDateFilter.last60Days => daysAgo >= 0 && daysAgo < 60,
-        _WalletDateFilter.last90Days => daysAgo >= 0 && daysAgo < 90,
-      };
-      if (!dateMatches) return false;
-      return switch (_typeFilter) {
-        _WalletTypeFilter.all => true,
-        _WalletTypeFilter.moneyIn => transaction.isCredit,
-        _WalletTypeFilter.moneyOut => !transaction.isCredit,
-      };
-    }).toList();
-  }
-
-  Future<void> _selectDateFilter() async {
-    final selected = await _showFilterSheet<_WalletDateFilter>('Select Date Range', _dateFilter, _walletDateLabels);
-    if (selected != null && mounted) setState(() => _dateFilter = selected);
-  }
-
-  Future<void> _selectTypeFilter() async {
-    final selected = await _showFilterSheet<_WalletTypeFilter>('Select Type', _typeFilter, _walletTypeLabels);
-    if (selected != null && mounted) setState(() => _typeFilter = selected);
-  }
-
-  Future<T?> _showFilterSheet<T>(String title, T current, Map<T, String> labels) {
-    return showModalBottomSheet<T>(
-      context: context,
-      backgroundColor: AppColors.surface,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (sheetContext) => SafeArea(
-        top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 18, 8, 14),
-              child: Row(
-                children: [
-                  Expanded(child: Text(title, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary))),
-                  IconButton(onPressed: () => Navigator.pop(sheetContext), icon: Icon(Icons.close, color: AppColors.textSecondary)),
-                ],
-              ),
-            ),
-            Divider(height: 1, color: AppColors.border),
-            for (final entry in labels.entries)
-              ListTile(
-                contentPadding: const EdgeInsets.symmetric(horizontal: 20),
-                title: Text(
-                  entry.value,
-                  style: TextStyle(
-                    color: entry.key == current ? AppColors.primary : AppColors.textPrimary,
-                    fontWeight: entry.key == current ? FontWeight.w600 : FontWeight.normal,
-                  ),
-                ),
-                trailing: entry.key == current ? Icon(Icons.check, color: AppColors.primary) : null,
-                onTap: () => Navigator.pop(sheetContext, entry.key),
-              ),
-          ],
-        ),
-      ),
-    );
+  Future<void> _toggleHidden() async {
+    setState(() => _balanceHidden = !_balanceHidden);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_hiddenKey, _balanceHidden);
+    } catch (_) {}
   }
 
   @override
@@ -132,9 +62,14 @@ class _WalletScreenState extends State<WalletScreen> with WidgetsBindingObserver
         title: const Text('My Wallet'),
         actions: [
           IconButton(
+            tooltip: 'Transaction History & Billing',
             icon: Icon(CupertinoIcons.clock, color: AppColors.textPrimary),
-            onPressed: () =>
-                Navigator.push(context, MaterialPageRoute(builder: (_) => const TransactionHistoryScreen())),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => const TransactionHistoryScreen(),
+              ),
+            ),
           ),
         ],
       ),
@@ -144,18 +79,20 @@ class _WalletScreenState extends State<WalletScreen> with WidgetsBindingObserver
           return RefreshIndicator(
             onRefresh: () => _repository.load(force: true),
             edgeOffset: 12,
-            child: SingleChildScrollView(
+            child: ListView(
               physics: const AlwaysScrollableScrollPhysics(),
               padding: const EdgeInsets.fromLTRB(20, 20, 20, 104),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  if (topupBanner != null) ...[_buildTopupBanner(topupBanner!), const SizedBox(height: 16)],
-                  _buildBalanceCard(),
-                  const SizedBox(height: 24),
-                  _buildHistoryCard(_filteredTransactions(_repository.transactions)),
+              children: [
+                if (topupBanner != null) ...[
+                  _banner(topupBanner!),
+                  const SizedBox(height: 12),
                 ],
-              ),
+                for (final request in _repository.visitRequests)
+                  VisitRequestCard(request: request),
+                _balanceCard(),
+                const SizedBox(height: 24),
+                const WalletHistoryCard(),
+              ],
             ),
           );
         },
@@ -163,38 +100,41 @@ class _WalletScreenState extends State<WalletScreen> with WidgetsBindingObserver
     );
   }
 
-  Widget _buildTopupBanner(TopupBanner banner) {
-    final color = switch (banner.kind) {
-      TopupBannerKind.paid => txnInColor,
-      TopupBannerKind.failed => AppColors.error,
-      TopupBannerKind.pending => AppColors.primary,
-    };
+  Widget _banner(TopupBanner banner) {
+    final color = banner.color;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withOpacity(0.35)),
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(10),
       ),
       child: Row(
         children: [
           if (banner.busy)
-            SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: color))
+            SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2, color: color),
+            )
           else
-            Icon(
-              banner.kind == TopupBannerKind.paid
-                  ? TablerIcons.circle_check
-                  : banner.kind == TopupBannerKind.failed
-                  ? TablerIcons.alert_circle
-                  : TablerIcons.clock,
-              size: 18,
+            FaIcon(
+              switch (banner.kind) {
+                TopupBannerKind.success => FontAwesomeIcons.circleCheck,
+                TopupBannerKind.error => FontAwesomeIcons.circleXmark,
+                _ => FontAwesomeIcons.triangleExclamation,
+              },
+              size: 16,
               color: color,
             ),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
               banner.message,
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: color),
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: color,
+              ),
             ),
           ),
         ],
@@ -202,7 +142,17 @@ class _WalletScreenState extends State<WalletScreen> with WidgetsBindingObserver
     );
   }
 
-  Widget _buildBalanceCard() {
+  Widget _balanceCard() {
+    final status = _repository.effectiveStatusOf(SyncSection.wallet);
+    final known = _repository.isWalletBalanceKnown;
+
+    ButtonStyle white() => ElevatedButton.styleFrom(
+      backgroundColor: Colors.white,
+      foregroundColor: const Color(0xFF0C4A43),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      minimumSize: const Size(0, 44),
+    );
+
     return ClipRRect(
       borderRadius: BorderRadius.circular(24),
       child: Container(
@@ -214,8 +164,16 @@ class _WalletScreenState extends State<WalletScreen> with WidgetsBindingObserver
             // Lighter teal wash in light mode so the card reads as a bright
             // panel on the pale page rather than a dark slab.
             colors: ThemeController().isDark
-                ? const [Color(0xFF0C4A43), Color(0xFF1B8C7C), Color(0xFF0D5B52)]
-                : const [Color(0xFF12796D), Color(0xFF23A793), Color(0xFF158A7B)],
+                ? const [
+                    Color(0xFF0C4A43),
+                    Color(0xFF1B8C7C),
+                    Color(0xFF0D5B52),
+                  ]
+                : const [
+                    Color(0xFF12796D),
+                    Color(0xFF23A793),
+                    Color(0xFF158A7B),
+                  ],
             stops: const [0.0, 0.58, 1.0],
           ),
         ),
@@ -229,242 +187,155 @@ class _WalletScreenState extends State<WalletScreen> with WidgetsBindingObserver
               child: Container(
                 width: 260,
                 height: 260,
-                decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.white.withOpacity(0.07)),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white.withValues(alpha: 0.07),
+                ),
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
+            LayoutBuilder(
+              builder: (context, box) => ConstrainedBox(
+                // Sized to its content: a compact card, no fixed card ratio.
+                constraints: const BoxConstraints(),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 24, 20, 24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'Available Balance',
-                        style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w600),
-                      ),
-                      const SizedBox(width: 8),
-                      InkWell(
-                        onTap: () => setState(() => _balanceHidden = !_balanceHidden),
-                        borderRadius: BorderRadius.circular(12),
-                        child: Padding(
-                          padding: const EdgeInsets.all(2),
-                          child: Icon(
-                            _balanceHidden ? CupertinoIcons.eye_slash : CupertinoIcons.eye,
-                            color: Colors.white70,
-                            size: 16,
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Text(
+                                'Available Balance',
+                                style: TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Tooltip(
+                                message: _balanceHidden
+                                    ? 'Show balance'
+                                    : 'Hide balance',
+                                child: InkWell(
+                                  onTap: _toggleHidden,
+                                  borderRadius: BorderRadius.circular(12),
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(2),
+                                    child: Icon(
+                                      _balanceHidden
+                                          ? CupertinoIcons.eye_slash
+                                          : CupertinoIcons.eye,
+                                      color: Colors.white70,
+                                      size: 16,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
-                        ),
+                          const SizedBox(height: 10),
+                          // Only a balance `wallet_balance()` confirmed is printed. A
+                          // zero that means "we could not check" would be a lie about
+                          // the patient's money.
+                          Text(
+                            !known
+                                ? '₱ —'
+                                : (_balanceHidden
+                                      ? '₱ ••••••'
+                                      : formatPeso(_repository.walletBalance)),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 30,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          if (!known) ...[
+                            const SizedBox(height: 10),
+                            if (status.hasFailed || !status.isPending)
+                              SectionErrorLine(
+                                status: status.hasFailed
+                                    ? status
+                                    : SectionStatus.failed(
+                                        LoadFailure.server,
+                                        'We could not check your balance.',
+                                      ),
+                                foreground: Colors.white70,
+                                isRetrying: _repository.isRetrying(
+                                  SyncSection.wallet,
+                                ),
+                                onRetry: () => _repository.retrySection(
+                                  SyncSection.wallet,
+                                ),
+                              )
+                            else
+                              const Text(
+                                'Checking your balance…',
+                                style: TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 11.5,
+                                ),
+                              ),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 22),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              style: white(),
+                              onPressed: () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => const CashInScreen(),
+                                ),
+                              ),
+                              icon: const Icon(TablerIcons.plus, size: 18),
+                              label: const Text(
+                                'Cash In',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          // Same white fill as Cash In: two equal actions on the card.
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              style: white(),
+                              onPressed: () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => const ScanToPayScreen(),
+                                ),
+                              ),
+                              icon: const Icon(TablerIcons.scan, size: 18),
+                              label: const Text(
+                                'Pay using QR',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
-                  const SizedBox(height: 10),
-                  // A balance is only printed when the server confirmed it on
-                  // this load. A zero that actually means "we could not check"
-                  // would be a lie about the patient's money, so the figure is
-                  // withheld and the reason is given instead.
-                  if (!_repository.isWalletBalanceKnown)
-                    const Text(
-                      '₱ —',
-                      style: TextStyle(color: Colors.white, fontSize: 30, fontWeight: FontWeight.bold),
-                    )
-                  else
-                    Text(
-                      _balanceHidden ? '₱ ••••••' : formatPeso(_repository.walletBalance),
-                      style: const TextStyle(color: Colors.white, fontSize: 30, fontWeight: FontWeight.bold),
-                    ),
-                  if (!_repository.isWalletBalanceKnown) ...[
-                    const SizedBox(height: 10),
-                    if (_historyStatus.hasFailed)
-                      SectionErrorLine(
-                        status: _historyStatus,
-                        foreground: Colors.white70,
-                        isRetrying: _repository.isRetrying(SyncSection.wallet),
-                        onRetry: () => _repository.retrySection(SyncSection.wallet),
-                      )
-                    else
-                      const Text(
-                        'Checking your balance…',
-                        style: TextStyle(color: Colors.white70, fontSize: 11.5),
-                      ),
-                  ],
-                  const SizedBox(height: 22),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.white,
-                            foregroundColor: const Color(0xFF0C4A43),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                            minimumSize: const Size(0, 44),
-                          ),
-                          onPressed: _openCashIn,
-                          icon: const Icon(TablerIcons.plus, size: 18),
-                          label: const Text('Cash In', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      // Same white fill as Cash In: two equal actions on the card.
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.white,
-                            foregroundColor: const Color(0xFF0C4A43),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                            minimumSize: const Size(0, 44),
-                          ),
-                          onPressed: () => Navigator.push(
-                            context,
-                            MaterialPageRoute(builder: (_) => const ScanToPayScreen()),
-                          ),
-                          icon: const Icon(TablerIcons.scan, size: 18),
-                          label: const Text(
-                            'Pay using QR',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
+                ),
               ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildHistoryCard(List<WalletTransaction> rows) {
-    final grouped = <String, List<WalletTransaction>>{};
-    for (final t in rows) {
-      grouped.putIfAbsent(formatTxnMonth(t.dateTime.toLocal()), () => []).add(t);
-    }
-
-    return Container(
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(15),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Transaction History',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
-                  ),
-                  const SizedBox(height: 10),
-                  // Centred under the heading as plain text with a caret — no
-                  // button chrome.
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _historyFilterButton(
-                          _walletDateLabels[_dateFilter]!,
-                          _selectDateFilter,
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: _historyFilterButton(
-                          _walletTypeLabels[_typeFilter]!,
-                          _selectTypeFilter,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            if (_historyStatus.hasFailed)
-              // Inline, inside the card. The balance card above, the filters
-              // and the Cash In button all keep working.
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-                child: SectionErrorNotice(
-                  status: _historyStatus,
-                  compact: true,
-                  isRetrying: _repository.isRetrying(SyncSection.wallet),
-                  onRetry: () => _repository.retrySection(SyncSection.wallet),
-                ),
-              )
-            else if (grouped.isEmpty && _historyStatus.isPending)
-              const Padding(
-                padding: EdgeInsets.fromLTRB(16, 4, 16, 8),
-                child: SectionSkeleton(rows: 2),
-              )
-            else if (grouped.isEmpty)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 28, 16, 36),
-                child: Text(
-                  _emptyMessage(),
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: AppColors.textSecondary),
-                ),
-              )
-            else
-              for (final entry in grouped.entries) ...[
-                TxnMonthHeader(entry.key),
-                for (final txn in entry.value)
-                  WalletTxnRow(
-                    txn: txn,
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => TransactionDetailScreen(transaction: txn)),
-                    ),
-                  ),
-              ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  SectionStatus get _historyStatus => _repository.effectiveStatusOf(SyncSection.wallet);
-
-  String _emptyMessage() {
-    if (PatientApi.walletUnavailable) {
-      return 'The wallet is not set up on the clinic\'s system yet. Your transactions will appear here once it is.';
-    }
-    return 'No transactions yet. Cash in to get started.';
-  }
-
-  Widget _historyFilterButton(String label, VoidCallback onTap) {
-    return SizedBox(
-      width: double.infinity,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(6),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  label,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textPrimary,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 2),
-              Icon(Icons.keyboard_arrow_down_rounded, size: 16, color: AppColors.textSecondary),
-            ],
-          ),
         ),
       ),
     );

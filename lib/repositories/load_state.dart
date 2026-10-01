@@ -232,9 +232,6 @@ Future<T> runWithRetry<T>(
   Object lastError = StateError('no attempt was made');
   for (var attempt = 0; attempt < attempts; attempt++) {
     try {
-      if (NetworkService.isConfigured) {
-        await NetworkService.requireServerConnection();
-      }
       return await request().timeout(timeout);
     } catch (e) {
       lastError = e;

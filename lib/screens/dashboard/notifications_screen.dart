@@ -2,14 +2,21 @@ import 'dart:async';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:mb_dental_app/app/theme.dart';
 import 'package:mb_dental_app/app/theme_controller.dart';
 import 'package:mb_dental_app/models/notification.dart';
 import 'package:mb_dental_app/repositories/notification_feed.dart';
 import 'package:mb_dental_app/repositories/patient_repository.dart';
-import 'package:mb_dental_app/screens/dashboard/home_tab.dart';
+import 'package:mb_dental_app/screens/dashboard/notification_actions.dart';
+import 'package:mb_dental_app/screens/profile/notification_settings_screen.dart';
+import 'package:mb_dental_app/widgets/notification_row.dart';
 
+/// The full list — the website's Notifications section. Grouped under day
+/// headings, "Mark all as read" in the app bar, swipe a row away to delete it
+/// (the website's per-row delete, synced through `notif_dismiss`).
+///
+/// Opening the list marks nothing read; only tapping a notice, or "Mark all as
+/// read", does.
 class NotificationsScreen extends StatefulWidget {
   const NotificationsScreen({super.key});
 
@@ -21,27 +28,26 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   @override
   void initState() {
     super.initState();
-    // Opening the centre re-reads the alerts: the read state may have been
-    // changed on the web platform while this screen was closed, and a realtime
-    // event that arrived while the socket was down is not replayed.
+    // The read state may have changed on the website while this was closed,
+    // and a realtime event missed while the socket was down is not replayed.
     unawaited(PatientRepository().refreshNotifications());
   }
 
   @override
   Widget build(BuildContext context) {
     final repository = PatientRepository();
-    // The whole Scaffold rebuilds on repository changes so the app bar's
-    // "Mark all as read" action disappears the moment nothing is unread.
     return ListenableBuilder(
       listenable: Listenable.merge([repository, ThemeController()]),
       builder: (context, _) {
+        final enabled = repository.notificationPrefs.enabled;
         final notifications = repository.notifications;
+        final unread = repository.unreadNotificationCount;
         return Scaffold(
           backgroundColor: AppColors.background,
           appBar: AppBar(
             title: const Text('Notifications'),
             actions: [
-              if (repository.unreadNotificationCount > 0)
+              if (enabled && unread > 0)
                 Padding(
                   padding: const EdgeInsets.only(right: 8),
                   child: TextButton.icon(
@@ -54,7 +60,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                     label: Text(
                       'Mark all as read',
                       style: TextStyle(
-                        fontSize: 12,
+                        fontSize: 13,
                         fontWeight: FontWeight.bold,
                         color: AppColors.primary,
                       ),
@@ -63,91 +69,29 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 ),
             ],
           ),
-          body: Builder(
-            builder: (context) {
-              if (notifications.isEmpty) {
-                return Center(
-                  child: Text(
-                    'No notifications yet.',
-                    style: TextStyle(color: AppColors.textSecondary),
-                  ),
-                );
-              }
-
-              final grouped = <String, List<NotificationItem>>{};
-              for (final n in notifications) {
-                grouped
-                    .putIfAbsent(formatNotificationDate(n.createdAt), () => [])
-                    .add(n);
-              }
-
-              return RefreshIndicator(
-                color: AppColors.primary,
-                onRefresh: repository.refreshNotifications,
-                child: ListView(
-                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
-                  children: [
-                    for (final entry in grouped.entries) ...[
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 10, top: 6),
-                        child: Text(
-                          entry.key,
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            color: AppColors.primary,
-                          ),
+          body: RefreshIndicator(
+            color: AppColors.primary,
+            onRefresh: repository.refreshNotifications,
+            child: !enabled
+                ? _Message(
+                    title: 'Notifications are turned off',
+                    body:
+                        'Turn them on to see appointment reminders and receipts again.',
+                    action: TextButton(
+                      onPressed: () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const NotificationSettingsScreen(),
                         ),
                       ),
-                      Container(
-                        decoration: BoxDecoration(
-                          color: AppColors.surface,
-                          borderRadius: BorderRadius.circular(18),
-                          border: Border.all(color: AppColors.border),
-                        ),
-                        child: Column(
-                          children: [
-                            for (int i = 0; i < entry.value.length; i++) ...[
-                              if (i > 0)
-                                Divider(height: 1, color: AppColors.border),
-                              // Derived notices can be dismissed; the website
-                              // hides the same key, via `notif_dismiss`.
-                              if (NotificationFeed.isDerived(entry.value[i].id))
-                                Dismissible(
-                                  key: ValueKey(entry.value[i].id),
-                                  direction: DismissDirection.endToStart,
-                                  background: Container(
-                                    alignment: Alignment.centerRight,
-                                    padding: const EdgeInsets.symmetric(horizontal: 20),
-                                    color: Colors.redAccent,
-                                    child: const Icon(
-                                      CupertinoIcons.trash,
-                                      color: Colors.white,
-                                      size: 18,
-                                    ),
-                                  ),
-                                  onDismissed: (_) =>
-                                      repository.dismissNotification(entry.value[i].id),
-                                  child: _NotificationTile(
-                                    notification: entry.value[i],
-                                    repository: repository,
-                                  ),
-                                )
-                              else
-                                _NotificationTile(
-                                  notification: entry.value[i],
-                                  repository: repository,
-                                ),
-                            ],
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-                    ],
-                  ],
-                ),
-              );
-            },
+                      child: const Text('Open Settings'),
+                    ),
+                  )
+                : notifications.isEmpty
+                ? const _Message(
+                    title: 'No notifications yet',
+                    body: 'Notifications will appear here once available.',
+                  )
+                : _List(notifications: notifications, repository: repository),
           ),
         );
       },
@@ -155,95 +99,126 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 }
 
-class _NotificationTile extends StatelessWidget {
-  final NotificationItem notification;
+class _List extends StatelessWidget {
+  final List<NotificationItem> notifications;
   final PatientRepository repository;
 
-  const _NotificationTile({
-    required this.notification,
-    required this.repository,
-  });
+  const _List({required this.notifications, required this.repository});
 
   @override
   Widget build(BuildContext context) {
-    final n = notification;
-    return InkWell(
-      onTap: () {
-        repository.markNotificationRead(n.id);
-        showNotificationDetailDialog(context, n);
-      },
-      child: Container(
-        color: n.isRead
-            ? Colors.transparent
-            : AppColors.primary.withOpacity(0.05),
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.only(top: 3, right: 14),
-              child: FaIcon(notificationIconFor(n), size: 18, color: AppColors.primary),
-            ),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Expanded(
-                        child: Text(
-                          n.title,
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: n.isRead
-                                ? FontWeight.w600
-                                : FontWeight.bold,
-                            color: AppColors.textPrimary,
-                          ),
-                        ),
-                      ),
-                      if (!n.isRead)
-                        Container(
-                          margin: const EdgeInsets.only(left: 8, top: 4),
-                          width: 7,
-                          height: 7,
-                          decoration: BoxDecoration(
-                            color: AppColors.primary,
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    n.body,
-                    style: TextStyle(
-                      fontSize: 14.5,
-                      color: AppColors.textSecondary,
-                      height: 1.35,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Row(
-                    children: [
+    final now = DateTime.now();
+    // Runs of consecutive notices under one heading, in feed order — the
+    // website's `_notifDayBucket` grouping.
+    final groups = <(String, List<NotificationItem>)>[];
+    for (final n in notifications) {
+      final bucket = NotificationFeed.dayBucket(n, now);
+      if (groups.isEmpty || groups.last.$1 != bucket) groups.add((bucket, []));
+      groups.last.$2.add(n);
+    }
 
-                      Text(
-                        formatNotificationTime(n.createdAt),
-                        style: TextStyle(
-                          fontSize: 12.5,
-                          color: AppColors.textSecondary,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+      children: [
+        for (final (bucket, items) in groups) ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 8, 4, 8),
+            child: Text(
+              bucket,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: AppColors.textSecondary,
               ),
             ),
-          ],
+          ),
+          Container(
+            clipBehavior: Clip.antiAlias,
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppColors.border),
+            ),
+            child: Column(
+              children: [
+                for (int i = 0; i < items.length; i++) ...[
+                  if (i > 0) Divider(height: 1, color: AppColors.border),
+                  Dismissible(
+                    key: ValueKey(items[i].id),
+                    direction: DismissDirection.endToStart,
+                    background: Container(
+                      alignment: Alignment.centerRight,
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      color: Colors.redAccent,
+                      child: const Icon(
+                        CupertinoIcons.trash,
+                        color: Colors.white,
+                        size: 18,
+                      ),
+                    ),
+                    onDismissed: (_) =>
+                        repository.dismissNotification(items[i].id),
+                    child: NotificationRow(
+                      notification: items[i],
+                      onTap: () => openNotification(
+                        context,
+                        items[i],
+                        onNotificationsScreen: true,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+        ],
+      ],
+    );
+  }
+}
+
+class _Message extends StatelessWidget {
+  final String title;
+  final String body;
+  final Widget? action;
+
+  const _Message({required this.title, required this.body, this.action});
+
+  @override
+  Widget build(BuildContext context) {
+    // Scrollable so pull-to-refresh still works on an empty list.
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(32, 120, 32, 32),
+      children: [
+        Icon(
+          CupertinoIcons.bell_slash,
+          size: 36,
+          color: AppColors.textSecondary.withValues(alpha: 0.5),
         ),
-      ),
+        const SizedBox(height: 12),
+        Text(
+          title,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+            color: AppColors.textPrimary,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          body,
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+        ),
+        if (action != null) ...[
+          const SizedBox(height: 12),
+          Center(child: action!),
+        ],
+      ],
     );
   }
 }

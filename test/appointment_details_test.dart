@@ -38,8 +38,10 @@ void main() {
     });
 
     test('price shows as a range only when the rate card has one', () {
-      expect(pesoRange(1500, 1500), '₱1,500.00');
-      expect(pesoRange(1500, 2000), '₱1,500.00 – ₱2,000.00');
+      // The website's `_padPeso`: no .00 on whole pesos, centavos kept.
+      expect(pesoRange(1500, 1500), '₱1,500');
+      expect(pesoRange(1500, 2000), '₱1,500 – ₱2,000');
+      expect(padPeso(1250.5), '₱1,250.50');
     });
 
     test('an estimate owes the price less the paid deposit', () {
@@ -149,8 +151,10 @@ void main() {
       expect(a.checkInQrPayload, isNot(contains('E3XZSR')));
     });
 
-    test('no token means no QR, even with a confirmation code', () {
-      expect(_appointment(confirmationCode: 'E3XZSR').checkInQrPayload, isNull);
+    test('a legacy booking with no token uses the website\'s ?code= link', () {
+      expect(_appointment(confirmationCode: 'e3xzsr').checkInQrPayload,
+          'https://mbdentalcenter.web.app/verify?code=E3XZSR');
+      expect(_appointment().checkInQrPayload, isNull);
     });
 
     test('a token is read the way the website reads it', () {

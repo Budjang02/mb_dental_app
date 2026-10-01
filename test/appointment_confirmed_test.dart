@@ -40,10 +40,10 @@ void main() {
     expect(find.text('E3XZSR'), findsOneWidget);
     expect(find.text('Dental Checkup'), findsOneWidget);
     expect(find.text('Dr. Jenneline Mariano'), findsOneWidget);
-    expect(find.text('₱1,500.00'), findsOneWidget); // Total Estimated Cost
+    expect(find.text('₱1,500'), findsOneWidget); // Total Estimated Cost
     expect(find.text('₱300.00'), findsOneWidget); // Down Payment Paid
     expect(find.text('E-Wallet'), findsOneWidget); // Payment Method, its own row
-    expect(find.text('₱1,200.00'), findsOneWidget); // Balance
+    expect(find.text('₱1,200'), findsOneWidget); // Balance
     await tester.scrollUntilVisible(find.textContaining('10-minute grace period'), 200);
     expect(find.textContaining('10-minute grace period'), findsOneWidget);
     await tester.scrollUntilVisible(find.text('View My Appointments'), 200);

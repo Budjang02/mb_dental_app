@@ -1,24 +1,27 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mb_dental_app/app/notification_style.dart';
 import 'package:mb_dental_app/models/appointment.dart';
+import 'package:mb_dental_app/models/notification.dart';
 import 'package:mb_dental_app/models/patient.dart';
-import 'package:mb_dental_app/models/patient_message.dart';
-import 'package:mb_dental_app/models/payment.dart';
 import 'package:mb_dental_app/models/treatment.dart';
 import 'package:mb_dental_app/repositories/notification_feed.dart';
 import 'package:mb_dental_app/repositories/patient_repository.dart';
+import 'package:mb_dental_app/widgets/notification_row.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-final DateTime _now = DateTime(2026, 9, 14, 9);
+// 2026-09-14 09:00 in Manila.
+final DateTime _now = DateTime.utc(2026, 9, 14, 1);
 
 Appointment _appointment(
   String id,
   String rawStatus, {
-  DateTime? date,
   String rawDate = '2026-09-20',
   String rawTime = '10:00:00',
   bool byClinic = false,
-  DateTime? changedAt,
+  String doctor = 'Dr. Rey Vincent Bolasoc',
+  String service = 'Dental Checkup',
 }) {
   final status = switch (rawStatus) {
     'Confirmed' || 'Ongoing' => AppointmentStatus.confirmed,
@@ -28,13 +31,12 @@ Appointment _appointment(
   };
   return Appointment(
     id: id,
-    serviceName: 'Dental Checkup',
-    doctorName: 'Dr. Rey Vincent Bolasoc',
-    date: date ?? DateTime(2026, 9, 20),
+    serviceName: service,
+    doctorName: doctor,
+    date: DateTime.parse(rawDate),
     timeSlot: '10:00 AM',
     status: status,
     createdAt: DateTime(2026, 9, 10, 8),
-    statusChangedAt: changedAt,
     rawDate: rawDate,
     rawTime: rawTime,
     rawStatus: rawStatus,
@@ -42,282 +44,315 @@ Appointment _appointment(
   );
 }
 
-TreatmentPlanSummary _plan(
-  String id, {
-  String status = 'active',
-  String? updatedAt,
-  String createdAt = '2026-09-01T08:00:00+00:00',
+NotificationItem _row(
+  String uuid, {
+  String event = 'appointment.cancelled',
+  String title = 'Your appointment was cancelled',
+  String body = 'Sep 28, 2026 10:00 AM',
+  String? actor = 'Maria Santos',
+  DateTime? createdAt,
+  DateTime? readAt,
+  String entity = 'appointment',
+  String entityId = 'appt-1',
 }) =>
-    TreatmentPlanSummary(
-      id: id,
-      title: 'Plan $id',
-      status: status,
-      stamp: updatedAt ?? createdAt,
-      wasUpdated: updatedAt != null && updatedAt != createdAt,
-      updatedAt: updatedAt == null ? null : DateTime.parse(updatedAt),
-      changedAt: DateTime.parse(updatedAt ?? createdAt),
+    NotificationItem(
+      id: 'db|$uuid',
+      title: title,
+      body: body,
+      createdAt: createdAt ?? _now.subtract(const Duration(days: 2)),
+      isRead: readAt != null,
+      readAt: readAt,
+      event: event,
+      actorName: actor,
+      category: NotificationFeed.categoryOf(event),
+      target: NotificationFeed.targetOf(event: event, entity: entity, entityId: entityId),
     );
 
-Iterable<String> _keys(List<FeedNotice> feed) => feed.map((n) => n.item.id);
+TreatmentPlanSummary _plan(String id, {String? updatedAt, String status = 'active'}) {
+  const created = '2026-09-01T08:00:00+00:00';
+  return TreatmentPlanSummary(
+    id: id,
+    title: 'Plan $id',
+    status: status,
+    stamp: updatedAt ?? created,
+    wasUpdated: updatedAt != null && updatedAt != created,
+    updatedAt: updatedAt == null ? null : DateTime.parse(updatedAt),
+    changedAt: DateTime.parse(updatedAt ?? created),
+  );
+}
 
-Iterable<String> _sharedKeys(List<FeedNotice> feed) =>
-    _keys(feed).where(NotificationFeed.isShared);
+List<String> _ids(List<NotificationItem> items) => [for (final n in items) n.id];
 
 void main() {
-  group('shared keys', () {
-    test('booked| only when booked_by is exactly clinic', () {
+  group('derived notices match the website', () {
+    test('keys, titles and wording follow js/render-patient.js', () {
       final feed = NotificationFeed.build(
         appointments: [
-          _appointment('clinic', 'Pending', byClinic: true),
-          _appointment('self', 'Pending'),
+          _appointment('a1', 'Confirmed', rawDate: '2026-09-15'),
+          _appointment('a2', 'Pending', rawDate: '2026-09-20'),
+          _appointment('a3', 'Pending', rawDate: '2026-09-22', byClinic: true),
         ],
         now: _now,
       );
-      expect(_sharedKeys(feed), containsAll(['booked|clinic', 'awaiting|self']));
-      // A clinic booking still pending is not "awaiting" the patient's request.
-      expect(_sharedKeys(feed), isNot(contains('awaiting|clinic')));
-      expect(_sharedKeys(feed), isNot(contains('booked|self')));
+      expect(_ids(feed), [
+        'confirmed|2026-09-15|10:00:00',
+        'reminder|2026-09-15|10:00:00',
+        'awaiting|a2',
+        'booked|a3',
+      ]);
+      expect(feed[0].title, 'Appointment Confirmed');
+      expect(feed[0].body, 'Sep 15, 2026 · 10:00 AM — Dr. Rey Vincent Bolasoc');
+      expect(feed[0].meta, 'Tomorrow');
+      expect(feed[1].title, 'Upcoming Appointment');
+      expect(feed[1].body, 'Reminder: Dental Checkup tomorrow');
+      expect(feed[2].body, 'Sep 20, 2026 · 10:00 AM — the clinic will confirm this shortly');
+      expect(feed[3].title, 'The clinic booked an appointment for you');
+      expect(feed[3].target, const NotificationTarget(NotificationTargetType.appointment, 'a3'));
     });
 
-    test('confirmed|<appointment_date>|<appointment_time> from the raw column text', () {
-      final feed = NotificationFeed.build(
-        appointments: [_appointment('a1', 'Confirmed', rawDate: '2026-09-20', rawTime: '10:00')],
-        now: _now,
-      );
-      expect(_sharedKeys(feed), ['confirmed|2026-09-20|10:00']);
-    });
-
-    test('rows outside Confirmed/Pending produce no shared notice at all', () {
+    test('past visits and closed statuses are not in the feed', () {
       final feed = NotificationFeed.build(
         appointments: [
-          _appointment('on', 'Ongoing', byClinic: true, date: DateTime(2026, 9, 14), rawDate: '2026-09-14'),
-          _appointment('ca', 'Cancelled', byClinic: true, date: DateTime(2026, 9, 15), rawDate: '2026-09-15'),
-          _appointment('co', 'Completed', byClinic: true),
-          _appointment('ns', 'No-Show', byClinic: true),
+          _appointment('old', 'Confirmed', rawDate: '2026-09-13'),
+          _appointment('gone', 'Cancelled', rawDate: '2026-09-20'),
+          _appointment('pay', 'Pending Payment', rawDate: '2026-09-15'),
         ],
         now: _now,
       );
-      expect(_sharedKeys(feed), isEmpty);
+      // Pending Payment is in the website's query: it gets a reminder, and no
+      // "awaiting" (that is for status Pending only).
+      expect(_ids(feed), ['reminder|2026-09-15|10:00:00']);
     });
 
-    test('reminder| fires 0-2 calendar days out, whatever the time of day', () {
+    test('"today" is the clinic day in Manila, not UTC', () {
+      // 23:30 UTC on the 14th is already the 15th in Manila.
+      final lateUtc = DateTime.utc(2026, 9, 14, 23, 30);
       final feed = NotificationFeed.build(
-        appointments: [
-          // 8:00 AM today: already past at 9:00 AM, still counts.
-          _appointment('past-today', 'Confirmed',
-              date: DateTime(2026, 9, 14), rawDate: '2026-09-14', rawTime: '08:00:00'),
-          _appointment('in2', 'Pending',
-              date: DateTime(2026, 9, 16), rawDate: '2026-09-16', rawTime: '10:00:00'),
-          _appointment('in3', 'Confirmed',
-              date: DateTime(2026, 9, 17), rawDate: '2026-09-17', rawTime: '10:00:00'),
-          _appointment('yesterday', 'Confirmed',
-              date: DateTime(2026, 9, 13), rawDate: '2026-09-13', rawTime: '10:00:00'),
-        ],
+        appointments: [_appointment('a', 'Confirmed', rawDate: '2026-09-14')],
+        now: lateUtc,
+      );
+      expect(feed, isEmpty);
+    });
+
+    test('an unnamed dentist reads "your doctor", as on the website', () {
+      final feed = NotificationFeed.build(
+        appointments: [_appointment('a', 'Confirmed', rawDate: '2026-09-20', doctor: '')],
         now: _now,
       );
-      final reminders = _sharedKeys(feed).where((k) => k.startsWith('reminder|'));
-      expect(reminders, unorderedEquals(['reminder|2026-09-14|08:00:00', 'reminder|2026-09-16|10:00:00']));
+      expect(feed.single.body, endsWith('— your doctor'));
     });
 
-    test('rcpt|<payment_receipts.id>', () {
+    test('receipts and plans', () {
       final feed = NotificationFeed.build(
-        billing: [
-          Payment(
-            id: 'billing-row',
-            referenceNo: 'OR-1',
+        receipts: [
+          ReceiptNotice(
+            id: 'r1',
+            issuedAt: DateTime.utc(2026, 9, 12),
+            referenceNo: 'OR-0001',
             procedureName: 'Cleaning',
-            doctorName: '',
-            amount: 1500,
-            billedOn: DateTime(2026, 9, 11),
-            status: 'Paid',
-            invoiceNo: 'INV-1',
-            receiptNo: 'OR-1',
-            receiptId: 'receipt-uuid',
+            amountDue: 1500,
+            paymentMethod: 'Cash',
           ),
         ],
+        plans: [_plan('p1'), _plan('p2', updatedAt: '2026-09-10T08:00:00+00:00', status: 'completed')],
         now: _now,
       );
-      expect(_sharedKeys(feed), ['rcpt|receipt-uuid']);
+      expect(_ids(feed), [
+        'rcpt|r1',
+        'plan|p1|2026-09-01T08:00:00+00:00',
+        'plan|p2|2026-09-10T08:00:00+00:00',
+      ]);
+      expect(feed[0].body, 'Cleaning — ₱1,500.00 (Cash)');
+      expect(feed[0].target!.type, NotificationTargetType.billing);
+      expect(feed[1].title, 'New treatment plan');
+      expect(feed[2].title, 'Treatment plan completed');
+      expect(feed[2].target!.type, NotificationTargetType.plan);
+    });
+  });
+
+  group('addressed rows', () {
+    test('lead the feed, newest first, and carry their own read_at', () {
+      final feed = NotificationFeed.build(
+        addressed: [
+          _row('old', createdAt: _now.subtract(const Duration(days: 3)), readAt: _now),
+          _row('new', createdAt: _now.subtract(const Duration(hours: 3))),
+        ],
+        appointments: [_appointment('a2', 'Pending')],
+        now: _now,
+      );
+      expect(_ids(feed), ['db|new', 'db|old', 'awaiting|a2']);
+      expect(feed[0].isRead, isFalse);
+      expect(feed[1].isRead, isTrue);
     });
 
-    test('plan|<id>|<updated_at ?? created_at>, any status, new key after an edit', () {
-      final created = NotificationFeed.build(plans: [_plan('p1')], now: _now);
-      expect(_sharedKeys(created), ['plan|p1|2026-09-01T08:00:00+00:00']);
-      expect(created.single.item.title, 'New treatment plan');
-
-      final edited = NotificationFeed.build(
-        plans: [_plan('p1', updatedAt: '2026-09-12T11:30:00.123456+00:00')],
-        state: {'plan|p1|2026-09-01T08:00:00+00:00': NotificationState(readAt: DateTime(2026, 9, 2))},
+    test('a derived notice an addressed row already says is dropped', () {
+      final feed = NotificationFeed.build(
+        addressed: [
+          _row('c', event: 'appointment.confirmed', title: 'Your appointment is confirmed', entityId: 'a1'),
+        ],
+        covered: {'appointment.confirmed|a1', 'billing.receipt|r1'},
+        appointments: [_appointment('a1', 'Confirmed'), _appointment('a2', 'Confirmed', rawTime: '14:00:00')],
+        receipts: [ReceiptNotice(id: 'r1', issuedAt: DateTime.utc(2026, 9, 12))],
         now: _now,
       );
-      expect(_sharedKeys(edited), ['plan|p1|2026-09-12T11:30:00.123456+00:00']);
-      expect(edited.single.item.isRead, isFalse);
-      expect(edited.single.item.title, 'Treatment plan updated');
+      expect(_ids(feed), ['db|c', 'confirmed|2026-09-20|14:00:00']);
+    });
 
-      final done = NotificationFeed.build(
-        plans: [
-          _plan('c', status: 'completed', updatedAt: '2026-09-12T00:00:00+00:00'),
-          _plan('x', status: 'cancelled', updatedAt: '2026-09-11T00:00:00+00:00'),
+    test('two reschedules stay two notices', () {
+      final feed = NotificationFeed.build(
+        addressed: [
+          _row('r1', event: 'appointment.rescheduled', title: 'Your appointment was rescheduled'),
+          _row('r2', event: 'appointment.rescheduled', title: 'Your appointment was rescheduled'),
         ],
         now: _now,
       );
-      expect(_sharedKeys(done), hasLength(2));
-      expect(done.firstWhere((n) => n.item.id.startsWith('plan|c|')).item.title,
-          'Treatment plan completed');
+      expect(feed, hasLength(2));
     });
 
-    test('plans: newest 10 by updated_at desc, a null updated_at first', () {
-      final plans = [
-        for (var i = 0; i < 11; i++)
-          _plan('u$i', updatedAt: '2026-09-${(i + 1).toString().padLeft(2, '0')}T00:00:00+00:00'),
-        _plan('never-updated', createdAt: '2026-08-01T00:00:00+00:00'),
-      ];
-      final keys = _sharedKeys(NotificationFeed.build(plans: plans, now: _now)).toList();
-      expect(keys, hasLength(10));
-      expect(keys, contains('plan|never-updated|2026-08-01T00:00:00+00:00'));
-      // The two oldest `updated_at` values fall off.
-      expect(keys.any((k) => k.startsWith('plan|u0|')), isFalse);
-      expect(keys.any((k) => k.startsWith('plan|u1|')), isFalse);
+    test('where each kind opens', () {
+      NotificationTarget? t(String event, String entity) =>
+          NotificationFeed.targetOf(event: event, entity: entity, entityId: 'x');
+      expect(t('appointment.cancelled', 'appointment')!.type, NotificationTargetType.appointment);
+      expect(t('billing.charged', 'billing')!.type, NotificationTargetType.billing);
+      expect(t('clinical.treatment_plan', 'patient')!.type, NotificationTargetType.plan);
+      expect(t('visit_payment_requested', 'visit_payment_request')!.type,
+          NotificationTargetType.visitPayment);
+      expect(t('appointment.earlier_slot', 'slot_offer')!.type, NotificationTargetType.slotOffer);
+      expect(t('patient.updated', 'patient'), isNull);
     });
+  });
 
-    test('read and dismissed state from notification_state is applied by key', () {
+  group('shared state and settings', () {
+    test('notification_state read and dismissed apply to any key', () {
       final feed = NotificationFeed.build(
-        appointments: [_appointment('read', 'Pending'), _appointment('gone', 'Pending')],
+        addressed: [_row('a'), _row('b')],
+        appointments: [_appointment('p', 'Pending')],
         state: {
-          'awaiting|read': NotificationState(readAt: DateTime(2026, 9, 13)),
-          'awaiting|gone': NotificationState(readAt: DateTime(2026, 9, 13), dismissedAt: DateTime(2026, 9, 13)),
+          'db|a': NotificationState(readAt: _now),
+          'db|b': NotificationState(readAt: _now, dismissedAt: _now),
+          'awaiting|p': NotificationState(readAt: _now),
         },
         now: _now,
       );
-      expect(_keys(feed), ['awaiting|read']);
-      expect(feed.single.item.isRead, isTrue);
+      expect(_ids(feed), ['db|a', 'awaiting|p']);
+      expect(feed.every((n) => n.isRead), isTrue);
     });
-  });
 
-  group('not shared', () {
-    test('cancelled, completed, due and wallet notices are app-only', () {
+    test('a switched-off category leaves the feed, and so the count', () {
       final feed = NotificationFeed.build(
-        appointments: [
-          _appointment('ca', 'Cancelled', changedAt: DateTime(2026, 9, 13)),
-          _appointment('co', 'Completed', changedAt: DateTime(2026, 9, 12)),
-        ],
-        billing: [
-          Payment(
-            id: 'b1',
-            referenceNo: 'INV-1',
-            procedureName: 'Cleaning',
-            doctorName: '',
-            amount: 900,
-            billedOn: DateTime(2026, 9, 11),
-            status: 'Unpaid',
-            invoiceNo: 'INV-1',
-          ),
-        ],
+        addressed: [_row('bill', event: 'billing.charged', entity: 'billing')],
+        appointments: [_appointment('p', 'Pending')],
+        prefs: const NotificationPrefs(billing: false),
         now: _now,
       );
-      expect(_keys(feed), unorderedEquals(['local:cancelled:ca', 'local:completed:co', 'local:due:b1']));
-      expect(_keys(feed).every(NotificationFeed.isLocal), isTrue);
-      expect(_keys(feed).any(NotificationFeed.isShared), isFalse);
-    });
-
-    test('notifications table rows are neither shared, local nor messages', () {
-      const uuid = '3f1c9a52-8a8e-4a57-9d1e-7c1f5f9e2b10';
-      expect(NotificationFeed.isDerived(uuid), isFalse);
-      expect(NotificationFeed.isShared('confirmed|2026-09-20|10:00:00'), isTrue);
-      expect(NotificationFeed.isShared('local:due:x'), isFalse);
+      expect(_ids(feed), ['awaiting|p']);
     });
   });
 
-  group('Appointment raw columns', () {
-    test('a locally built booking spells its columns the way Postgres returns them', () {
-      final a = Appointment(
-        id: 'x',
-        serviceName: 's',
-        doctorName: '',
-        date: DateTime(2026, 9, 5),
-        timeSlot: '01:30 PM',
-        status: AppointmentStatus.pending,
-      );
-      expect(a.rawDate, '2026-09-05');
-      expect(a.rawTime, '13:30:00');
-      expect(a.rawStatus, 'Pending');
+  group('time', () {
+    test('event age, as the website writes it', () {
+      expect(NotificationFeed.relativeAge(_now, _now), 'Just now');
+      expect(NotificationFeed.relativeAge(_now.subtract(const Duration(minutes: 5)), _now), '5m ago');
+      expect(NotificationFeed.relativeAge(_now.subtract(const Duration(hours: 3, minutes: 50)), _now),
+          '3h ago');
+      expect(NotificationFeed.relativeAge(_now.subtract(const Duration(days: 2, hours: 20)), _now),
+          '2d ago');
+    });
 
-      final moved = a.copyWith(date: DateTime(2026, 9, 6), timeSlot: '10:00 AM');
-      expect(moved.rawDate, '2026-09-06');
-      expect(moved.rawTime, '10:00:00');
+    test('byline is actor and age; the schedule stays in the body', () {
+      final n = _row('x');
+      expect(NotificationFeed.byline(n, _now), 'Maria Santos · 2d ago');
+      expect(n.body, 'Sep 28, 2026 10:00 AM');
+      expect(NotificationFeed.byline(_row('y', actor: null), _now), '2d ago');
+    });
+
+    test('the schedule is read from the stored strings', () {
+      expect(NotificationFeed.formatSchedule('2026-09-28', '10:00:00'), 'Sep 28, 2026 · 10:00 AM');
+      expect(NotificationFeed.formatSchedule('2026-09-28', '00:30:00'), 'Sep 28, 2026 · 12:30 AM');
+      expect(NotificationFeed.formatSchedule('2026-09-28', ''), 'Sep 28, 2026');
     });
   });
 
-  group('PatientRepository', () {
+  test('tones and icons follow the event key', () {
+    expect(NotificationStyle.toneOf('appointment.cancelled'), NotificationTone.red);
+    expect(NotificationStyle.toneOf('appointment.confirmed'), NotificationTone.green);
+    expect(NotificationStyle.toneOf('appointment.rescheduled'), NotificationTone.purple);
+    expect(NotificationStyle.toneOf('appointment.reminder'), NotificationTone.orange);
+    expect(NotificationStyle.toneOf('appointment.pending'), NotificationTone.orange);
+    expect(NotificationStyle.toneOf('appointment.booked_for_you'), NotificationTone.blue);
+    expect(NotificationStyle.toneOf('appointment.assigned'), NotificationTone.blue);
+    expect(NotificationStyle.toneOf('appointment.paid'), NotificationTone.green);
+    expect(NotificationStyle.toneOf('visit_payment_requested'), NotificationTone.orange);
+    expect(NotificationStyle.toneOf('appointment.earlier_slot'), NotificationTone.purple);
+    expect(NotificationStyle.toneOf('billing.receipt'), NotificationTone.blue);
+    expect(NotificationStyle.toneOf('billing.voided'), NotificationTone.red);
+    expect(NotificationStyle.toneOf('treatment_plan'), NotificationTone.purple);
+    expect(NotificationStyle.toneOf('something.new'), NotificationTone.gray);
+    expect(NotificationStyle.iconColor(NotificationTone.red, dark: false), const Color(0xFFB91C1C));
+  });
+
+  group('on screen', () {
     setUpAll(() async {
       TestWidgetsFlutterBinding.ensureInitialized();
       SharedPreferences.setMockInitialValues({});
       await Supabase.initialize(url: 'https://example.supabase.co', publishableKey: 'test-anon-key');
     });
-
     tearDown(() => PatientRepository().clear());
 
-    Patient patient() => Patient(
+    testWidgets('an unread row has the teal bar; reading it removes only the bar',
+        (tester) async {
+      Future<void> pump(NotificationItem n) => tester.pumpWidget(
+            MaterialApp(home: Scaffold(body: NotificationRow(notification: n))),
+          );
+      bool hasBar() => find
+          .byWidgetPredicate((w) =>
+              w is Container &&
+              w.decoration is BoxDecoration &&
+              (w.decoration as BoxDecoration).color == NotificationStyle.unreadIndicator)
+          .evaluate()
+          .isNotEmpty;
+
+      final n = _row('x', createdAt: DateTime.now().subtract(const Duration(days: 2)));
+      await pump(n);
+      expect(find.text('Maria Santos · 2d ago'), findsOneWidget);
+      expect(find.text('Your appointment was cancelled'), findsOneWidget);
+      expect(find.text('Sep 28, 2026 10:00 AM'), findsOneWidget);
+      expect(hasBar(), isTrue);
+
+      await pump(n.copyWith(isRead: true, readAt: DateTime.now()));
+      expect(hasBar(), isFalse);
+      expect(find.byType(NotificationRow), findsOneWidget);
+    });
+
+    test('the badge counts the feed, drops on a tap, and is zero while off', () async {
+      final repository = PatientRepository();
+      repository.seedForTest(
+        patient: Patient(
           id: 'p',
-          patientCode: 'P-1',
+          patientCode: 'PAT-1',
           firstName: 'Test',
           lastName: 'Patient',
-          username: 'test',
-          email: 'test@example.com',
+          username: 't',
+          email: 't@example.com',
           phone: '',
-        );
-
-    test('clinic messages count on the chat badge and never on the bell', () {
-      PatientRepository().seedForTest(
-        patient: patient(),
-        messages: [
-          PatientMessage(id: 'm1', body: 'See you', fromPatient: false, senderRole: 'clinic', sentAt: DateTime.now()),
-        ],
+        ),
+        notifications: [_row('a'), _row('b')],
       );
-      expect(PatientRepository().unreadMessageCount, 1);
-      expect(PatientRepository().notifications, isEmpty);
-      expect(PatientRepository().unreadNotificationCount, 0);
-    });
-
-    test('next appointment: Confirmed or Pending, today onward, earliest date then time', () {
-      final now = DateTime.now();
-      final today = DateTime(now.year, now.month, now.day);
-      String day(DateTime d) =>
-          '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
-      final tomorrow = today.add(const Duration(days: 1));
-      final yesterday = today.subtract(const Duration(days: 1));
-
-      PatientRepository().seedForTest(
-        patient: patient(),
-        appointments: [
-          _appointment('past-pending', 'Pending', date: yesterday, rawDate: day(yesterday)),
-          _appointment('ongoing-today', 'Ongoing', date: today, rawDate: day(today), rawTime: '08:00:00'),
-          _appointment('cancelled-today', 'Cancelled', date: today, rawDate: day(today), rawTime: '07:00:00'),
-          _appointment('tomorrow-3pm', 'Confirmed', date: tomorrow, rawDate: day(tomorrow), rawTime: '15:00:00'),
-          _appointment('tomorrow-10am', 'pending', date: tomorrow, rawDate: day(tomorrow), rawTime: '10:00:00'),
-        ],
+      expect(repository.unreadNotificationCount, 2);
+      // No session in a test, so nothing is written; the local copy is what
+      // this covers. The writes themselves are PatientApi.markNoticesRead.
+      repository.seedForTest(
+        patient: repository.patient,
+        notifications: [_row('a'), _row('b')],
+        notificationState: {'db|a': NotificationState(readAt: _now)},
       );
-      expect(PatientRepository().nextUpcomingAppointment?.id, 'tomorrow-10am');
-    });
-
-    test('the bell shows notices built from the record', () {
-      PatientRepository().seedForTest(
-        patient: patient(),
-        appointments: [_appointment('a1', 'Confirmed')],
+      expect(repository.unreadNotificationCount, 1);
+      repository.seedForTest(
+        patient: repository.patient,
+        notifications: [_row('a'), _row('b')],
+        notificationPrefs: const NotificationPrefs(enabled: false),
       );
-      expect(PatientRepository().notifications.map((n) => n.id), contains('confirmed|2026-09-20|10:00:00'));
-    });
-
-    test('unread messages are the clinic\'s with no read_at; oldest first', () {
-      PatientRepository().seedForTest(
-        patient: patient(),
-        messages: [
-          PatientMessage(id: 'new', body: 'b', fromPatient: false, senderRole: 'clinic', sentAt: DateTime(2026, 9, 13)),
-          PatientMessage(id: 'old', body: 'a', fromPatient: true, senderRole: 'patient', sentAt: DateTime(2026, 9, 12)),
-        ],
-      );
-      expect(PatientRepository().messages.map((m) => m.id), ['old', 'new']);
-      expect(PatientRepository().unreadMessageCount, 1);
+      expect(repository.unreadNotificationCount, 0);
     });
   });
 }

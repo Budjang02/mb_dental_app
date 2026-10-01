@@ -1,8 +1,8 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../app/theme.dart';
-import '../data/clinic_catalog.dart';
 
 /// The pieces Sign In and Create Account both draw below their form: a
 /// labelled rule, the two social providers, and the terms line under them.
@@ -135,14 +135,13 @@ class TermsNotice extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final muted = TextStyle(
-      fontSize: 11.5,
-      height: 1.45,
+      fontSize: 13,
+      height: 1.6,
+      fontWeight: FontWeight.w400,
       color: AppColors.textSecondary,
     );
-    final link = muted.copyWith(
-      fontWeight: FontWeight.bold,
-      color: AppColors.textPrimary,
-    );
+    // Links read as darker text, not bold, so the notice stays quiet.
+    final link = muted.copyWith(color: AppColors.textPrimary);
 
     // Recognisers are owned by the spans, which live only as long as this
     // build; a StatelessWidget cannot dispose them, so they are created fresh
@@ -151,7 +150,7 @@ class TermsNotice extends StatelessWidget {
           text: label,
           style: link,
           recognizer: TapGestureRecognizer()
-            ..onTap = () => showLegalDocument(context, label),
+            ..onTap = () => showLegalDocument(context),
         );
 
     return Text.rich(
@@ -160,7 +159,8 @@ class TermsNotice extends StatelessWidget {
         children: [
           TextSpan(text: '$leadIn '),
           document('Terms'),
-          const TextSpan(text: ' and '),
+          // Breaks after "Terms" so the notice sits as two centred lines.
+          const TextSpan(text: '\nand '),
           document('Conditions of Use'),
         ],
       ),
@@ -169,33 +169,36 @@ class TermsNotice extends StatelessWidget {
   }
 }
 
-/// Opens the named legal document.
-///
-/// The clinic has not supplied the final wording yet, so this shows where it
-/// will live and how to ask for a copy in the meantime rather than inventing
-/// terms nobody at the practice has agreed to.
-// TODO: render the real document (bundled asset or fetched from the clinic
-// site) once legal provides it.
-void showLegalDocument(BuildContext context, String title) {
+/// The clinic's Terms and Conditions, bundled with the app. The same file
+/// the booking screen shows before payment, so both always carry the same
+/// wording.
+const String _termsAsset = 'assets/files/TERMS AND CONDITIONS.txt';
+
+/// Opens the Terms and Conditions in a tall sheet the patient can scroll
+/// through. The text is the bundled file as written; only its byte-order
+/// mark, line endings and blank spacer lines are dropped for display.
+void showLegalDocument(BuildContext context) {
   showModalBottomSheet<void>(
     context: context,
     backgroundColor: Colors.transparent,
     isScrollControlled: true,
-    builder: (sheetContext) => Container(
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-        border: Border.all(color: AppColors.border),
-      ),
-      padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
-      child: SafeArea(
-        top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(
-              child: Container(
+    builder: (sheetContext) => DraggableScrollableSheet(
+      initialChildSize: 0.9,
+      minChildSize: 0.5,
+      maxChildSize: 0.95,
+      expand: false,
+      builder: (context, scrollController) => Container(
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+          border: Border.all(color: AppColors.border),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            children: [
+              const SizedBox(height: 12),
+              Container(
                 height: 4,
                 width: 40,
                 decoration: BoxDecoration(
@@ -203,78 +206,116 @@ void showLegalDocument(BuildContext context, String title) {
                   borderRadius: BorderRadius.circular(4),
                 ),
               ),
-            ),
-            const SizedBox(height: 20),
-            Text(
-              title,
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: AppColors.textPrimary,
+              Expanded(
+                child: FutureBuilder<List<String>>(
+                  future: _loadParagraphs(_termsAsset),
+                  builder: (context, snapshot) {
+                    if (snapshot.hasError) {
+                      return Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: Text(
+                            'The Terms and Conditions could not be opened. Please try again.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: AppColors.textSecondary),
+                          ),
+                        ),
+                      );
+                    }
+                    final paragraphs = snapshot.data;
+                    if (paragraphs == null) {
+                      return Center(
+                        child: CircularProgressIndicator(color: AppColors.primary),
+                      );
+                    }
+                    return Scrollbar(
+                      controller: scrollController,
+                      child: ListView.builder(
+                        controller: scrollController,
+                        padding: const EdgeInsets.fromLTRB(24, 20, 24, 16),
+                        itemCount: paragraphs.length,
+                        itemBuilder: (context, i) =>
+                            _legalParagraph(paragraphs[i], isFirst: i == 0),
+                      ),
+                    );
+                  },
+                ),
               ),
-            ),
-            const SizedBox(height: 10),
-            Text(
-              'The full $title for $kClinicName is not published in the app yet. '
-              'Ask the front desk for a copy, or contact us and we will send it '
-              'to you.',
-              style: TextStyle(
-                fontSize: 13,
-                height: 1.5,
-                color: AppColors.textSecondary,
-              ),
-            ),
-            const SizedBox(height: 16),
-            // Shown only where the clinic has published one. This sheet is
-            // reachable before sign-in, so those fields may still be blank.
-            if (kClinicEmail.isNotEmpty) ...[
-              _contactLine(Icons.mail_outline, kClinicEmail),
-              const SizedBox(height: 8),
-            ],
-            if (kClinicPhone.isNotEmpty) _contactLine(Icons.phone_outlined, kClinicPhone),
-            const SizedBox(height: 24),
-            SizedBox(
-              width: double.infinity,
-              height: 46,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primary,
-                  elevation: 0,
-                  minimumSize: const Size(0, 46),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
+                child: SizedBox(
+                  width: double.infinity,
+                  height: 46,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      elevation: 0,
+                      minimumSize: const Size(0, 46),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    onPressed: () => Navigator.pop(sheetContext),
+                    child: const Text(
+                      'Close',
+                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                    ),
                   ),
                 ),
-                onPressed: () => Navigator.pop(sheetContext),
-                child: const Text(
-                  'Close',
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     ),
   );
 }
 
-Widget _contactLine(IconData icon, String value) {
-  return Row(
-    children: [
-      Icon(icon, size: 16, color: AppColors.primary),
-      const SizedBox(width: 10),
-      Flexible(
-        child: Text(
-          value,
-          style: TextStyle(
-            fontSize: 12.5,
-            fontWeight: FontWeight.w600,
-            color: AppColors.textPrimary,
-          ),
+/// Each non-blank line of the file is a paragraph, so the title, the "Last
+/// updated" line and every heading stand on their own.
+Future<List<String>> _loadParagraphs(String asset) async {
+  final raw = await rootBundle.loadString(asset);
+  return raw
+      .replaceAll('\uFEFF', '')
+      .replaceAll('\r\n', '\n')
+      .replaceAll('\r', '\n')
+      .split('\n')
+      .map((line) => line.trim())
+      .where((line) => line.isNotEmpty)
+      .toList();
+}
+
+/// A line the document writes in capitals ("AGREEMENT TO OUR LEGAL TERMS") is
+/// a heading; the first line is the document title.
+Widget _legalParagraph(String text, {required bool isFirst}) {
+  final letters = text.replaceAll(RegExp(r'[^A-Za-z]'), '');
+  final isHeading =
+      text.length <= 90 && letters.length >= 3 && letters == letters.toUpperCase();
+
+  if (isHeading) {
+    return Padding(
+      padding: EdgeInsets.only(top: isFirst ? 0 : 12, bottom: 6),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: isFirst ? 18 : 13.5,
+          fontWeight: FontWeight.bold,
+          height: 1.35,
+          color: AppColors.textPrimary,
         ),
       ),
-    ],
+    );
+  }
+  return Padding(
+    padding: const EdgeInsets.only(bottom: 10),
+    child: Text(
+      text,
+      style: TextStyle(
+        fontSize: 13,
+        height: 1.55,
+        color: AppColors.textSecondary,
+      ),
+    ),
   );
 }
 

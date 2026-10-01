@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:mb_dental_app/app/theme.dart';
 import 'package:mb_dental_app/app/theme_controller.dart';
 import 'package:mb_dental_app/screens/auth/forgot_password_screen.dart';
+import 'package:mb_dental_app/screens/auth/otp_verification_screen.dart';
 import 'package:mb_dental_app/screens/auth/register_screen.dart';
 import 'package:mb_dental_app/services/auth_service.dart';
 import 'package:mb_dental_app/widgets/app_toast.dart';
@@ -61,6 +62,10 @@ class _LoginScreenState extends State<LoginScreen> {
       _networkMessage = result.isRetryable ? result.message : null;
     });
 
+    if (result.emailNotConfirmed) {
+      await _finishEmailVerification();
+      return;
+    }
     if (!result.success) {
       showAppToast(context, result.message ?? 'Sign in failed.', isError: true);
       return;
@@ -68,6 +73,34 @@ class _LoginScreenState extends State<LoginScreen> {
     // No push to the dashboard: `AuthGate` is watching the auth stream and
     // swaps this screen for the dashboard the moment the session opens. Only
     // anything stacked above the gate has to go.
+    Navigator.of(context).popUntil((route) => route.isFirst);
+  }
+
+  /// The account exists but its address was never confirmed. Like the
+  /// website, send a fresh signup code and take the patient to the code
+  /// screen instead of leaving them stuck here.
+  Future<void> _finishEmailVerification() async {
+    final email = _emailController.text.trim().toLowerCase();
+    setState(() => _isLoading = true);
+    final sent = await AuthService.resendSignupCode(email);
+    if (!mounted) return;
+    setState(() => _isLoading = false);
+
+    if (!sent.success) {
+      showAppToast(
+        context,
+        sent.message ?? 'Please confirm your email address first, then sign in.',
+        isError: true,
+      );
+      return;
+    }
+
+    final verified = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(builder: (_) => OtpVerificationScreen(destination: email)),
+    );
+    if (!mounted || verified != true) return;
+    // Verifying opened the session; `AuthGate` takes it from here.
     Navigator.of(context).popUntil((route) => route.isFirst);
   }
 
@@ -299,7 +332,7 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               const Padding(
                 padding: EdgeInsets.fromLTRB(24, 8, 24, 16),
-                child: TermsNotice(leadIn: 'By logging in, you agree to our'),
+                child: TermsNotice(leadIn: 'By signing in you agree to our'),
               ),
             ],
           ),

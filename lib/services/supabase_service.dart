@@ -38,18 +38,12 @@ class SupabaseService {
       throw StateError('Supabase configuration is invalid.');
     }
 
-    NetworkService.configure(uri);
     await Supabase.initialize(
       url: uri.toString(),
       publishableKey: anonKey,
       httpClient: ConnectivityAwareClient(),
     );
   }
-
-  /// A reachability check for flows that should not wait for a network request
-  /// to fail, such as the login button. It checks only the configured host.
-  static Future<bool> canReachServer({bool force = false}) =>
-      NetworkService.canReachServer(force: force);
 
   static SupabaseClient get client => Supabase.instance.client;
 

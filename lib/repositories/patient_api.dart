@@ -14,8 +14,8 @@ import '../models/patient_document.dart';
 import '../models/patient_message.dart';
 import '../models/payment.dart';
 import '../models/treatment.dart';
+import '../models/treatment_note.dart';
 import '../models/wallet_transaction.dart';
-import '../services/push_notification_service.dart';
 import '../services/supabase_service.dart';
 import 'load_state.dart';
 import 'notification_feed.dart';
@@ -31,7 +31,8 @@ class PatientSnapshot {
   /// Every plan on the chart, for the "plan created or updated" notice.
   final List<TreatmentPlanSummary> treatmentPlans;
   final List<Payment> billing;
-  final List<NotificationItem> notifications;
+  /// The addressed notices, and what the derived ones are checked against.
+  final NotificationSources notifications;
   final List<WalletTransaction> transactions;
   final List<PatientDocument> documents;
 
@@ -41,11 +42,16 @@ class PatientSnapshot {
   /// Every entry the clinic has written in `treatment_notes`, newest first —
   /// the history behind the chart, which [toothRecords] only holds the present
   /// state of. Same map shape as [toothRecords].
-  final List<Map<String, String>> treatmentNotes;
+  /// Active `treatment_notes`, newest first. Null when they could not be
+  /// read, which is not the same as having none.
+  final List<TreatmentNote>? treatmentNotes;
 
   /// The support conversation with the clinic, oldest first.
   final List<PatientMessage> messages;
   final double walletBalance;
+
+  /// Bills the clinic sent to be paid from the patient's account, still pending.
+  final List<VisitPaymentRequest> visitRequests;
 
   /// False while `patients.approved_at` is null: the clinic has not approved a
   /// self-registered account yet, and the clinic's booking rules refuse it.
@@ -75,6 +81,7 @@ class PatientSnapshot {
     required this.treatmentNotes,
     required this.messages,
     required this.walletBalance,
+    this.visitRequests = const [],
     required this.isApprovedForBooking,
     required this.isWalletBalanceKnown,
     this.failures = const {},
@@ -83,6 +90,17 @@ class PatientSnapshot {
 
 /// The outstanding plan items the Records screen lists, and the plans
 /// themselves for the notification feed.
+/// The Wallet page's data: the ledger, the balance and the clinic's pending
+/// payment requests. [balance] is null when `wallet_balance()` could not be
+/// read — the page then says so instead of adding up the rows it has.
+class WalletData {
+  final List<WalletTransaction> transactions;
+  final double? balance;
+  final List<VisitPaymentRequest> visitRequests;
+
+  const WalletData({this.transactions = const [], this.balance, this.visitRequests = const []});
+}
+
 class TreatmentPlanData {
   final List<TreatmentPlanItem> items;
   final List<TreatmentPlanSummary> plans;
@@ -309,10 +327,9 @@ class PatientApi {
       section(SyncSection.treatmentPlan, () => fetchTreatmentPlan(patientId),
           const TreatmentPlanData(items: [], plans: [])),
       section(SyncSection.billing, () => fetchBilling(patientId), const <Payment>[]),
-      section(SyncSection.notifications, () => fetchNotifications(userId),
-          const <NotificationItem>[]),
-      section(SyncSection.wallet, () => fetchTransactions(patientId),
-          const <WalletTransaction>[]),
+      section(SyncSection.notifications, () => fetchNotificationSources(userId, patientId),
+          const NotificationSources()),
+      section(SyncSection.wallet, () => fetchWallet(patientId), const WalletData()),
       section(SyncSection.documents, () => fetchDocuments(patientId),
           const <PatientDocument>[]),
       section(SyncSection.chart, () => fetchToothRecords(patientId),
@@ -321,27 +338,30 @@ class PatientApi {
           const <PatientMessage>[]),
       // The treatment history shares the chart's section: both feed the same
       // two screens, and either one failing makes that section unreliable.
-      section(SyncSection.chart, () => fetchTreatmentNotes(patientId),
-          const <Map<String, String>>[]),
+      // Not a `section`: a failed read is kept apart from an empty history
+      // (null here) and does not mark the chart itself as failed.
+      fetchTreatmentNotes(patientId).then<List<TreatmentNote>?>((v) => v, onError: (Object e) {
+        debugPrint('treatment_notes unavailable: $e');
+        return null;
+      }),
     ]);
 
     final appointments = results[0] as List<Appointment>;
     final planData = results[1] as TreatmentPlanData;
     final treatmentPlan = planData.items;
     final billing = results[2] as List<Payment>;
-    final notifications = results[3] as List<NotificationItem>;
-    final transactions = results[4] as List<WalletTransaction>;
+    final notifications = results[3] as NotificationSources;
+    final wallet = results[4] as WalletData;
+    final transactions = wallet.transactions;
     final documents = results[5] as List<PatientDocument>;
     final toothRecords = results[6] as List<Map<String, String>>;
     final messages = results[7] as List<PatientMessage>;
-    final treatmentNotes = results[8] as List<Map<String, String>>;
+    final treatmentNotes = results[8] as List<TreatmentNote>?;
 
-    // The stored column, where the schema has one, is authoritative even if the
-    // ledger could not be read. Otherwise the ledger is the balance, so the
-    // balance is only known when the wallet section came back.
-    final storedBalance = _double(patientRow['wallet_balance']);
+    // Only `wallet_balance()` is the balance: it sums the whole ledger on the
+    // server. A sum of the rows this device loaded is not shown as one.
     final isWalletBalanceKnown =
-        storedBalance != null || !failures.containsKey(SyncSection.wallet);
+        wallet.balance != null && !failures.containsKey(SyncSection.wallet);
 
     return PatientSnapshot(
       patient: _patientFrom(patientRow, profileRow),
@@ -358,34 +378,42 @@ class PatientApi {
       toothRecords: toothRecords,
       treatmentNotes: treatmentNotes,
       messages: messages,
-      // A stored column wins where one exists; the live schema has none, so the
-      // ledger is the balance — the same sum `wallet_balance_of()` checks
-      // checkout against.
-      walletBalance: storedBalance ?? balanceFrom(transactions),
+      walletBalance: wallet.balance ?? 0,
+      visitRequests: wallet.visitRequests,
       isApprovedForBooking: patientRow['approved_at'] != null,
       isWalletBalanceKnown: isWalletBalanceKnown,
       failures: failures,
     );
   }
 
-  /// The wallet balance as it stands now: the stored column when the database
-  /// has one, otherwise the sum of [transactions].
-  static Future<double> walletBalanceFor({
-    required String userId,
-    required List<WalletTransaction> transactions,
-  }) async {
-    if (_hasWalletBalanceColumn) {
-      final row = await _patientRowFor(userId);
-      final stored = _double(row?['wallet_balance']);
-      if (stored != null) return stored;
-    }
-    return balanceFrom(transactions);
+  /// The whole balance, from `wallet_balance()` — the function the website
+  /// reads and that sums every ledger row on the server. Throws when it cannot
+  /// be read, so the caller shows "unavailable" rather than a partial sum.
+  static Future<double> fetchWalletBalance() async {
+    final value = await SupabaseService.client.rpc('wallet_balance');
+    final balance = value is num ? value.toDouble() : double.tryParse('$value');
+    if (balance == null) throw StateError('wallet_balance() returned no value');
+    return balance;
   }
 
-  /// True until `patients.wallet_balance` is seen to be missing. Production has
-  /// no such column — the ledger is the balance — so the first load drops it
-  /// and every later one sums `wallet_transactions` instead.
-  static bool _hasWalletBalanceColumn = true;
+  /// Everything the Wallet page shows: the full ledger, the balance and the
+  /// clinic's pending payment requests. A balance that could not be read is
+  /// null, never a sum of the rows.
+  static Future<WalletData> fetchWallet(String patientId) async {
+    final results = await Future.wait<Object?>([
+      fetchTransactions(patientId),
+      fetchWalletBalance().then<double?>((v) => v, onError: (Object e) {
+        debugPrint('wallet_balance() unavailable: $e');
+        return null;
+      }),
+      fetchVisitRequests(patientId),
+    ]);
+    return WalletData(
+      transactions: results[0] as List<WalletTransaction>,
+      balance: results[1] as double?,
+      visitRequests: results[2] as List<VisitPaymentRequest>,
+    );
+  }
 
   static Future<Map<String, dynamic>?> _patientRowFor(String userId) async {
     const base = 'id, patient_code, patient_number, first_name, last_name, email, phone, '
@@ -398,14 +426,8 @@ class PatientApi {
         .eq('profile_id', userId)
         .maybeSingle();
 
-    if (_hasWalletBalanceColumn) {
-      try {
-        return await run('$base, wallet_balance');
-      } on PostgrestException catch (e) {
-        if (pgCode(e) != _undefinedColumn) rethrow;
-        _hasWalletBalanceColumn = false;
-      }
-    }
+    // No `wallet_balance` column: the balance is `wallet_balance()`, the sum
+    // of the whole ledger on the server (see [fetchWalletBalance]).
     return run(base);
   }
 
@@ -680,159 +702,76 @@ class PatientApi {
   /// is still read for charges the portal never re-recorded, so nothing billed
   /// before the move disappears from the patient's history.
   static Future<List<Payment>> fetchBilling(String patientId) async {
-    final client = SupabaseService.client;
+    const cols = 'id, billed_on, procedure_name, amount, status, payment_method, voided_at, '
+        'appointment_id, created_at';
+    const doctor = ', members!doctor_id(full_name)';
+    // Through receipt_items, not payment_receipts.billing_record_id: a receipt
+    // covering a whole visit leaves that column null.
+    const receipts = ', receipt_items(payment_receipts(id, reference_no, issued_at))';
+    const receiptsOld = ', payment_receipts(id, reference_no, issued_at)';
+    const invoices = ', invoice_items(invoice_id, invoices(id, invoice_no))';
 
-    final results = await Future.wait<List<Map<String, dynamic>>>([
-      client
-          .from('billing_records')
-          .select('id, appointment_id, procedure_name, amount, status, billed_on, created_at, doctor_id, '
-              'payment_method, '
-              'doctor:members!billing_records_doctor_id_fkey(full_name), '
-              'appointments(appointment_date, doctor_id, '
-              'doctor:members!appointments_doctor_id_fkey(full_name))')
-          .eq('patient_id', patientId)
-          .isFilter('voided_at', null)
-          .order('billed_on', ascending: false)
-          .then((rows) => rows.cast<Map<String, dynamic>>()),
-      _optionalRows(() => client
-          .from('billing')
-          .select('id, appointment_id, procedure_name, amount, payment_method, payment_status, '
-              'paid_at, created_at, '
-              'appointments(appointment_date, doctor_id, '
-              'doctor:members!appointments_doctor_id_fkey(full_name))')
-          .eq('patient_id', patientId)
-          .order('created_at', ascending: false)),
-      _optionalRows(() => client
-          .from('invoices')
-          .select('id, appointment_id, invoice_no, total_amount, billed_on, issued_at, doctor_name, '
-              'invoice_items(billing_record_id, description, amount), '
-              'appointments(appointment_date, doctor_id, '
-              'doctor:members!appointments_doctor_id_fkey(full_name))')
-          .eq('patient_id', patientId)),
-      _optionalRows(() => client
-          .from('payment_receipts')
-          .select('id, billing_record_id, reference_no, paid_on, issued_at, payment_method')
-          .eq('patient_id', patientId)),
-    ]);
+    Future<List<Map<String, dynamic>>> run(String select) async => (await SupabaseService.client
+            .from('billing_records')
+            .select(select)
+            .eq('patient_id', patientId)
+            .order('billed_on', ascending: false))
+        .cast<Map<String, dynamic>>();
 
-    final records = results[0];
-    final legacy = results[1];
-    final invoices = results[2];
-    final receipts = results[3];
-
-    final invoiceByRecord = <String, Map<String, dynamic>>{};
-    final invoiceByAppointment = <String, Map<String, dynamic>>{};
-    for (final invoice in invoices) {
-      for (final item in ((invoice['invoice_items'] as List?) ?? const []).cast<Map<String, dynamic>>()) {
-        final recordId = _str(item['billing_record_id']);
-        if (recordId.isNotEmpty) invoiceByRecord[recordId] = invoice;
+    // Each document table arrives with its own migration; a database without
+    // one loses that reference, not the whole list.
+    final attempts = [
+      cols + doctor + receipts + invoices,
+      cols + receipts + invoices,
+      cols + receiptsOld + invoices,
+      cols + receiptsOld,
+      cols,
+    ];
+    List<Map<String, dynamic>>? rows;
+    for (final select in attempts) {
+      try {
+        rows = await run(select);
+        break;
+      } on PostgrestException catch (e) {
+        if (select == attempts.last || !_missingSchema.hasMatch(e.message)) rethrow;
       }
-      final appointmentId = _str(invoice['appointment_id']);
-      if (appointmentId.isNotEmpty) invoiceByAppointment.putIfAbsent(appointmentId, () => invoice);
+    }
+    return [for (final row in rows ?? const <Map<String, dynamic>>[]) _chargeFrom(row)];
+  }
+
+  static Payment _chargeFrom(Map<String, dynamic> row) {
+    Map<String, dynamic>? first(Object? v) {
+      if (v is Map) return Map<String, dynamic>.from(v);
+      if (v is List && v.isNotEmpty && v.first is Map) return Map<String, dynamic>.from(v.first as Map);
+      return null;
     }
 
-    final receiptByRecord = <String, Map<String, dynamic>>{
-      for (final receipt in receipts)
-        if (_str(receipt['billing_record_id']).isNotEmpty) _str(receipt['billing_record_id']): receipt,
-    };
-
-    final payments = <Payment>[];
-    final claimedInvoiceIds = <String>{};
-    final billedAppointments = <String>{};
-
-    for (final row in records) {
-      final id = _str(row['id']);
-      final appointmentId = _str(row['appointment_id']);
-      if (appointmentId.isNotEmpty) billedAppointments.add(appointmentId);
-
-      final invoice = invoiceByRecord[id] ??
-          (appointmentId.isEmpty ? null : invoiceByAppointment[appointmentId]);
-      if (invoice != null) claimedInvoiceIds.add(_str(invoice['id']));
-      final receipt = receiptByRecord[id];
-
-      final isPaid = _str(row['status']).toLowerCase() == 'paid' || receipt != null;
-      final invoiceNo = _str(invoice?['invoice_no']);
-      final receiptNo = _str(receipt?['reference_no']);
-      final doctor = _doctorOf(row);
-
-      payments.add(Payment(
-        id: id,
-        referenceNo: invoiceNo.isNotEmpty ? invoiceNo : (receiptNo.isNotEmpty ? receiptNo : id),
-        invoiceNo: invoiceNo,
-        receiptNo: isPaid && receiptNo.isNotEmpty ? receiptNo : null,
-        receiptId: _nullableStr(_str(receipt?['id'])),
-        receiptIssuedAt: _date(receipt?['issued_at']) ?? _date(receipt?['paid_on']),
-        procedureName: _str(row['procedure_name']).isNotEmpty
-            ? _str(row['procedure_name'])
-            : _invoiceSummary(invoice),
-        doctorName: doctor.isNotEmpty
-            ? doctor
-            : _doctorOfVisit(row['appointments']) ??
-                _doctorOfVisit(invoice?['appointments']) ??
-                _str(invoice?['doctor_name']),
-        amount: _double(row['amount']) ?? 0,
-        billedOn: _date(row['billed_on']) ??
-            _date(row['created_at']) ??
-            _date(invoice?['billed_on']) ??
-            DateTime.now(),
-        status: isPaid ? 'Paid' : 'Unpaid',
-        paymentMethod: _nullableStr(_str(row['payment_method']).isNotEmpty
-            ? _str(row['payment_method'])
-            : _str(receipt?['payment_method'])),
-      ));
-    }
-
-    // Legacy charges, only where the portal has not re-recorded that visit.
-    for (final row in legacy) {
-      final appointmentId = _str(row['appointment_id']);
-      if (appointmentId.isNotEmpty && billedAppointments.contains(appointmentId)) continue;
-      if (appointmentId.isEmpty && records.isNotEmpty) continue;
-
-      final invoice = appointmentId.isEmpty ? null : invoiceByAppointment[appointmentId];
-      if (invoice != null) claimedInvoiceIds.add(_str(invoice['id']));
-      final isPaid = _str(row['payment_status']).toLowerCase() == 'paid' || row['paid_at'] != null;
-      final id = _str(row['id']);
-      final invoiceNo = _str(invoice?['invoice_no']);
-
-      payments.add(Payment(
-        id: id,
-        referenceNo: invoiceNo.isNotEmpty ? invoiceNo : id,
-        invoiceNo: invoiceNo,
-        receiptNo: null,
-        procedureName: _str(row['procedure_name']).isNotEmpty
-            ? _str(row['procedure_name'])
-            : _invoiceSummary(invoice),
-        doctorName: _doctorOfVisit(row['appointments']) ?? _doctorOfVisit(invoice?['appointments']) ?? '',
-        amount: _double(row['amount']) ?? _double(invoice?['total_amount']) ?? 0,
-        billedOn: _date(row['created_at']) ?? _date(invoice?['billed_on']) ?? DateTime.now(),
-        status: isPaid ? 'Paid' : 'Unpaid',
-        paymentMethod: _nullableStr(_str(row['payment_method'])),
-      ));
-    }
-
-    // An invoice no charge points at is still money owed, so it is listed.
-    for (final invoice in invoices) {
-      final invoiceId = _str(invoice['id']);
-      if (claimedInvoiceIds.contains(invoiceId)) continue;
-      claimedInvoiceIds.add(invoiceId);
-
-      final invoiceNo = _str(invoice['invoice_no']);
-      payments.add(Payment(
-        id: invoiceId,
-        referenceNo: invoiceNo.isNotEmpty ? invoiceNo : invoiceId,
-        invoiceNo: invoiceNo,
-        receiptNo: null,
-        procedureName: _invoiceSummary(invoice),
-        doctorName: _doctorOfVisit(invoice['appointments']) ?? _str(invoice['doctor_name']),
-        amount: _double(invoice['total_amount']) ?? 0,
-        billedOn: _date(invoice['billed_on']) ?? _date(invoice['issued_at']) ?? DateTime.now(),
-        status: 'Unpaid',
-        paymentMethod: null,
-      ));
-    }
-
-    payments.sort((a, b) => b.billedOn.compareTo(a.billedOn));
-    return payments;
+    final receiptItem = first(row['receipt_items']);
+    final receipt = receiptItem != null ? first(receiptItem['payment_receipts']) : first(row['payment_receipts']);
+    final invoiceItem = first(row['invoice_items']);
+    final invoice = invoiceItem == null ? null : first(invoiceItem['invoices']);
+    final member = first(row['members']);
+    final id = _str(row['id']);
+    final invoiceNo = _str(invoice?['invoice_no']);
+    final receiptNo = _str(receipt?['reference_no']);
+    final name = _str(row['procedure_name']);
+    return Payment(
+      id: id,
+      referenceNo: invoiceNo.isNotEmpty ? invoiceNo : (receiptNo.isNotEmpty ? receiptNo : id),
+      invoiceNo: invoiceNo,
+      invoiceId: _nullableStr(_str(invoice?['id']).isNotEmpty ? _str(invoice?['id']) : _str(invoiceItem?['invoice_id'])),
+      receiptNo: _nullableStr(receiptNo),
+      receiptId: _nullableStr(_str(receipt?['id'])),
+      receiptIssuedAt: _date(receipt?['issued_at']),
+      procedureName: name.isEmpty ? 'Charge' : name,
+      doctorName: _str(member?['full_name']),
+      amount: _double(row['amount']) ?? 0,
+      billedOn: _date(row['billed_on']) ?? _date(row['created_at']) ?? DateTime.now(),
+      status: _str(row['status']).isEmpty ? 'Unpaid' : _str(row['status']),
+      paymentMethod: _nullableStr(_str(row['payment_method'])),
+      voidedAt: _date(row['voided_at']),
+      appointmentId: _nullableStr(_str(row['appointment_id'])),
+    );
   }
 
   /// Rows from a secondary source, or none when it cannot be read. Used for
@@ -848,167 +787,157 @@ class PatientApi {
     }
   }
 
-  /// What an invoice is for, taken from its line items. Falls back to the
-  /// invoice number so a statement is never labelled with an empty string.
-  static String _invoiceSummary(Map<String, dynamic>? invoice) {
-    if (invoice == null) return 'Dental Services';
-    final items = (invoice['invoice_items'] as List?) ?? const [];
-    final descriptions = items
-        .cast<Map<String, dynamic>>()
-        .map((item) => _str(item['description']))
-        .where((d) => d.isNotEmpty)
-        .toList();
-    if (descriptions.isEmpty) return 'Dental Services';
-    if (descriptions.length == 1) return descriptions.first;
-    return '${descriptions.first} +${descriptions.length - 1} more';
-  }
-
-  /// The dentist named on the visit an embedded `appointments` row describes.
-  static String? _doctorOfVisit(Object? appointment) {
-    if (appointment is! Map<String, dynamic>) return null;
-    final name = _doctorOf(appointment);
-    return name.isEmpty ? null : name;
-  }
-
-  /// Keyed on the profile, not the patient chart: notifications are addressed
-  /// to the person holding the account.
-  static Future<List<NotificationItem>> fetchNotifications(String userId) async {
-    final rows = await _selectNotifications(userId);
-
-    return rows.map((row) {
-      final id = _str(row['id']);
-      // Remembered alongside the item so the banner can respect the patient's
-      // per-category mutes: `NotificationItem` itself carries no channel.
-      notificationChannels[id] = channelFor(_str(row['type']));
-      return NotificationItem(
-        id: id,
-        title: _str(row['title']),
-        body: _str(row['body']),
-        createdAt: _date(row['created_at']) ?? DateTime.now(),
-        isRead: _notificationIsRead(row),
-        readAt: _date(row['read_at']),
-      );
-    }).toList();
-  }
-
-  /// One alert by id, for applying a realtime change without refetching the
-  /// whole list. Null when the row is not the signed-in patient's.
-  static Future<NotificationItem?> fetchNotification({
-    required String id,
-    required String userId,
-  }) async {
-    final rows = await _selectNotifications(userId, id: id);
-    if (rows.isEmpty) return null;
-    final row = rows.first;
-    notificationChannels[_str(row['id'])] = channelFor(_str(row['type']));
-    return NotificationItem(
-      id: _str(row['id']),
-      title: _str(row['title']),
-      body: _str(row['body']),
-      createdAt: _date(row['created_at']) ?? DateTime.now(),
-      isRead: _notificationIsRead(row),
-      readAt: _date(row['read_at']),
+  /// Everything the bell is built from besides the record itself, fetched as
+  /// one section. See [NotificationFeed] for the rules.
+  static Future<NotificationSources> fetchNotificationSources(
+    String userId,
+    String patientId,
+  ) async {
+    final results = await Future.wait([
+      fetchNotifications(userId),
+      _fetchCoveredNotices(),
+      _fetchReceiptNotices(patientId),
+    ]);
+    return NotificationSources(
+      addressed: results[0] as List<NotificationItem>,
+      covered: results[1] as Set<String>,
+      receipts: results[2] as List<ReceiptNotice>,
     );
   }
 
-  /// The `notifications` columns every deployment is known to have.
-  static const String _notificationBase = 'id, title, body, created_at';
+  static const String _notificationColumns =
+      'id, actor_name, actor_role, event, title, body, entity, entity_id, read_at, created_at';
 
-  /// Columns some deployments have and others do not.
-  ///
-  /// `read_at` and `type` arrive with `docs/realtime_data_sync_migration.sql`,
-  /// and the live schema has neither `type` nor `is_read`. Asking for a column
-  /// that is not there is a `42703` that fails the whole request — which is
-  /// what used to take the entire record down and put a connection error in
-  /// front of a patient whose connection was fine.
-  ///
-  /// So the set is narrowed as the server answers: each `42703` names the
-  /// column it did not recognise, that one is dropped, and the request is made
-  /// again. After the first load the app is asking for exactly what this
-  /// project has.
-  static const Set<String> _notificationColumnCandidates = {'type', 'is_read', 'read_at'};
+  /// `notifications` rows addressed to this account: the newest
+  /// [NotificationFeed.addressedLimit] plus every unread one, once each — the
+  /// website's `loadDbNotifs`. The unread query is what keeps the count right
+  /// when there are more unread rows than one page holds.
+  static Future<List<NotificationItem>> fetchNotifications(String userId) async {
+    Future<List<Map<String, dynamic>>> recent() async => (await SupabaseService.client
+            .from('notifications')
+            .select(_notificationColumns)
+            .eq('recipient_id', userId)
+            .order('created_at', ascending: false)
+            .limit(NotificationFeed.addressedLimit))
+        .cast<Map<String, dynamic>>();
 
-  /// The candidates still believed to exist. Narrowed, never widened.
-  static final Set<String> _notificationOptionalColumns = {..._notificationColumnCandidates};
-
-  /// The column named in a `42703`, e.g. `column notifications.type does not
-  /// exist`. Null when the message does not name one.
-  static String? _undefinedColumnName(PostgrestException e) {
-    final match = RegExp(r'column\s+(?:\w+\.)?"?(\w+)"?\s+does not exist',
-            caseSensitive: false)
-        .firstMatch(e.message);
-    return match?.group(1);
-  }
-
-  static Future<List<Map<String, dynamic>>> _selectNotifications(
-    String userId, {
-    String? id,
-  }) async {
-    Future<List<Map<String, dynamic>>> run(String columns) async {
-      var query = SupabaseService.client
-          .from('notifications')
-          .select(columns)
-          .eq('recipient_id', userId);
-      if (id != null) query = query.eq('id', id);
-      final rows = await query.order('created_at', ascending: false);
-      return rows.cast<Map<String, dynamic>>();
-    }
-
-    // One attempt per optional column, plus the request that finally succeeds.
-    // The bound is fixed rather than read off the set, which shrinks as the
-    // server answers.
-    for (var attempt = 0; attempt <= _notificationColumnCandidates.length; attempt++) {
-      final columns = [_notificationBase, ..._notificationOptionalColumns].join(', ');
+    Future<List<Map<String, dynamic>>> unread() async {
       try {
-        return await run(columns);
-      } on PostgrestException catch (e) {
-        if (pgCode(e) != _undefinedColumn) rethrow;
-        final missing = _undefinedColumnName(e);
-        // A 42703 naming a column outside the optional set is a real bug in
-        // the query, not a schema difference to absorb.
-        if (missing == null || !_notificationColumnCandidates.contains(missing)) rethrow;
-        // `remove` returning false means a request running alongside this one
-        // already learned the column is absent. That is not an error — this
-        // one simply retries with what the set now holds.
-        if (_notificationOptionalColumns.remove(missing)) {
-          debugPrint('notifications has no "$missing" column; continuing without it');
-        }
+        return (await SupabaseService.client
+                .from('notifications')
+                .select(_notificationColumns)
+                .eq('recipient_id', userId)
+                .isFilter('read_at', null)
+                .order('created_at', ascending: false)
+                .limit(1000))
+            .cast<Map<String, dynamic>>();
+      } catch (e) {
+        // Costs the older unread rows, not the whole feed.
+        debugPrint('Unread notifications unavailable: $e');
+        return const [];
       }
     }
-    return run(_notificationBase);
+
+    final pages = await Future.wait([recent(), unread()]);
+    final byId = <String, Map<String, dynamic>>{};
+    for (final row in [...pages[0], ...pages[1]]) {
+      byId.putIfAbsent(_str(row['id']), () => row);
+    }
+    return [for (final row in byId.values) _addressedNotice(row)];
   }
 
-  /// Whether an alert row counts as read.
-  ///
-  /// `is_read` where the schema has it. Where it does not, `read_at` is the
-  /// only record of a read, so a stamped row is a read one.
-  static bool _notificationIsRead(Map<String, dynamic> row) {
-    if (row.containsKey('is_read')) return row['is_read'] == true;
-    return row['read_at'] != null;
+  static NotificationItem _addressedNotice(Map<String, dynamic> row) {
+    final event = _str(row['event']);
+    final title = _str(row['title']);
+    final actor = _str(row['actor_name']).trim();
+    final readAt = _date(row['read_at']);
+    return NotificationItem(
+      id: 'db|${_str(row['id'])}',
+      title: title.isEmpty ? 'Notification' : title,
+      body: _str(row['body']),
+      createdAt: _date(row['created_at']) ?? DateTime.now(),
+      isRead: readAt != null,
+      readAt: readAt,
+      event: event,
+      actorName: actor.isEmpty ? null : actor,
+      category: NotificationFeed.categoryOf(event),
+      target: NotificationFeed.targetOf(
+        event: event,
+        entity: _str(row['entity']),
+        entityId: _str(row['entity_id']),
+      ),
+    );
   }
 
-  /// Postgres `undefined_column`.
-  static const String _undefinedColumn = '42703';
+  /// `<event>|<entity id>` for every addressed row that restates a derived
+  /// notice. Empty on failure, which keeps both notices rather than losing one.
+  static Future<Set<String>> _fetchCoveredNotices() async {
+    try {
+      final rows = await SupabaseService.client
+          .from('notifications')
+          .select('event, entity_id')
+          .inFilter('event', NotificationFeed.coverEvents)
+          .limit(1000);
+      return {
+        for (final row in rows.cast<Map<String, dynamic>>())
+          if (_str(row['event']).isNotEmpty && _str(row['entity_id']).isNotEmpty)
+            '${_str(row['event'])}|${_str(row['entity_id'])}',
+      };
+    } catch (e) {
+      debugPrint('Notification duplicate check unavailable: $e');
+      return const {};
+    }
+  }
 
-  /// What this account has read or dismissed, keyed by notice key.
-  ///
-  /// Read straight from `notification_state`, the table the website shares.
-  /// A device-local copy is merged underneath, so a read still sticks when the
-  /// write could not reach the server; a server row wins over it.
+  /// The newest receipts, read the way the website's receipt notices are.
+  static Future<List<ReceiptNotice>> _fetchReceiptNotices(String patientId) async {
+    try {
+      final rows = await SupabaseService.client
+          .from('payment_receipts')
+          .select('id, reference_no, procedure_name, amount_due, payment_method, issued_at')
+          .eq('patient_id', patientId)
+          .order('issued_at', ascending: false)
+          .limit(NotificationFeed.maxReceipts);
+      return [
+        for (final row in rows.cast<Map<String, dynamic>>())
+          ReceiptNotice(
+            id: _str(row['id']),
+            referenceNo: _str(row['reference_no']),
+            procedureName: _str(row['procedure_name']),
+            amountDue: _double(row['amount_due']) ?? 0,
+            paymentMethod: _str(row['payment_method']),
+            issuedAt: _date(row['issued_at']) ?? DateTime.now(),
+          ),
+      ];
+    } catch (e) {
+      debugPrint('Receipt notices unavailable: $e');
+      return const [];
+    }
+  }
+
+  // --- Read, dismissed and settings state ---
+  //
+  // `notification_state` and `notification_prefs` are the record; the device
+  // keeps a cache of what it wrote. The cache is what paints a tap at once and
+  // what survives a write that could not reach the server: every sync sends up
+  // whatever the server does not have yet, so a read made offline lands the
+  // next time the app is online.
+
+  /// What this account has read or dismissed, keyed by notice key. Sends up
+  /// any read or dismissal this device made that has not reached the server.
   static Future<Map<String, NotificationState>> fetchNotificationState(String userId) async {
-    final state = <String, NotificationState>{};
-    final epoch = DateTime.fromMillisecondsSinceEpoch(0);
+    final localRead = <String>{};
+    final localGone = <String>{};
     try {
       final prefs = await SharedPreferences.getInstance();
-      for (final key in prefs.getStringList(_localReadKey(userId)) ?? const <String>[]) {
-        state[key] = NotificationState(readAt: epoch);
-      }
-      for (final key in prefs.getStringList(_localDismissedKey(userId)) ?? const <String>[]) {
-        state[key] = NotificationState(readAt: state[key]?.readAt ?? epoch, dismissedAt: epoch);
-      }
+      localRead.addAll((prefs.getStringList(_localReadKey(userId)) ?? const []).where(_isSharedKey));
+      localGone.addAll((prefs.getStringList(_localDismissedKey(userId)) ?? const []).where(_isSharedKey));
     } catch (e) {
       debugPrint('Local notification state unreadable: $e');
     }
+
+    final state = <String, NotificationState>{};
+    var serverAnswered = false;
     try {
       final rows = await SupabaseService.client
           .from('notification_state')
@@ -1020,41 +949,55 @@ class PatientApi {
           dismissedAt: _date(row['dismissed_at']),
         );
       }
+      serverAnswered = true;
     } catch (e) {
       debugPrint('notification_state unreadable: $e');
+    }
+
+    // Anything this device did that the account does not know yet.
+    final unsentGone = localGone.where((k) => !(state[k]?.isDismissed ?? false)).toList();
+    final unsentRead = localRead
+        .where((k) => !(state[k]?.isRead ?? false) && !unsentGone.contains(k))
+        .toList();
+    if (serverAnswered) {
+      if (unsentGone.isNotEmpty) await _sendNoticeState(unsentGone, dismiss: true);
+      if (unsentRead.isNotEmpty) await _sendNoticeState(unsentRead, dismiss: false);
+    }
+
+    // The device's own writes count until the server has them.
+    final epoch = DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+    for (final key in localRead) {
+      final saved = state[key];
+      if (saved?.isRead ?? false) continue;
+      state[key] = NotificationState(readAt: epoch, dismissedAt: saved?.dismissedAt);
+    }
+    for (final key in localGone) {
+      final saved = state[key];
+      if (saved?.isDismissed ?? false) continue;
+      state[key] = NotificationState(readAt: saved?.readAt ?? epoch, dismissedAt: epoch);
     }
     return state;
   }
 
-  /// Marks shared notice [keys] read through `notif_mark_read(p_keys)`, the
-  /// website's own RPC: it upserts `(user_id, notif_key)` and keeps the first
-  /// read time. Never writes `notification_state` directly. Never throws.
-  static Future<void> markSharedNoticesRead(String userId, Iterable<String> keys) =>
-      _writeNoticeState(userId, keys, rpc: 'notif_mark_read', dismiss: false);
+  /// Marks notice [keys] read for this account, as the website does: the
+  /// shared key through `notif_mark_read`, and an addressed row's own
+  /// `read_at` through `notif_mark_read_ids`. Cached first, so a failed write
+  /// is retried by the next [fetchNotificationState]. Never throws.
+  static Future<bool> markNoticesRead(String userId, Iterable<String> keys) =>
+      _writeNoticeState(userId, keys, dismiss: false);
 
-  /// Dismisses shared notice [keys] through `notif_dismiss(p_keys)`, which also
-  /// stamps `read_at`. Never throws.
-  static Future<void> dismissSharedNotices(String userId, Iterable<String> keys) =>
-      _writeNoticeState(userId, keys, rpc: 'notif_dismiss', dismiss: true);
+  /// Dismisses notice [keys] through `notif_dismiss`, which also marks them
+  /// read. Never throws.
+  static Future<bool> dismissNotices(String userId, Iterable<String> keys) =>
+      _writeNoticeState(userId, keys, dismiss: true);
 
-  /// Marks app-only notice [keys] read on this device. The website has no
-  /// such notices, so nothing is sent to `notification_state`.
-  static Future<void> markLocalNoticesRead(String userId, Iterable<String> keys) =>
-      _writeNoticeState(userId, keys, rpc: null, dismiss: false);
-
-  /// Dismisses app-only notice [keys] on this device.
-  static Future<void> dismissLocalNotices(String userId, Iterable<String> keys) =>
-      _writeNoticeState(userId, keys, rpc: null, dismiss: true);
-
-  static Future<void> _writeNoticeState(
+  static Future<bool> _writeNoticeState(
     String userId,
     Iterable<String> keys, {
-    required String? rpc,
     required bool dismiss,
   }) async {
-    final list = keys.where((k) => k.isNotEmpty).toSet().toList();
-    if (list.isEmpty) return;
-
+    final list = keys.where(_isSharedKey).toSet().toList();
+    if (list.isEmpty) return true;
     try {
       final prefs = await SharedPreferences.getInstance();
       final read = {...?prefs.getStringList(_localReadKey(userId)), ...list};
@@ -1066,30 +1009,130 @@ class PatientApi {
     } catch (e) {
       debugPrint('Local notification state not saved: $e');
     }
+    return _sendNoticeState(list, dismiss: dismiss);
+  }
 
-    if (rpc == null) return;
+  static Future<bool> _sendNoticeState(List<String> keys, {required bool dismiss}) async {
+    final rowIds = [
+      for (final k in keys)
+        if (k.startsWith('db|')) k.substring(3),
+    ];
+    var ok = true;
+    if (rowIds.isNotEmpty) {
+      try {
+        await SupabaseService.client.rpc('notif_mark_read_ids', params: {'p_ids': rowIds});
+      } catch (e) {
+        ok = false;
+        debugPrint('notif_mark_read_ids failed: $e');
+      }
+    }
+    final rpc = dismiss ? 'notif_dismiss' : 'notif_mark_read';
     try {
-      await SupabaseService.client.rpc(rpc, params: {'p_keys': list});
+      await SupabaseService.client.rpc(rpc, params: {'p_keys': keys});
     } catch (e) {
+      ok = false;
       debugPrint('$rpc failed: $e');
     }
+    return ok;
   }
-  /// Clears a read on this device only. The website has no "mark unread", so
-  /// the shared row keeps its read time and the next load reads it back.
-  static Future<void> forgetLocalRead(String userId, String key) async {
+
+  /// Keys the website shares. Older builds of the app cached `local:` keys for
+  /// notices only the app had; those never go to the server.
+  static bool _isSharedKey(String key) => key.isNotEmpty && !key.startsWith('local:');
+
+  static String _localReadKey(String userId) => 'mbNotifRead_app_v2_$userId';
+  static String _localDismissedKey(String userId) => 'mbNotifGone_app_v2_$userId';
+  static String _localPrefsKey(String userId) => 'mbNotifPrefs_app_$userId';
+  static String _localPrefsDirtyKey(String userId) => 'mbNotifPrefsDirty_app_$userId';
+
+  /// The account's Settings → Notifications switches, shared with the website.
+  /// A change this device could not send yet is sent now instead of being
+  /// overwritten. Falls back to the device's copy (all on by default) when the
+  /// table is not there yet.
+  static Future<NotificationPrefs> fetchNotificationPrefs(String userId) async {
+    SharedPreferences? prefs;
+    var local = const NotificationPrefs();
+    var dirty = false;
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final read = {...?prefs.getStringList(_localReadKey(userId))}..remove(key);
-      await prefs.setStringList(_localReadKey(userId), read.toList());
+      prefs = await SharedPreferences.getInstance();
+      local = _prefsFrom(prefs.getStringList(_localPrefsKey(userId))) ?? local;
+      dirty = prefs.getBool(_localPrefsDirtyKey(userId)) ?? false;
     } catch (e) {
-      debugPrint('Local notification state not saved: $e');
+      debugPrint('Local notification settings unreadable: $e');
+    }
+    if (dirty) {
+      await _sendPrefs(userId, local, prefs);
+      return local;
+    }
+    try {
+      final row = await SupabaseService.client
+          .from('notification_prefs')
+          .select('enabled, cat_appointment, cat_plan, cat_billing')
+          .eq('user_id', userId)
+          .maybeSingle();
+      final server = NotificationPrefs(
+        enabled: row?['enabled'] != false,
+        appointment: row?['cat_appointment'] != false,
+        plan: row?['cat_plan'] != false,
+        billing: row?['cat_billing'] != false,
+      );
+      await prefs?.setStringList(_localPrefsKey(userId), _prefsTo(server));
+      return server;
+    } catch (e) {
+      debugPrint('notification_prefs unreadable: $e');
+      return local;
     }
   }
 
-  // v2: the keys changed to the website's format, so reads recorded under the
-  // app's earlier keys are not carried over.
-  static String _localReadKey(String userId) => 'mbNotifRead_app_v2_$userId';
-  static String _localDismissedKey(String userId) => 'mbNotifGone_app_v2_$userId';
+  /// Saves the switches on the device at once and on the account when it can.
+  static Future<bool> saveNotificationPrefs(String userId, NotificationPrefs value) async {
+    SharedPreferences? prefs;
+    try {
+      prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(_localPrefsKey(userId), _prefsTo(value));
+      await prefs.setBool(_localPrefsDirtyKey(userId), true);
+    } catch (e) {
+      debugPrint('Local notification settings not saved: $e');
+    }
+    return _sendPrefs(userId, value, prefs);
+  }
+
+  static Future<bool> _sendPrefs(
+    String userId,
+    NotificationPrefs value,
+    SharedPreferences? prefs,
+  ) async {
+    try {
+      await SupabaseService.client.from('notification_prefs').upsert({
+        'user_id': userId,
+        'enabled': value.enabled,
+        'cat_appointment': value.appointment,
+        'cat_plan': value.plan,
+        'cat_billing': value.billing,
+      }, onConflict: 'user_id');
+      await prefs?.setBool(_localPrefsDirtyKey(userId), false);
+      return true;
+    } catch (e) {
+      debugPrint('notification_prefs not saved: $e');
+      return false;
+    }
+  }
+
+  static List<String> _prefsTo(NotificationPrefs p) => [
+        if (!p.enabled) 'off',
+        if (!p.appointment) 'appointment',
+        if (!p.plan) 'plan',
+        if (!p.billing) 'billing',
+      ];
+
+  static NotificationPrefs? _prefsFrom(List<String>? off) => off == null
+      ? null
+      : NotificationPrefs(
+          enabled: !off.contains('off'),
+          appointment: !off.contains('appointment'),
+          plan: !off.contains('plan'),
+          billing: !off.contains('billing'),
+        );
 
   /// The Postgres error code behind [e].
   ///
@@ -1104,21 +1147,6 @@ class PatientApi {
     return e.code ?? '';
   }
 
-  /// Which mute toggle each alert answers to, keyed by notification id.
-  static final Map<String, PushChannel> notificationChannels = {};
-
-  /// Maps the clinic's `notifications.type` onto the app's mute categories.
-  /// Anything unrecognised counts as a status update, so a new type the clinic
-  /// introduces is shown rather than silently swallowed.
-  static PushChannel channelFor(String type) {
-    final value = type.toLowerCase();
-    if (value.contains('remind')) return PushChannel.reminder;
-    if (value.contains('pay') || value.contains('receipt') || value.contains('invoice')) {
-      return PushChannel.payment;
-    }
-    return PushChannel.statusUpdate;
-  }
-
   /// True when the last wallet read found no ledger table or balance function
   /// on this database yet. The wallet then shows as empty with a short note
   /// instead of an error.
@@ -1127,15 +1155,26 @@ class PatientApi {
   static final RegExp _missingSchema =
       RegExp(r'schema cache|does not exist|relationship|function', caseSensitive: false);
 
+  /// Rows per ledger request, and the most this device reads. The website
+  /// shows its first 50; the app reads on until the ledger ends, so every date
+  /// range filters the whole history. The balance never comes from these rows.
+  static const int _ledgerPage = 500;
+  static const int _ledgerMax = 5000;
+
   static Future<List<WalletTransaction>> fetchTransactions(String patientId) async {
-    final List<Map<String, dynamic>> rows;
+    final rows = <Map<String, dynamic>>[];
     try {
-      rows = await SupabaseService.client
-          .from('wallet_transactions')
-          .select('id, direction, amount, method, description, reference_no, billing_record_id, created_at')
-          .eq('patient_id', patientId)
-          .order('created_at', ascending: false)
-          .limit(50);
+      while (rows.length < _ledgerMax) {
+        final page = await SupabaseService.client
+            .from('wallet_transactions')
+            .select('id, direction, amount, method, description, reference_no, billing_record_id, created_at')
+            .eq('patient_id', patientId)
+            .order('created_at', ascending: false)
+            .order('id', ascending: false)
+            .range(rows.length, rows.length + _ledgerPage - 1);
+        rows.addAll(page.cast<Map<String, dynamic>>());
+        if (page.length < _ledgerPage) break;
+      }
       walletUnavailable = false;
     } on PostgrestException catch (e) {
       if (!_missingSchema.hasMatch(e.message)) rethrow;
@@ -1160,8 +1199,108 @@ class PatientApi {
         dateTime: _date(row['created_at']) ?? DateTime.now(),
         referenceNo: _str(row['reference_no']),
         method: _str(row['method']),
+        description: description,
       );
     }).toList();
+  }
+
+  // --- Payments from the wallet and the clinic's requests ---
+
+  /// Pending bills the clinic sent to the patient's account, newest first —
+  /// the website's `loadVisitPayRequests`. Empty on a database without them.
+  static Future<List<VisitPaymentRequest>> fetchVisitRequests(String patientId) async {
+    Future<List<Map<String, dynamic>>> run(String cols) async => (await SupabaseService.client
+            .from('visit_payment_requests')
+            .select(cols)
+            .eq('patient_id', patientId)
+            .eq('status', 'pending')
+            .order('created_at', ascending: false))
+        .cast<Map<String, dynamic>>();
+    try {
+      List<Map<String, dynamic>> rows;
+      try {
+        rows = await run(_visitRequestCols);
+      } on PostgrestException {
+        // `breakdown` arrives with 20261022000001; without it the requests are
+        // still listed, just not itemised.
+        rows = await run(_visitRequestColsBasic);
+      }
+      return rows.map(_visitRequestFrom).toList();
+    } catch (e) {
+      debugPrint('visit_payment_requests unavailable: $e');
+      return const [];
+    }
+  }
+
+  static const _visitRequestCols =
+      'id, amount, status, created_at, appointment_id, breakdown, appointments(appointment_date)';
+  static const _visitRequestColsBasic =
+      'id, amount, status, created_at, appointment_id, appointments(appointment_date)';
+
+  /// One request by id, whatever its status, so a link or notice to a paid or
+  /// withdrawn one can say so. Null when it is not this patient's.
+  static Future<VisitPaymentRequest?> fetchVisitRequest(String id) async {
+    Future<Map<String, dynamic>?> run(String cols) =>
+        SupabaseService.client.from('visit_payment_requests').select(cols).eq('id', id).maybeSingle();
+    Map<String, dynamic>? row;
+    try {
+      row = await run(_visitRequestCols);
+    } on PostgrestException {
+      row = await run(_visitRequestColsBasic);
+    }
+    return row == null ? null : _visitRequestFrom(row);
+  }
+
+  /// The pending request for a visit — what the clinic's Wallet QR carries
+  /// (`?vpa=<appointment id>`). Null when none has been sent, or it is paid.
+  static Future<String?> pendingVisitRequestFor(String appointmentId, String patientId) async {
+    final rows = await SupabaseService.client
+        .from('visit_payment_requests')
+        .select('id')
+        .eq('appointment_id', appointmentId)
+        .eq('patient_id', patientId)
+        .eq('status', 'pending')
+        .order('created_at', ascending: false)
+        .limit(1);
+    return rows.isEmpty ? null : _str(rows.first['id']);
+  }
+
+  static VisitPaymentRequest _visitRequestFrom(Map<String, dynamic> row) {
+    final appt = row['appointments'];
+    final visit = appt is Map ? appt : (appt is List && appt.isNotEmpty ? appt.first : null);
+    final breakdown = row['breakdown'];
+    return VisitPaymentRequest(
+      id: _str(row['id']),
+      amount: _double(row['amount']) ?? 0,
+      status: _str(row['status']),
+      createdAt: _date(row['created_at']) ?? DateTime.now(),
+      appointmentId: _nullableStr(_str(row['appointment_id'])),
+      visitDate: visit is Map ? _str(visit['appointment_date']) : '',
+      breakdown: breakdown is Map ? Map<String, dynamic>.from(breakdown) : null,
+    );
+  }
+
+  /// One charge's current state, read again right before paying it so a
+  /// charge settled or voided elsewhere is not paid twice.
+  static Future<Payment?> fetchCharge(String billId) async {
+    final row = await SupabaseService.client
+        .from('billing_records')
+        .select('id, billed_on, procedure_name, amount, status, payment_method, voided_at, appointment_id')
+        .eq('id', billId)
+        .maybeSingle();
+    return row == null ? null : _chargeFrom(row);
+  }
+
+  /// Settles one charge from the balance through `wallet_pay_bill` — the
+  /// website's call. It pays the charge, debits the wallet and issues the
+  /// receipt together, or does none of it.
+  static Future<void> payBillWithWallet(String billId) async {
+    await SupabaseService.client.rpc('wallet_pay_bill', params: {'p_bill_id': billId});
+  }
+
+  /// Pays a clinic request from the balance through `wallet_pay_visit_request`.
+  static Future<void> payVisitRequestWithWallet(String requestId) async {
+    await SupabaseService.client.rpc('wallet_pay_visit_request', params: {'p_request_id': requestId});
   }
 
   /// The per-tooth chart entries behind the odontogram and the Treatment Notes
@@ -1225,28 +1364,87 @@ class PatientApi {
   /// the same map shape as [fetchToothRecords]. Unlike the chart, each entry
   /// names the procedure that was actually done. Empty rather than failing
   /// when the table cannot be read.
-  static Future<List<Map<String, String>>> fetchTreatmentNotes(String patientId) async {
-    final rows = await _optionalRows(() => SupabaseService.client
-        .from('treatment_notes')
-        .select('id, tooth_id, condition, procedure, notes, doctor_id, created_at, updated_at, '
-            'doctor:members!treatment_notes_doctor_id_fkey(full_name)')
-        .eq('patient_id', patientId)
-        .isFilter('archived_at', null)
-        .order('created_at', ascending: false));
+  /// The patient's active treatment notes, newest first — the website's
+  /// `_loadTreatmentNotes`. `patient_id` is the chart id, and row-level
+  /// security checks it belongs to the signed-in account.
+  ///
+  /// The attribution columns (`attending_dentist_id`, `recorded_by_id`,
+  /// `recorded_by_role`) arrive with migration 20261009000001; a database
+  /// without them falls back to the legacy `doctor_id` read. Throws when the
+  /// notes cannot be read at all, so the screen can tell that from "none".
+  static Future<List<TreatmentNote>> fetchTreatmentNotes(String patientId) async {
+    const base = 'id, created_at, tooth_id, condition, notes, appointment_id, doctor_id, '
+        'members!doctor_id(full_name)';
+    const attributed = '$base, attending_dentist_id, recorded_by_id, recorded_by_role, '
+        'attending_dentist:members!treatment_notes_attending_dentist_id_fkey(full_name), '
+        'recorded_by:profiles!treatment_notes_recorded_by_id_fkey(full_name, role)';
 
-    return rows.map((row) {
-      final recordedOn = _date(row['created_at']) ?? _date(row['updated_at']);
-      final condition = _str(row['condition']);
-      final procedure = _str(row['procedure']);
-      return <String, String>{
-        'date': recordedOn == null ? '' : _dateLabel(recordedOn),
-        'tooth': _toothLabelFrom(_str(row['tooth_id'])),
-        'condition': condition,
-        'procedure': procedure.isNotEmpty ? procedure : condition,
-        'notes': _str(row['notes']),
-        'doctor': _doctorOf(row),
-      };
-    }).toList();
+    Future<List<Map<String, dynamic>>> run(String cols, {required bool active}) async {
+      var q = SupabaseService.client.from('treatment_notes').select(cols).eq('patient_id', patientId);
+      if (active) q = q.isFilter('archived_at', null);
+      return (await q.order('created_at', ascending: false)).cast<Map<String, dynamic>>();
+    }
+
+    bool schemaGap(PostgrestException e) =>
+        pgCode(e) == '42703' || pgCode(e) == 'PGRST200' || _missingSchema.hasMatch(e.message);
+
+    List<Map<String, dynamic>>? rows;
+    for (final cols in [attributed, base]) {
+      try {
+        rows = await run(cols, active: true);
+        break;
+      } on PostgrestException catch (e) {
+        if (!schemaGap(e)) rethrow;
+        if (RegExp('archived_at').hasMatch(e.message)) {
+          // No archive column yet: nothing has been archived.
+          try {
+            rows = await run(cols, active: false);
+            break;
+          } on PostgrestException catch (e2) {
+            if (!schemaGap(e2) || cols == base) rethrow;
+          }
+        } else if (cols == base) {
+          rethrow;
+        }
+      }
+    }
+    return [for (final row in rows ?? const <Map<String, dynamic>>[]) _noteFrom(row)];
+  }
+
+  static TreatmentNote _noteFrom(Map<String, dynamic> row) {
+    String nameIn(Object? v) {
+      final m = v is List ? (v.isEmpty ? null : v.first) : v;
+      return m is Map ? _str(m['full_name']) : '';
+    }
+
+    // A patient session may not be allowed to read `members`; the dentist is
+    // then named from the clinic roster by id, as elsewhere in the app. The
+    // recorder has no such fallback: a name that cannot be read is not guessed.
+    final attendingId = _str(row['attending_dentist_id']);
+    final doctorId = _str(row['doctor_id']);
+    var attending = nameIn(row['attending_dentist']);
+    if (attending.isEmpty && attendingId.isNotEmpty) attending = dentistById(attendingId)?.name ?? '';
+    var legacy = nameIn(row['members']);
+    if (legacy.isEmpty && doctorId.isNotEmpty) legacy = dentistById(doctorId)?.name ?? '';
+    final notes = row.containsKey('clinical_notes') && _str(row['clinical_notes']).isNotEmpty
+        ? row['clinical_notes'].toString()
+        : (row['notes']?.toString() ?? '');
+
+    return TreatmentNote(
+      id: _str(row['id']),
+      createdAt: _date(row['created_at']),
+      toothId: _str(row['tooth_id']),
+      condition: _str(row['condition']),
+      // Verbatim: line breaks and punctuation are the clinic's.
+      notes: notes,
+      appointmentId: _nullableStr(_str(row['appointment_id'])),
+      attribution: NoteAttribution.resolve(
+        attendingName: attending,
+        legacyDoctorName: legacy,
+        recorderName: nameIn(row['recorded_by']),
+        recordedByRole: _str(row['recorded_by_role']),
+      ),
+    );
   }
 
   /// The chart matches entries by leading `#<number>`, so a bare tooth id has
@@ -1515,89 +1713,6 @@ class PatientApi {
   }
 
   // --- Writes ---
-
-  /// Marks one alert read **in the database**, not just on this device: the
-  /// web and the app both read `is_read` back off the row, so a local-only
-  /// flag is what leaves the two disagreeing.
-  ///
-  /// Scoped to [userId] as well as the id so a stale id from another account
-  /// cannot write to a row this patient does not own.
-  static Future<void> markNotificationRead(String id, {required String userId}) async {
-    await _updateReadState((payload) => SupabaseService.client
-        .from('notifications')
-        .update(payload)
-        .eq('id', id)
-        .eq('recipient_id', userId));
-  }
-
-  static Future<void> markAllNotificationsRead(String userId) async {
-    await _updateReadState((payload) => SupabaseService.client
-        .from('notifications')
-        .update(payload)
-        .eq('recipient_id', userId)
-        .eq('is_read', false));
-  }
-
-  /// Runs [update] with `read_at` set, and again without it on a database that
-  /// has not had `docs/realtime_data_sync_migration.sql` applied yet.
-  static Future<void> _updateReadState(
-    PostgrestFilterBuilder<dynamic> Function(Map<String, dynamic> payload) update,
-  ) {
-    final now = DateTime.now().toUtc().toIso8601String();
-    return _writeNotificationFlags(update, isRead: true, readAt: now);
-  }
-
-  /// Writes the read flags this deployment actually has.
-  ///
-  /// Reads and writes share [_notificationOptionalColumns], so the first read
-  /// of the session teaches the writes which columns exist. Where they are
-  /// still unknown, a `42703` names the offending column, it is dropped, and
-  /// the write is made again with what is left — the same self-narrowing the
-  /// read does, because a schema that has `read_at` but no `is_read` used to
-  /// fail both of the old fixed payloads.
-  static Future<void> _writeNotificationFlags(
-    PostgrestFilterBuilder<dynamic> Function(Map<String, dynamic> payload) update, {
-    required bool isRead,
-    required String? readAt,
-  }) async {
-    for (var attempt = 0; attempt <= _notificationColumnCandidates.length; attempt++) {
-      final payload = <String, dynamic>{
-        if (_notificationOptionalColumns.contains('is_read')) 'is_read': isRead,
-        if (_notificationOptionalColumns.contains('read_at')) 'read_at': readAt,
-      };
-      // Nothing on this row records a read. Saying so beats a silent no-op
-      // update that would report success without changing anything.
-      if (payload.isEmpty) {
-        debugPrint('notifications has no read-state column; read state stays device-local');
-        return;
-      }
-      try {
-        await update(payload);
-        return;
-      } on PostgrestException catch (e) {
-        if (pgCode(e) != _undefinedColumn) rethrow;
-        final missing = _undefinedColumnName(e);
-        if (missing == null || !_notificationColumnCandidates.contains(missing)) rethrow;
-        if (_notificationOptionalColumns.remove(missing)) {
-          debugPrint('notifications has no "$missing" column; continuing without it');
-        }
-      }
-    }
-  }
-
-  /// Marks one alert unread again, so an "unread" toggle on either platform is
-  /// also a row change rather than device-local state.
-  static Future<void> markNotificationUnread(String id, {required String userId}) async {
-    await _writeNotificationFlags(
-      (payload) => SupabaseService.client
-          .from('notifications')
-          .update(payload)
-          .eq('id', id)
-          .eq('recipient_id', userId),
-      isRead: false,
-      readAt: null,
-    );
-  }
 
   // `appointments.status` is the Postgres enum `appointment_status`, whose
   // values are capitalised (`Pending`, `Confirmed`, `Ongoing`, `Completed`,

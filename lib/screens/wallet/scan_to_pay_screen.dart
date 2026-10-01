@@ -4,15 +4,13 @@ import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../app/theme.dart';
+import '../../repositories/patient_api.dart';
+import '../../repositories/patient_repository.dart';
 import '../../widgets/app_toast.dart';
+import 'pay_screens.dart';
 
-/// "Pay using QR code": the in-app camera, opened from the wallet card.
-///
-/// Scanner only for now. The clinic has not defined a payment QR yet — there
-/// is no payment token on invoices or billing, and no wallet function that
-/// takes a scanned code — so a scan is read and shown, and nothing is
-/// charged. Wiring a payment in means handling [_onScanned]'s value once its
-/// format is agreed.
+/// The in-app camera for the clinic's Patient Wallet QR, opened from the
+/// Wallet. See [_ScanToPayScreenState._onScanned] for what a scan does.
 class ScanToPayScreen extends StatefulWidget {
   const ScanToPayScreen({super.key});
 
@@ -58,9 +56,41 @@ class _ScanToPayScreenState extends State<ScanToPayScreen> {
     await _controller.start();
   }
 
-  /// What a scan leads to. Until the payment QR format exists, this only
-  /// tells the patient what was read — it never moves money.
-  Future<void> _onScanned(String value) {
+  static final RegExp _uuid = RegExp(r'^[0-9a-f-]{36}$', caseSensitive: false);
+
+  /// What a scan leads to. The clinic's Patient Wallet QR is a link to the
+  /// portal carrying `vpr=<request id>` (a bill already sent) or
+  /// `vpa=<appointment id>` (the visit it will be for) — the same link the
+  /// website opens. Either opens the bill's details; paying still takes a tap
+  /// on Pay. Anything else is only shown, never charged.
+  Future<void> _onScanned(String value) async {
+    final uri = Uri.tryParse(value);
+    final vpr = uri?.queryParameters['vpr'] ?? '';
+    final vpa = uri?.queryParameters['vpa'] ?? '';
+    if (_uuid.hasMatch(vpr)) {
+      await openVisitRequest(context, vpr);
+      return;
+    }
+    if (_uuid.hasMatch(vpa)) {
+      final patientId = PatientRepository().patient.id;
+      String? requestId;
+      try {
+        requestId = await PatientApi.pendingVisitRequestFor(vpa, patientId);
+      } catch (_) {
+        requestId = null;
+      }
+      if (!mounted) return;
+      if (requestId != null) {
+        await openVisitRequest(context, requestId);
+      } else {
+        showAppToast(context, 'The clinic has not sent a bill for this visit yet, or it is already paid.');
+      }
+      return;
+    }
+    return _showScanned(value);
+  }
+
+  Future<void> _showScanned(String value) {
     return showModalBottomSheet<void>(
       context: context,
       backgroundColor: AppColors.surface,
